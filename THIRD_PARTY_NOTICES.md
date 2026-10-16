@@ -34,3 +34,5 @@ in place** — tracked as a release blocker in `docs/WORK_JOURNAL.md`.
 
 - `pypdf` (BSD-3-Clause) generates the encrypted test fixture; `lopdf` (MIT) independently parses
   outputs in tests.
+- `axe-core` (MPL-2.0) is injected into the app only during end-to-end accessibility tests; it is a
+  development dependency and is not part of any installer.
