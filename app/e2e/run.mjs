@@ -47,7 +47,7 @@ async function captureFailure(s) {
 async function withApp(args, fn) {
   const s = await Session.create(DRIVER, APP, args);
   try {
-    await s.waitFor(args.length ? '[role="tab"]' : ".home", { timeout: 20000 });
+    await s.waitFor(args.length ? '.tab-label' : ".home", { timeout: 20000 });
     return await fn(s);
   } catch (e) {
     await captureFailure(s);
@@ -88,7 +88,7 @@ function pdfPages(path) {
 await test("open from command line renders first page and thumbnails", async () => {
   await withApp([join(FIX, "five-pages.pdf")], async (s) => {
     await pageLoaded(s, 0);
-    assert((await s.exec("return document.querySelector('[role=tab] .name').textContent")) === "five-pages.pdf", "tab name");
+    assert((await s.exec("return document.querySelector('.tab-label .name').textContent")) === "five-pages.pdf", "tab name");
     assert((await statusText(s)).includes("of 5"), "status shows page count");
     const thumbs = await s.exec("return document.querySelectorAll('.thumb').length");
     assert(thumbs === 5, `5 thumbnails, got ${thumbs}`);
@@ -270,7 +270,7 @@ await test("settings: live theme preview, Cancel restores, Save persists across 
     await s.keys(["Control", ","]);
     await s.click('[role="radiogroup"][aria-labelledby="seg-theme"] [role="radio"]:nth-child(3)');
     await s.click('[role="radiogroup"][aria-labelledby="seg-density"] [role="radio"]:nth-child(2)');
-    await s.click(".dialog footer .btn.primary");
+    await s.click(".dialog .dialog-footer .btn.primary");
     await s.waitUntil(async () => await s.exec("return !document.querySelector('[role=dialog]')"), "dialog closed after save");
   });
   await withApp([join(FIX, "single-page.pdf")], async (s) => {
@@ -288,11 +288,11 @@ await test("custom shortcut: conflicting binding is blocked, unique binding work
     await s.click('[data-shortcut-row="view.toggleThumbnails"] td:nth-child(3) button:first-child');
     await s.keys(["Control", "o"]);
     await s.waitFor('.dialog .banner.error[role="alert"]');
-    assert((await s.attr(".dialog footer .btn.primary", "aria-disabled")) === "true", "save blocked by conflict");
+    assert((await s.attr(".dialog .dialog-footer .btn.primary", "aria-disabled")) === "true", "save blocked by conflict");
     await s.click('[data-shortcut-row="view.toggleThumbnails"] td:nth-child(3) button:first-child');
     await s.keys(["Control", "Alt", "t"]);
     await s.waitUntil(async () => await s.exec("return !document.querySelector('.dialog .banner.error')"), "conflict resolved");
-    await s.click(".dialog footer .btn.primary");
+    await s.click(".dialog .dialog-footer .btn.primary");
     await s.waitUntil(async () => await s.exec("return !document.querySelector('[role=dialog]')"), "saved");
     assert(await s.exec("return !!document.querySelector('.sidebar')"), "thumbnails visible");
     await s.click('[data-testid="viewer"]');
@@ -310,7 +310,7 @@ await test("password-protected PDF: dialog, wrong password, then correct passwor
     await s.waitUntil(async () => (await s.text("#pw-err")).includes("did not work"), "wrong password message");
     await s.type("#pdf-password", "pw-user-test");
     await s.keys(["Enter"]);
-    await s.waitFor('[role="tab"]');
+    await s.waitFor('.tab-label');
     await pageLoaded(s, 0);
     assert((await statusText(s)).includes("Protected"), "protected indicator");
     const html = await s.exec("return document.documentElement.outerHTML");
@@ -325,9 +325,9 @@ await test("unsupported file shows a specific error and app stays usable", async
   copyFileSync(join(FIX, "not-a-pdf.pdf"), fake);
   const s = await Session.create(DRIVER, APP, [fake, join(FIX, "single-page.pdf")]);
   try {
-    await s.waitFor('[role="tab"]', { timeout: 20000 });
+    await s.waitFor('.tab-label', { timeout: 20000 });
     await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Couldn’t open fake.pdf") && t.includes("not a PDF")), "error notice");
-    const tabs = await s.exec("return document.querySelectorAll('[role=tab]').length");
+    const tabs = await s.exec("return document.querySelectorAll('.tab-label').length");
     assert(tabs === 1, `only the valid file opened (${tabs})`);
     writeFileSync(join(ART, "error-notice.png"), await s.screenshot());
   } finally {
@@ -359,14 +359,14 @@ await test("command palette runs a command by keyboard", async () => {
 
 await test("tabs: two documents, Ctrl+Tab switches, Ctrl+W closes", async () => {
   await withApp([join(FIX, "single-page.pdf"), join(FIX, "five-pages.pdf")], async (s) => {
-    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('[role=tab]').length")) === 2, "two tabs");
-    const active = () => s.exec("return document.querySelector('[role=tab][aria-selected=true] .name').textContent");
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label').length")) === 2, "two tabs");
+    const active = () => s.exec("return document.querySelector('.tab-label[aria-current=page] .name').textContent");
     const first = await active();
     await s.click('[data-testid="viewer"]');
     await s.keys(["Control", "Tab"]);
     await s.waitUntil(async () => (await active()) !== first, "switched tab");
     await s.keys(["Control", "w"]);
-    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('[role=tab]').length")) === 1, "one tab left");
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label').length")) === 1, "one tab left");
   });
 });
 
@@ -383,7 +383,7 @@ await test("narrow window keeps toolbar and dialogs usable", async () => {
 
 await test("Ctrl+PageDown / Ctrl+PageUp step pages; previous tab with Ctrl+Shift+Tab", async () => {
   await withApp([join(FIX, "single-page.pdf"), join(FIX, "five-pages.pdf")], async (s) => {
-    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('[role=tab]').length")) === 2, "two tabs");
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label').length")) === 2, "two tabs");
     await pageLoaded(s, 0);
     await s.click('[data-testid="viewer"]');
     await s.keys(["Control", "PageDown"]);
@@ -392,7 +392,7 @@ await test("Ctrl+PageDown / Ctrl+PageUp step pages; previous tab with Ctrl+Shift
     await s.waitUntil(async () => (await currentPage(s)) === "3", "page 3");
     await s.keys(["Control", "PageUp"]);
     await s.waitUntil(async () => (await currentPage(s)) === "2", "previous page");
-    const active = () => s.exec("return document.querySelector('[role=tab][aria-selected=true] .name').textContent");
+    const active = () => s.exec("return document.querySelector('.tab-label[aria-current=page] .name').textContent");
     await s.keys(["Control", "Shift", "Tab"]);
     await s.waitUntil(async () => (await active()) === "single-page.pdf", "previous tab");
     const nextTitle = await s.attr('[data-command="view.zoomIn"]', "title");
@@ -466,7 +466,7 @@ await test("show-in-folder and log-folder never fail silently", async () => {
       await new Promise((r) => setTimeout(r, 1500));
       const after = await noticeTexts(s);
       if (after.length > before) assert(after.some((t) => t.startsWith("Couldn’t")), `failure explained: ${after}`);
-      assert((await s.exec("return document.querySelectorAll('[role=tab]').length")) === 1, "app still responsive");
+      assert((await s.exec("return document.querySelectorAll('.tab-label').length")) === 1, "app still responsive");
     }
   });
 });
@@ -521,6 +521,49 @@ await test("text layer is aligned on a 90°-rotated page", async () => {
     await s.doubleClickAt(r[0] + r[2] / 2, r[1] + r[3] * 0.8);
     await s.waitUntil(async () => (await selection(s)).trim() === "PWMARK003", "word selected on rotated page");
     writeFileSync(join(ART, "rotated-selection.png"), await s.screenshot());
+  });
+});
+
+// Accessibility (Gate 3): axe-core is injected only into the test session; it is not part of the app.
+const AXE = (await import("node:fs")).readFileSync(new URL("../node_modules/axe-core/axe.min.js", import.meta.url), "utf8");
+async function axeCheck(s, name) {
+  // Measure the settled UI: colours sampled mid-fade (dialogs animate opacity) are not what users see.
+  await s.waitUntil(() => s.exec("return document.getAnimations().every(a => a.playState !== 'running')"), "animations settled");
+  await s.exec(`${AXE}; return typeof axe`);
+  const res = await s.execAsync(
+    "const done = arguments[arguments.length - 1]; axe.run(document, { resultTypes: ['violations'] }).then(r => done(r.violations.map(v => ({ id: v.id, impact: v.impact, help: v.help, nodes: v.nodes.length, sample: v.nodes[0]?.target?.join(' ') })))).catch(e => done([{ id: 'axe-error', impact: 'critical', help: String(e) }]));",
+  );
+  writeFileSync(join(ART, `axe-${name}.json`), JSON.stringify(res, null, 2));
+  const blocking = res.filter((v) => v.impact === "serious" || v.impact === "critical");
+  assert(blocking.length === 0, `${name}: ${blocking.map((v) => `${v.id} (${v.impact}, ${v.nodes} nodes, e.g. ${v.sample}): ${v.help}`).join("; ")}`);
+  return res;
+}
+
+await test("accessibility: no serious/critical axe violations on home, viewer, dialogs (light and dark)", async () => {
+  await withApp([], async (s) => {
+    await axeCheck(s, "home");
+  });
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    for (const theme of ["light", "dark"]) {
+      await s.exec(`document.documentElement.dataset.theme = "${theme}"; return 1`);
+      await axeCheck(s, `viewer-${theme}`);
+      await s.keys(["Control", "f"]);
+      await s.type('input[aria-label="Find in document"]', "PWMARK");
+      await s.keys(["Enter"]);
+      await s.waitUntil(async () => (await s.exec("return document.querySelector('.searchbar .count')?.textContent")) === "1 of 5", "search done");
+      await axeCheck(s, `search-${theme}`);
+      await s.keys(["Escape"]);
+      await s.click('[data-testid="viewer"]');
+      await s.keys(["Control", "Shift", "E"]);
+      await s.waitFor('[role="dialog"]');
+      await axeCheck(s, `extract-dialog-${theme}`);
+      await s.keys(["Escape"]);
+      await s.keys(["Control", ","]);
+      await s.waitFor('[role="dialog"]');
+      await axeCheck(s, `settings-${theme}`);
+      await s.keys(["Escape"]);
+    }
   });
 });
 

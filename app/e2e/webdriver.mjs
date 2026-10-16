@@ -55,6 +55,11 @@ export class Session {
     return this.cmd("POST", "/execute/sync", { script, args });
   }
 
+  /** Run an async script; it must call the callback passed as its last argument. */
+  async execAsync(script, ...args) {
+    return this.cmd("POST", "/execute/async", { script, args });
+  }
+
   async find(css) {
     const v = await this.cmd("POST", "/element", { using: "css selector", value: css });
     return v[ELEMENT];

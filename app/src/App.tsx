@@ -482,7 +482,8 @@ export function App() {
 
   return (
     <div className="app">
-      <header className="toolbar" role="toolbar" aria-label="Main toolbar">
+      <header className="toolbar-host">
+      <div className="toolbar" role="toolbar" aria-label="Main toolbar">
         <div className="group">
           <CommandButton command="file.open" handlers={handlers} bindings={bindings} icon={<FolderOpen />} showLabel label="Open" />
         </div>
@@ -527,55 +528,69 @@ export function App() {
           <CommandButton command="app.commandPalette" handlers={handlers} bindings={bindings} icon={<CommandIcon />} />
           <CommandButton command="app.settings" handlers={handlers} bindings={bindings} icon={<SettingsIcon />} />
         </div>
+      </div>
       </header>
 
       {tabs.length > 0 ? (
-        <div className="tabbar" role="tablist" aria-label="Open documents">
+        <nav className="tabbar" aria-label="Open documents">
+          <ul className="tablist">
           {tabs.map((t) => (
-            <div
-              key={t.doc_id}
-              className="tab"
-              role="tab"
-              tabIndex={t.doc_id === activeId ? 0 : -1}
-              aria-selected={t.doc_id === activeId}
-              title={t.path}
-              onClick={() => setActiveId(t.doc_id)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") setActiveId(t.doc_id);
-                if ((e.key === "F10" && e.shiftKey) || e.key === "ContextMenu") {
+            // The close button is a sibling of the tab, not inside it (nested interactive controls are
+            // not reliably announced by screen readers).
+            <li key={t.doc_id} className={`tab ${t.doc_id === activeId ? "selected" : ""}`} title={t.path} onAuxClick={(e) => e.preventDefault()}>
+              <button
+                type="button"
+                className="tab-label"
+                data-doc={t.doc_id}
+                tabIndex={t.doc_id === activeId ? 0 : -1}
+                aria-current={t.doc_id === activeId ? "page" : undefined}
+                onClick={() => setActiveId(t.doc_id)}
+                onKeyDown={(e) => {
+                  const i = tabs.findIndex((x) => x.doc_id === t.doc_id);
+                  const move = (j: number) => {
+                    const next = tabs[(j + tabs.length) % tabs.length]!;
+                    setActiveId(next.doc_id);
+                    requestAnimationFrame(() => document.querySelector<HTMLElement>(`.tab-label[data-doc="${next.doc_id}"]`)?.focus());
+                  };
+                  if (e.key === "ArrowRight") move(i + 1);
+                  else if (e.key === "ArrowLeft") move(i - 1);
+                  else if (e.key === "Home") move(0);
+                  else if (e.key === "End") move(tabs.length - 1);
+                  else if (e.key === "Delete") closeTab(t.doc_id);
+                  else if ((e.key === "F10" && e.shiftKey) || e.key === "ContextMenu") {
+                    const r = e.currentTarget.getBoundingClientRect();
+                    tabMenu(t, r.left, r.bottom);
+                  } else return;
                   e.preventDefault();
-                  const r = e.currentTarget.getBoundingClientRect();
-                  tabMenu(t, r.left, r.bottom);
-                }
-              }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                tabMenu(t, e.clientX, e.clientY);
-              }}
-              onAuxClick={(e) => e.preventDefault()}
-            >
-              <span className="name">{t.name}</span>
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  tabMenu(t, e.clientX, e.clientY);
+                }}
+              >
+                <span className="name">{t.name}</span>
+              </button>
               <button
                 type="button"
                 className="btn icon close"
+                tabIndex={-1}
                 aria-label={`Close ${t.name}`}
-                title={`Close (${bindings["file.close"]?.[0] ?? ""})`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  closeTab(t.doc_id);
-                }}
+                title={`Close (${bindings["file.close"]?.[0] ?? ""}, or Delete on the tab)`}
+                onClick={() => closeTab(t.doc_id)}
               >
                 <X />
               </button>
-            </div>
+            </li>
           ))}
-        </div>
+          </ul>
+        </nav>
       ) : (
         <div />
       )}
 
       {active ? (
-        <div className="workspace" style={showThumbs ? undefined : { gridTemplateColumns: "1fr" }}>
+        <main className="workspace" aria-label={active.name} style={showThumbs ? undefined : { gridTemplateColumns: "1fr" }}>
+          <h1 className="sr-only">{active.name}</h1>
           {showThumbs && <Thumbnails doc={active} currentPage={view.page} onSelect={goToPage} onContextMenu={pageMenu} />}
           <div ref={viewerHost} style={{ display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0, minWidth: 0 }}>
             {searchOpen ? (
@@ -616,7 +631,7 @@ export function App() {
               }}
             />
           </div>
-        </div>
+        </main>
       ) : (
         <div ref={viewerHost} style={{ display: "grid", minHeight: 0 }}>
           <Home

@@ -209,14 +209,14 @@ export function Dialog({ title, onClose, children, footer, wide, busy, initialFo
   return (
     <div className="backdrop" onMouseDown={(e) => e.target === e.currentTarget && !busy && onClose()}>
       <div ref={ref} className={`dialog ${wide ? "wide" : ""}`} role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={onKeyDown}>
-        <header>
+        <div className="dialog-header">
           <h2 id={titleId}>{title}</h2>
           <button type="button" className="btn icon dialog-close" aria-label="Close" title={busy ? "Wait for the task to finish or cancel it" : "Close (Esc)"} disabled={busy} onClick={onClose}>
             <X />
           </button>
-        </header>
+        </div>
         <div className="body">{children}</div>
-        {footer && <footer>{footer}</footer>}
+        {footer && <div className="dialog-footer">{footer}</div>}
       </div>
     </div>
   );

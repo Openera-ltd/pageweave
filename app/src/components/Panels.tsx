@@ -192,7 +192,7 @@ export function StatusBar({
     setDraft(null);
   };
   return (
-    <footer className="statusbar">
+    <footer className="statusbar" aria-label="Status">
       {doc ? (
         <>
           <span>
@@ -254,7 +254,7 @@ export interface Notice {
 
 export function Notices({ notices, onDismiss }: { notices: Notice[]; onDismiss: (id: number) => void }) {
   return (
-    <div className="notices" aria-live="polite">
+    <div className="notices" role="region" aria-label="Notifications" aria-live="polite">
       {notices.map((n) => (
         <NoticeView key={n.id} notice={n} onDismiss={onDismiss} />
       ))}
