@@ -64,10 +64,13 @@ export class Session {
     await this.cmd("POST", `/element/${el}/click`, {});
   }
 
+  /** Type into a field and verify the field received exactly that text (guards against input-simulation quirks). */
   async type(css, text) {
     const el = await this.waitFor(css);
     await this.cmd("POST", `/element/${el}/clear`, {});
     await this.cmd("POST", `/element/${el}/value`, { text });
+    const got = await this.exec("return arguments[0].value", { [ELEMENT]: el });
+    if (got !== text) throw new Error(`typed ${JSON.stringify(text)} into ${css} but the field contains ${JSON.stringify(got)} (WebDriver input simulation)`);
   }
 
   async text(css) {

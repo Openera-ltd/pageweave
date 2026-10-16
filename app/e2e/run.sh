@@ -5,6 +5,7 @@ set -euo pipefail
 APP="$(realpath "${1:?app binary}")"
 ART="$(realpath -m "${2:-e2e-artifacts}")"
 mkdir -p "$ART"
+rm -f "$ART"/FAIL-* "$ART"/e2e-results.json
 HOME_DIR="$(mktemp -d)"
 export XDG_CONFIG_HOME="$HOME_DIR/config" XDG_DATA_HOME="$HOME_DIR/data" XDG_CACHE_HOME="$HOME_DIR/cache"
 cd "$(dirname "$0")/.."

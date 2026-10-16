@@ -140,21 +140,24 @@ await test("zoom buttons, preset select and Ctrl+0", async () => {
 
 await test("find: Ctrl+F, Enter, F3 cycle and highlight; Escape closes", async () => {
   await withApp([join(FIX, "search-terms.pdf")], async (s) => {
+    const countText = () => s.exec("return document.querySelector('.searchbar .count')?.textContent ?? ''");
     await pageLoaded(s, 0);
     await s.keys(["Control", "f"]);
     await s.waitFor('input[aria-label="Find in document"]');
     await s.type('input[aria-label="Find in document"]', "alpha");
     await s.keys(["Enter"]);
-    await s.waitUntil(async () => (await s.text(".searchbar .count")) === "1 of 5", "1 of 5");
+    await s.waitUntil(async () => (await countText()) === "1 of 5", "1 of 5");
     const hl = await s.exec("return document.querySelectorAll('.hit').length");
     assert(hl >= 5, `highlights drawn (${hl})`);
     await s.keys(["F3"]);
-    await s.waitUntil(async () => (await s.text(".searchbar .count")) === "2 of 5", "2 of 5");
+    await s.waitUntil(async () => (await countText()) === "2 of 5", "2 of 5");
     await s.keys(["Shift", "F3"]);
-    await s.waitUntil(async () => (await s.text(".searchbar .count")) === "1 of 5", "back to 1 of 5");
+    await s.waitUntil(async () => (await countText()) === "1 of 5", "back to 1 of 5");
+    // Toggling an option re-runs the search without pressing Enter again.
     await s.click('button[aria-label="Whole words only"]');
-    await s.keys(["Enter"]);
-    await s.waitUntil(async () => (await s.text(".searchbar .count")) === "1 of 4", "whole word 1 of 4");
+    await s.waitUntil(async () => (await countText()) === "1 of 4", "whole word re-search 1 of 4");
+    await s.click('button[aria-label="Match case"]');
+    await s.waitUntil(async () => (await countText()) === "1 of 2", "case + whole word 1 of 2");
     writeFileSync(join(ART, "search.png"), await s.screenshot());
     await s.keys(["Escape"]);
     await s.waitUntil(async () => (await s.exec("return !document.querySelector('.searchbar')")), "search closed");
@@ -209,16 +212,17 @@ await test("existing output: Keep both creates a renamed copy; original untouche
   assert(readFileSync(out, "utf8") === "existing", "existing file not overwritten");
 });
 
-await test("rotate page from right-click context menu", async () => {
+await test("rotate a page from the keyboard context menu (Shift+F10)", async () => {
   const out = join(work, "rotated.pdf");
   await withApp([join(FIX, "five-pages.pdf")], async (s) => {
     await pageLoaded(s, 0);
-    await s.contextClick('[data-page="0"]');
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Shift", "F10"]);
     await s.waitFor('[role="menu"]');
-    const labels = await s.exec("return [...document.querySelectorAll('[role=menuitem]')].map(m => m.innerText.trim())");
-    assert(labels.some((l) => l.startsWith("Rotate page 1")), `menu items: ${labels}`);
-    writeFileSync(join(ART, "context-menu.png"), await s.screenshot());
-    await s.click('[role="menuitem"][data-command="pages.rotate"]');
+    const focused = await s.exec("return document.activeElement?.getAttribute('role')");
+    assert(focused === "menuitem", `first menu item focused (${focused})`);
+    await s.keys(["ArrowDown"]);
+    await s.keys(["Enter"]);
     await s.waitFor('[role="dialog"]');
     assert((await s.exec("return document.querySelector('#pages').value")) === "1", "range prefilled with page 1");
     await s.waitUntil(async () => (await s.text("#pages-msg")) === "1 page selected", "valid");
@@ -228,11 +232,18 @@ await test("rotate page from right-click context menu", async () => {
   });
 });
 
-await test("Escape closes context menu and returns focus", async () => {
+await test("right-click page menu lists page actions; Escape closes it", async () => {
   await withApp([join(FIX, "five-pages.pdf")], async (s) => {
     await pageLoaded(s, 0);
     await s.contextClick('[data-page="0"]');
     await s.waitFor('[role="menu"]');
+    const labels = await s.exec("return [...document.querySelectorAll('[role=menuitem]')].map(m => m.innerText.trim())");
+    for (const want of ["Extract page 1…", "Rotate page 1…", "Delete page 1…", "Zoom in", "Document properties"]) {
+      assert(labels.some((l) => l.startsWith(want)), `menu has ${want}: ${labels}`);
+    }
+    const inside = await s.exec("const r=document.querySelector('[role=menu]').getBoundingClientRect(); return r.right<=innerWidth && r.bottom<=innerHeight && r.left>=0 && r.top>=0");
+    assert(inside, "menu inside the window");
+    writeFileSync(join(ART, "context-menu.png"), await s.screenshot());
     await s.keys(["Escape"]);
     await s.waitUntil(async () => await s.exec("return !document.querySelector('[role=menu]')"), "menu closed");
   });
@@ -329,6 +340,8 @@ await test("disabled controls explain why (no document open)", async () => {
     const title = await s.attr('[data-command="view.zoomIn"]', "title");
     assert((await s.attr('[data-command="view.zoomIn"]', "aria-disabled")) === "true", "zoom disabled");
     assert(title.includes("Open a PDF first"), `reason in tooltip: ${title}`);
+    const looks = await s.exec(`return [...document.querySelectorAll('[aria-disabled="true"], select:disabled')].map(e => getComputedStyle(e).opacity)`);
+    assert(looks.length > 0 && looks.every((o) => Number(o) < 0.6), `disabled controls look disabled (opacities ${looks})`);
     writeFileSync(join(ART, "home.png"), await s.screenshot());
   });
 });

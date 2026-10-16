@@ -225,12 +225,13 @@ export function App() {
   );
 
   /* ---------- Search ---------- */
-  const runSearch = useCallback(async () => {
+  const runSearch = useCallback(async (override?: Partial<Pick<SearchState, "matchCase" | "wholeWord">>) => {
+    const opts = { matchCase: search.matchCase, wholeWord: search.wholeWord, ...override };
     if (!active || !search.query.trim()) return;
     const token = ++searchToken.current;
     setSearch((s) => ({ ...s, status: "searching" }));
     try {
-      const r = await api.search(active.doc_id, search.query, search.matchCase, search.wholeWord);
+      const r = await api.search(active.doc_id, search.query, opts.matchCase, opts.wholeWord);
       if (token !== searchToken.current) return; // stale result
       setHits(r.hits);
       const start = Math.max(0, r.hits.findIndex((h) => h.page >= view.page));
@@ -545,8 +546,12 @@ export function App() {
                     setHits([]);
                   }
                   setSearch((s) => ({ ...s, ...p }));
+                  // Toggling an option re-runs an existing query immediately.
+                  if ((p.matchCase !== undefined || p.wholeWord !== undefined) && search.query.trim()) {
+                    runSearch({ matchCase: p.matchCase ?? search.matchCase, wholeWord: p.wholeWord ?? search.wholeWord });
+                  }
                 }}
-                onSubmit={runSearch}
+                onSubmit={() => runSearch()}
                 onNext={() => stepHit(1)}
                 onPrevious={() => stepHit(-1)}
                 onClose={closeSearch}

@@ -201,17 +201,20 @@ textarea {
   padding: 0;
 }
 
-.btn:hover:not(:disabled) {
+.btn:hover:not(:disabled):not([aria-disabled="true"]) {
   background: var(--surface-hover);
 }
 
-.btn:active:not(:disabled),
+.btn:active:not(:disabled):not([aria-disabled="true"]),
 .btn[aria-pressed="true"],
 .btn[aria-expanded="true"] {
   background: var(--surface-pressed);
 }
 
-.btn:disabled {
+.btn:disabled,
+.btn[aria-disabled="true"],
+.select:disabled,
+.input:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
@@ -221,7 +224,7 @@ textarea {
   color: var(--accent-contrast);
 }
 
-.btn.primary:hover:not(:disabled) {
+.btn.primary:hover:not(:disabled):not([aria-disabled="true"]) {
   background: color-mix(in srgb, var(--accent) 88%, black);
 }
 
@@ -669,6 +672,8 @@ textarea {
 
 .segmented {
   display: inline-flex;
+  justify-self: start;
+  max-width: 100%;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-1);
   overflow: hidden;

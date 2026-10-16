@@ -48,32 +48,64 @@ jobs:
           command: check advisories licenses bans sources
 
   linux:
-    name: Linux — fmt, clippy, tests, fixtures
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    name: Linux — fmt, clippy, unit/integration tests, UI tests, real-app E2E
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      - name: System libraries (WebKitGTK, WebDriver, virtual display)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev webkit2gtk-driver xvfb
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
       - name: Fetch pinned PDFium (checksum verified)
         run: python3 -I tools/fetch_pdfium.py --platform linux-x64
       - name: Fixtures are reproducible from the generator
         run: |
           python3 -I tools/fixtures/gen_fixtures.py
           git diff --exit-code -- fixtures/pdf ':!fixtures/pdf/encrypted-*'
+      - name: UI install, typecheck, unit tests, production build
+        working-directory: app
+        run: |
+          npm ci --no-audit --no-fund
+          npx tsc --noEmit
+          npx vitest run
+          npx vite build
       - name: rustfmt
         run: cargo fmt --all -- --check
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: Tests
+      - name: Rust tests
         run: cargo test --workspace --no-fail-fast
+      - name: Build the real app (embedded UI)
+        working-directory: app
+        run: npx tauri build --debug --no-bundle
+      - name: Install tauri-driver
+        run: cargo install --locked tauri-driver@2.1.0
+      - name: Real-app end-to-end tests (WebDriver, virtual display)
+        working-directory: app
+        env:
+          PAGEWEAVE_CLI: ${{ github.workspace }}/target/debug/pageweave
+        run: ./e2e/run.sh ../target/debug/pageweave-app ../e2e-artifacts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-linux
+          path: e2e-artifacts
+          retention-days: 14
 
   windows:
-    name: Windows — tests and packaged CLI smoke test
+    name: Windows — tests, installer build, install/launch/uninstall smoke, packaged CLI
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
@@ -81,8 +113,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
       - name: Fetch pinned PDFium (checksum verified)
         run: python -I tools/fetch_pdfium.py --platform win-x64
+      - name: UI install and build
+        working-directory: app
+        run: |
+          npm ci --no-audit --no-fund
+          npx vitest run
+          npx vite build
       - name: Tests
         run: cargo test --workspace --no-fail-fast
       - name: Build release CLI
@@ -121,4 +164,48 @@ jobs:
         with:
           name: pageweave-cli-windows-x64
           path: dist/pageweave-cli-windows-x64
+          retention-days: 14
+
+      - name: Build Windows installers (NSIS + MSI)
+        working-directory: app
+        run: npx tauri build
+      - name: Install silently, launch, verify, uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $setup = Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          Write-Host "installer: $($setup.Name) $((Get-FileHash $setup.FullName).Hash)"
+          $dir = Join-Path $env:RUNNER_TEMP "PageWeave Install"
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList "/S", "/D=$dir" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "installer exit $($p.ExitCode)" }
+          Get-ChildItem -Recurse $dir | Select-Object FullName, Length | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
+          $exe = Get-ChildItem $dir -Filter *.exe | Where-Object { $_.Name -notlike "uninstall*" } | Select-Object -First 1
+          foreach ($f in @("pdfium.dll", "THIRD_PARTY_NOTICES.md", "licenses/pdfium/pdfium.txt")) {
+            if (-not (Test-Path (Join-Path $dir $f))) { throw "installed package is missing $f" }
+          }
+          $fixture = Join-Path $env:RUNNER_TEMP "smoke input.pdf"
+          Copy-Item fixtures/pdf/five-pages.pdf $fixture
+          $app = Start-Process -FilePath $exe.FullName -ArgumentList "`"$fixture`"" -PassThru
+          Start-Sleep -Seconds 20
+          if ($app.HasExited) { throw "app exited early with code $($app.ExitCode)" }
+          $log = Get-ChildItem -Recurse "$env:LOCALAPPDATA\io.github.kuyamcliff.pageweave" -Filter pageweave.jsonl | Select-Object -First 1
+          if (-not $log) { throw "no log file written" }
+          $lines = Get-Content $log.FullName
+          $lines | Write-Host
+          if (-not ($lines | Select-String '"event":"startup"')) { throw "no startup event" }
+          if (-not ($lines | Select-String '"event":"open".*"ok":true.*"pages":5')) { throw "document did not open in the installed app" }
+          if ($lines | Select-String "smoke input") { throw "file name leaked into the log" }
+          Stop-Process -Id $app.Id -Force
+          Start-Sleep -Seconds 2
+          $un = Get-ChildItem $dir -Filter "uninstall*.exe" | Select-Object -First 1
+          $u = Start-Process -FilePath $un.FullName -ArgumentList "/S" -Wait -PassThru
+          Start-Sleep -Seconds 5
+          if (Test-Path $exe.FullName) { throw "uninstall left the executable behind" }
+          Write-Host "install/launch/open/uninstall smoke test passed"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pageweave-windows-installers
+          path: |
+            target/release/bundle/nsis/*.exe
+            target/release/bundle/msi/*.msi
           retention-days: 14

@@ -107,7 +107,18 @@ export function SearchBar({
   const noHits = state.status !== "done" || state.count === 0;
 
   return (
-    <div className="searchbar" role="search">
+    <div
+      className="searchbar"
+      role="search"
+      onKeyDown={(e) => {
+        // Escape closes Find from any control in the bar, not only the text field.
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          onClose();
+        }
+      }}
+    >
       <input
         ref={input}
         className="input"
@@ -121,10 +132,6 @@ export function SearchBar({
             e.preventDefault();
             if (state.status === "done") (e.shiftKey ? onPrevious : onNext)();
             else onSubmit();
-          } else if (e.key === "Escape") {
-            e.preventDefault();
-            e.stopPropagation();
-            onClose();
           }
         }}
       />
