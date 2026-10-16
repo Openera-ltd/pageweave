@@ -111,6 +111,11 @@ def numbered_pages(n: int, size=LETTER) -> list[dict]:
 
 
 def main() -> int:
+    if len(sys.argv) == 4 and sys.argv[1] == "--big":
+        # Large document for benchmarks (not committed): gen_fixtures.py --big PAGES OUT.pdf
+        Path(sys.argv[3]).write_bytes(build_document(numbered_pages(int(sys.argv[2])), title="Benchmark"))
+        print(f"wrote {sys.argv[2]} pages to {sys.argv[3]}")
+        return 0
     out = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent.parent.parent / "fixtures" / "pdf"
     out.mkdir(parents=True, exist_ok=True)
     files: dict[str, bytes] = {}
