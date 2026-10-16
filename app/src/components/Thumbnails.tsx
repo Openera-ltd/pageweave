@@ -41,7 +41,7 @@ export function Thumbnails({ doc, currentPage, onSelect, onContextMenu }: Props)
   };
 
   return (
-    <nav ref={ref} className="sidebar" aria-label="Page thumbnails" onKeyDown={onKeyDown}>
+    <nav ref={ref} className="panel-scroll" aria-label="Page thumbnails" onKeyDown={onKeyDown}>
       {doc.info.pages.map((p) => (
         <Thumb
           key={p.index}

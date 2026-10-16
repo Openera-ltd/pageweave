@@ -567,6 +567,29 @@ await test("accessibility: no serious/critical axe violations on home, viewer, d
   });
 });
 
+await test("bookmarks panel navigates; disabled with a reason when a document has none", async () => {
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "Shift", "B"]);
+    await s.waitFor('[data-bookmark="3"]');
+    const titles = await s.exec("return [...document.querySelectorAll('.bookmark .title')].map(t => t.textContent)");
+    assert(titles.join("|") === "Chapter 1|Chapter 2|Chapter 3|Chapter 4|Chapter 5", `titles ${titles}`);
+    await s.click('[data-bookmark="3"]');
+    await s.waitUntil(async () => (await currentPage(s)) === "4", "jumped to page 4");
+    await s.waitUntil(async () => (await s.attr('[data-bookmark="3"]', "aria-current")) === "location", "current bookmark marked");
+    await s.click("#sb-tab-pages");
+    await s.waitFor('[data-thumb="0"]');
+    await axeCheck(s, "bookmarks-sidebar");
+  });
+  await withApp([join(FIX, "single-page.pdf")], async (s) => {
+    assert((await s.attr("#sb-tab-bookmarks", "aria-disabled")) === "true", "bookmarks tab disabled");
+    assert((await s.attr("#sb-tab-bookmarks", "title")).includes("no bookmarks"), "reason shown");
+    const cmdTitle = await s.exec("return document.querySelector('#sb-tab-bookmarks').title");
+    assert(cmdTitle.length > 0, "tooltip present");
+  });
+});
+
 /* ------------------------------------------------------------------ */
 const summary = {
   app: APP,

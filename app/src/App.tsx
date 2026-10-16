@@ -20,7 +20,7 @@ import { applyAppearance } from "./theme";
 import { toPwError, type AppInfo, type JobSnapshot, type OpenedDoc, type PwError, type SearchHit, type Settings } from "./types";
 import { CommandButton, Menu, type MenuItemOrSeparator } from "./components/ui";
 import { Viewer, type ScrollRequest } from "./components/Viewer";
-import { Thumbnails } from "./components/Thumbnails";
+import { Sidebar, type SidebarView } from "./components/Sidebar";
 import { PageToolsDialog, type PageTool } from "./components/PageToolsDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { CommandPalette, Home, Notices, PasswordDialog, PropertiesDialog, SearchBar, StatusBar, type Notice, type NoticeAction, type SearchState } from "./components/Panels";
@@ -60,6 +60,7 @@ export function App() {
   const [activeId, setActiveId] = useState<number | null>(null);
   const [views, setViews] = useState<Record<number, ViewState>>({});
   const [showThumbs, setShowThumbs] = useState(true);
+  const [sidebarView, setSidebarView] = useState<SidebarView>("pages");
   const [dialog, setDialog] = useState<DialogState>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [notices, setNotices] = useState<Notice[]>([]);
@@ -338,6 +339,14 @@ export function App() {
       available: needDoc,
     },
     "view.toggleThumbnails": { run: () => setShowThumbs((s) => !s), available: needDoc },
+    "view.showBookmarks": {
+      run: () => {
+        setShowThumbs(true);
+        setSidebarView("bookmarks");
+        requestAnimationFrame(() => document.querySelector<HTMLElement>('.bookmarks [tabindex="0"]')?.focus());
+      },
+      available: all(needDoc, () => (active && active.info.bookmarks.length > 0 ? true : "This document has no bookmarks.")),
+    },
     "nav.nextPage": { run: () => goToPage(view.page + 1), available: all(needDoc, () => (active && view.page < active.info.page_count - 1 ? true : "Already on the last page.")) },
     "nav.previousPage": { run: () => goToPage(view.page - 1), available: all(needDoc, () => (view.page > 0 ? true : "Already on the first page.")) },
     "nav.firstPage": { run: () => goToPage(0), available: needDoc },
@@ -591,7 +600,9 @@ export function App() {
       {active ? (
         <main className="workspace" aria-label={active.name} style={showThumbs ? undefined : { gridTemplateColumns: "1fr" }}>
           <h1 className="sr-only">{active.name}</h1>
-          {showThumbs && <Thumbnails doc={active} currentPage={view.page} onSelect={goToPage} onContextMenu={pageMenu} />}
+          {showThumbs && (
+            <Sidebar doc={active} view={sidebarView} onView={setSidebarView} currentPage={view.page} onSelectPage={goToPage} onPageContextMenu={pageMenu} />
+          )}
           <div ref={viewerHost} style={{ display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0, minWidth: 0 }}>
             {searchOpen ? (
               <SearchBar

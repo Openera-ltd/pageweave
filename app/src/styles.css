@@ -372,11 +372,104 @@ textarea {
 
 /* ---------- Sidebar thumbnails ---------- */
 .sidebar {
-  width: calc(180px * var(--ui-scale));
+  width: calc(200px * var(--ui-scale));
   background: var(--surface);
   border-right: 1px solid var(--border);
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 0;
+}
+
+.sidebar-tabs {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.sidebar-tabs [role="tab"] {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control-h);
+  padding: 0 var(--space-3);
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  font-size: var(--font-size-1);
+}
+
+.sidebar-tabs [role="tab"] svg {
+  width: var(--icon);
+  height: var(--icon);
+}
+
+.sidebar-tabs [role="tab"][aria-selected="true"] {
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.sidebar-tabs [role="tab"][aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.sidebar-panel {
+  min-height: 0;
+  display: grid;
+}
+
+.panel-scroll {
   overflow-y: auto;
   padding: var(--space-3);
+  min-height: 0;
+}
+
+.bookmarks {
+  list-style: none;
+  margin: 0;
+}
+
+.bookmark {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--control-h);
+  padding-right: var(--space-2);
+  border: none;
+  border-radius: var(--radius-1);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.bookmark:hover:not([aria-disabled="true"]) {
+  background: var(--surface-hover);
+}
+
+.bookmark[aria-current="location"] {
+  background: var(--selection);
+  font-weight: 600;
+}
+
+.bookmark[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.bookmark .title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bookmark .num {
+  color: var(--text-muted);
+  font-size: var(--font-size-1);
 }
 
 .thumb {
