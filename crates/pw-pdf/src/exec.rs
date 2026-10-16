@@ -90,6 +90,11 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(w);
             (vec![out(&c, Some(n))], json!({ "page_count": n }))
         }
+        Operation::Annotate { input, annotations, output } => {
+            let (c, n, w) = edit::annotate(input, &opts, annotations, output, policy)?;
+            warnings.extend(w);
+            (vec![out(&c, Some(n))], json!({ "page_count": n, "annotations": annotations.len() }))
+        }
         Operation::Split { input, split, output_dir } => {
             let (parts, w) = edit::split(input, &opts, split, output_dir, policy, &cancelled)?;
             warnings.extend(w);

@@ -12,7 +12,7 @@ pub use document::{
     open_document, page_text_segments, render_page_png, search, BookmarkInfo, DocumentInfo, OpenOptions, PageInfo,
     PageText, SearchHit, SearchRect, TextSegment,
 };
-pub use edit::{delete_pages, extract_pages, merge, rotate_pages, split};
+pub use edit::{annotate, delete_pages, extract_pages, merge, rotate_pages, split};
 pub use exec::execute;
 
 use pdfium_render::prelude::*;

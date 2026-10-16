@@ -331,3 +331,115 @@ pub fn split(
     }
     Ok((committed, protection_warnings(src_encrypted, !any_unprotected)))
 }
+
+fn parse_color(hex: &str) -> PwResult<PdfColor> {
+    let v = u32::from_str_radix(hex.trim_start_matches('#'), 16)
+        .map_err(|_| PwError::invalid("annotate.color", "Annotation colors must look like #rrggbb."))?;
+    Ok(PdfColor::new((v >> 16) as u8, (v >> 8) as u8, v as u8, 255))
+}
+
+fn pdf_rect(r: &pw_core::ops::RectPt) -> PdfRect {
+    PdfRect::new_from_values(r.bottom, r.left, r.top, r.right)
+}
+
+/// Add annotations to a copy of the document. Markup annotations (highlight, underline,
+/// strike-out) get one quad per rectangle; notes are placed at the first rectangle's top-left.
+/// The staged output is reopened and the annotation count of every touched page is verified.
+pub fn annotate(
+    input: &Path,
+    opts: &OpenOptions,
+    specs: &[pw_core::ops::AnnotationSpec],
+    output: &Path,
+    policy: CollisionPolicy,
+) -> PwResult<EditOutcome> {
+    use pw_core::ops::AnnotationKind;
+    let pdfium = init(None)?;
+    let doc = load(pdfium, input, opts)?;
+    let count = doc.pages().len().max(0) as u32;
+    let mut expected: std::collections::BTreeMap<u32, usize> = std::collections::BTreeMap::new();
+    for spec in specs {
+        if spec.page >= count {
+            return Err(PwError::invalid(
+                "annotate.page",
+                format!("Page {} does not exist; the document has {count} pages.", spec.page + 1),
+            ));
+        }
+    }
+    for spec in specs {
+        let mut page = doc.pages().get(spec.page as PdfPageIndex).map_err(|e| map_pdfium_error(&e, "page"))?;
+        let before = *expected.entry(spec.page).or_insert_with(|| page.annotations().len() as usize);
+        let color = parse_color(&spec.color)?;
+        let first = spec
+            .rects
+            .first()
+            .ok_or_else(|| PwError::invalid("annotate.rects", "Each annotation needs a location."))?;
+        let bounds = spec.rects.iter().fold(*first, |acc, r| pw_core::ops::RectPt {
+            left: acc.left.min(r.left),
+            bottom: acc.bottom.min(r.bottom),
+            right: acc.right.max(r.right),
+            top: acc.top.max(r.top),
+        });
+        let annots = page.annotations_mut();
+        let err = |e: PdfiumError| map_pdfium_error(&e, "annotate");
+        macro_rules! markup {
+            ($create:ident) => {{
+                let mut a = annots.$create().map_err(err)?;
+                for r in &spec.rects {
+                    a.attachment_points_mut()
+                        .create_attachment_point_at_end(PdfQuadPoints::from_rect(&pdf_rect(r)))
+                        .map_err(err)?;
+                }
+                a.set_bounds(pdf_rect(&bounds)).map_err(err)?;
+                a.set_stroke_color(color).map_err(err)?;
+                if let Some(c) = &spec.contents {
+                    a.set_contents(c).map_err(err)?;
+                }
+            }};
+        }
+        match spec.kind {
+            AnnotationKind::Highlight => markup!(create_highlight_annotation),
+            AnnotationKind::Underline => markup!(create_underline_annotation),
+            AnnotationKind::StrikeOut => markup!(create_strikeout_annotation),
+            AnnotationKind::Note => {
+                let text = spec.contents.as_deref().unwrap_or_default();
+                let mut a = annots.create_text_annotation(text).map_err(err)?;
+                let icon = pw_core::ops::RectPt {
+                    left: first.left,
+                    bottom: first.top - 18.0,
+                    right: first.left + 18.0,
+                    top: first.top,
+                };
+                a.set_bounds(pdf_rect(&icon)).map_err(err)?;
+                a.set_stroke_color(color).map_err(err)?;
+            }
+        }
+        expected.insert(spec.page, before + 1);
+    }
+    let bytes = save_bytes(&doc)?;
+    let src_encrypted = source_encrypted(&doc);
+    let protected = [input.to_path_buf()];
+    let mut encrypted = false;
+    let c = write_atomic_bytes(output, policy, &protected, &bytes, |staged| {
+        encrypted =
+            verify_output(pdfium, staged, &Expect { page_count: count, password: opts.password, rotations: None })?;
+        let reopened =
+            pdfium.load_pdf_from_file(staged, if encrypted { opts.password } else { None }).map_err(|_| {
+                PwError::new(ErrorCategory::ValidationFailed, "output.verify", "The output could not be reopened.")
+            })?;
+        for (page, want) in &expected {
+            let got = reopened.pages().get(*page as PdfPageIndex).map(|p| p.annotations().len() as usize).unwrap_or(0);
+            if got != *want {
+                return Err(PwError::new(
+                    ErrorCategory::ValidationFailed,
+                    "output.verify",
+                    format!(
+                        "The output failed verification (page {} has {got} annotations, expected {want}).",
+                        page + 1
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    })?;
+    Ok((c, count, protection_warnings(src_encrypted, encrypted)))
+}

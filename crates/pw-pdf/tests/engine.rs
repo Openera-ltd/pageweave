@@ -400,3 +400,114 @@ fn page_text_segments_have_text_and_geometry() {
         "text.page_out_of_bounds"
     );
 }
+
+fn marker_rect(path: &Path, page: u32, needle: &str) -> pw_core::ops::RectPt {
+    let t = pw_pdf::page_text_segments(path, &opts(), page).expect("segments");
+    let s = t.segments.iter().find(|s| s.text.contains(needle)).expect("run with marker");
+    pw_core::ops::RectPt { left: s.left, bottom: s.bottom, right: s.right, top: s.top }
+}
+
+#[test]
+fn annotate_adds_verified_markup_and_note_without_touching_source() {
+    use pw_core::ops::{AnnotationKind, AnnotationSpec};
+    let dir = tempfile::tempdir().expect("tmp");
+    let src = fixture("five-pages.pdf");
+    let before = sha(&src);
+    let rect = marker_rect(&src, 1, "PWMARK002");
+    let out = dir.path().join("annotated.pdf");
+    let spec = |kind, color: &str, contents: Option<&str>| AnnotationSpec {
+        page: 1,
+        kind,
+        rects: vec![rect],
+        color: color.into(),
+        contents: contents.map(Into::into),
+    };
+    let r = run(Operation::Annotate {
+        input: src.clone(),
+        annotations: vec![
+            spec(AnnotationKind::Highlight, "#ffd400", None),
+            spec(AnnotationKind::Underline, "#2f6fde", None),
+            spec(AnnotationKind::Note, "#ff8800", Some("Check this marker")),
+        ],
+        output: out.clone(),
+    })
+    .expect("annotate");
+    assert_eq!(r.data["annotations"], 3);
+    assert_eq!(sha(&src), before, "source unchanged");
+
+    // Independent parser: page 2 carries exactly these annotations with geometry and colour.
+    let doc = lopdf::Document::load(&out).expect("lopdf parses output");
+    let pages = doc.get_pages();
+    let page2 = doc.get_object(pages[&2]).and_then(|o| o.as_dict()).expect("page 2 dict");
+    let annots = page2.get(b"Annots").and_then(|a| a.as_array()).expect("/Annots");
+    assert_eq!(annots.len(), 3);
+    let mut subtypes = Vec::new();
+    for a in annots {
+        let d = doc.dereference(a).expect("deref").1.as_dict().expect("annot dict").clone();
+        let st = d
+            .get(b"Subtype")
+            .and_then(|s| s.as_name())
+            .map(|n| String::from_utf8_lossy(n).into_owned())
+            .expect("subtype");
+        if st == "Highlight" {
+            let q = d.get(b"QuadPoints").and_then(|q| q.as_array()).expect("quad points");
+            assert_eq!(q.len(), 8);
+            let c = d.get(b"C").and_then(|c| c.as_array()).expect("colour");
+            let red = c[0].as_float().expect("red");
+            assert!((red - 1.0).abs() < 0.01, "highlight colour red channel {red}");
+        }
+        if st == "Text" {
+            let contents = d
+                .get(b"Contents")
+                .and_then(|c| c.as_str())
+                .map(|b| String::from_utf8_lossy(b).into_owned())
+                .unwrap_or_default();
+            assert!(contents.contains("Check this marker"), "note contents: {contents:?}");
+        }
+        subtypes.push(st);
+    }
+    subtypes.sort();
+    assert_eq!(subtypes, vec!["Highlight", "Text", "Underline"]);
+    for (n, id) in &pages {
+        if *n != 2 {
+            let d = doc.get_object(*id).and_then(|o| o.as_dict()).expect("page");
+            assert!(d.get(b"Annots").is_err(), "page {n} untouched");
+        }
+    }
+
+    // Rendered by the engine: highlight colour appears inside the marked rectangle.
+    let (png, w, h) = render_page_png(&out, &opts(), 1, 1.0).expect("render");
+    let img = image::load_from_memory(&png).expect("decode").to_rgb8();
+    assert_eq!((w, h), (612, 792));
+    let (x0, x1) = (rect.left as u32 + 2, rect.right as u32 - 2);
+    let (y0, y1) = ((792.0 - rect.top) as u32 + 2, (792.0 - rect.bottom) as u32 - 2);
+    let yellowish = (y0..y1)
+        .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            let p = img.get_pixel(x, y);
+            p[0] > 200 && p[1] > 170 && p[2] < 120
+        })
+        .count();
+    assert!(yellowish > 50, "highlight is drawn ({yellowish} highlight-coloured pixels)");
+}
+
+#[test]
+fn annotate_rejects_bad_page_and_writes_nothing() {
+    use pw_core::ops::{AnnotationKind, AnnotationSpec, RectPt};
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("a.pdf");
+    let e = run(Operation::Annotate {
+        input: fixture("single-page.pdf"),
+        annotations: vec![AnnotationSpec {
+            page: 3,
+            kind: AnnotationKind::Highlight,
+            rects: vec![RectPt { left: 1.0, bottom: 1.0, right: 9.0, top: 9.0 }],
+            color: "#ffd400".into(),
+            contents: None,
+        }],
+        output: out.clone(),
+    })
+    .expect_err("page out of range");
+    assert_eq!(e.code, "annotate.page");
+    assert!(!out.exists());
+}

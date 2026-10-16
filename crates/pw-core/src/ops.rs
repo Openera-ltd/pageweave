@@ -24,6 +24,40 @@ pub enum SplitMode {
     Ranges { ranges: Vec<String> },
 }
 
+pub const MAX_ANNOTATIONS_PER_REQUEST: usize = 10_000;
+pub const MAX_NOTE_CHARS: usize = 10_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnnotationKind {
+    Highlight,
+    Underline,
+    StrikeOut,
+    /// A sticky note; positioned at the first rectangle's top-left corner.
+    Note,
+}
+
+/// Rectangle in PDF points in unrotated page space (origin bottom-left).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct RectPt {
+    pub left: f32,
+    pub bottom: f32,
+    pub right: f32,
+    pub top: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AnnotationSpec {
+    /// 0-based page index.
+    pub page: u32,
+    pub kind: AnnotationKind,
+    pub rects: Vec<RectPt>,
+    /// `#rrggbb`.
+    pub color: String,
+    #[serde(default)]
+    pub contents: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Operation {
@@ -73,6 +107,12 @@ pub enum Operation {
         split: SplitMode,
         output_dir: PathBuf,
     },
+    /// Add annotations and write the result to a new file.
+    Annotate {
+        input: PathBuf,
+        annotations: Vec<AnnotationSpec>,
+        output: PathBuf,
+    },
 }
 
 impl Operation {
@@ -87,6 +127,7 @@ impl Operation {
             Operation::DeletePages { .. } => "delete_pages",
             Operation::RotatePages { .. } => "rotate_pages",
             Operation::Split { .. } => "split",
+            Operation::Annotate { .. } => "annotate",
         }
     }
 
@@ -106,7 +147,8 @@ impl Operation {
             | Operation::ExtractPages { input, .. }
             | Operation::DeletePages { input, .. }
             | Operation::RotatePages { input, .. }
-            | Operation::Split { input, .. } => vec![input.clone()],
+            | Operation::Split { input, .. }
+            | Operation::Annotate { input, .. } => vec![input.clone()],
         }
     }
 
@@ -155,10 +197,41 @@ impl Operation {
             Operation::Split { split: SplitMode::Ranges { ranges }, .. } if ranges.is_empty() => {
                 return Err(PwError::invalid("split.no_ranges", "Enter at least one page range."));
             }
+            Operation::Annotate { annotations, .. } => validate_annotations(annotations)?,
             _ => {}
         }
         Ok(())
     }
+}
+
+fn validate_annotations(list: &[AnnotationSpec]) -> PwResult<()> {
+    if list.is_empty() {
+        return Err(PwError::invalid("annotate.empty", "There are no annotations to save."));
+    }
+    if list.len() > MAX_ANNOTATIONS_PER_REQUEST {
+        return Err(PwError::invalid("annotate.too_many", "Too many annotations in one request."));
+    }
+    for a in list {
+        if a.rects.is_empty() || a.rects.len() > 1000 {
+            return Err(PwError::invalid("annotate.rects", "Each annotation needs a location."));
+        }
+        for r in &a.rects {
+            let finite = [r.left, r.bottom, r.right, r.top].iter().all(|v| v.is_finite() && v.abs() < 1.0e6);
+            if !finite || r.right <= r.left || r.top <= r.bottom {
+                return Err(PwError::invalid("annotate.rect", "An annotation has an invalid location."));
+            }
+        }
+        if !crate::settings::is_valid_accent(&a.color) {
+            return Err(PwError::invalid("annotate.color", "Annotation colors must look like #rrggbb."));
+        }
+        if a.contents.as_ref().is_some_and(|c| c.chars().count() > MAX_NOTE_CHARS) {
+            return Err(PwError::invalid("annotate.note_too_long", "The note is too long."));
+        }
+        if a.kind == AnnotationKind::Note && a.contents.as_deref().unwrap_or("").trim().is_empty() {
+            return Err(PwError::invalid("annotate.note_empty", "A note needs some text."));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -289,6 +362,31 @@ mod tests {
         assert!(
             v(Operation::RotatePages { input: "a".into(), pages: None, degrees: -90, output: "o".into() }).is_none()
         );
+        let rect = RectPt { left: 1.0, bottom: 1.0, right: 2.0, top: 2.0 };
+        let ann = |kind, color: &str, contents: Option<&str>, rects: Vec<RectPt>| Operation::Annotate {
+            input: "a".into(),
+            annotations: vec![AnnotationSpec {
+                page: 0,
+                kind,
+                rects,
+                color: color.into(),
+                contents: contents.map(Into::into),
+            }],
+            output: "o".into(),
+        };
+        assert!(v(ann(AnnotationKind::Highlight, "#ffcc00", None, vec![rect])).is_none());
+        assert_eq!(v(ann(AnnotationKind::Highlight, "yellow", None, vec![rect])).as_deref(), Some("annotate.color"));
+        assert_eq!(v(ann(AnnotationKind::Highlight, "#ffcc00", None, vec![])).as_deref(), Some("annotate.rects"));
+        let flipped = RectPt { left: 5.0, ..rect };
+        assert_eq!(v(ann(AnnotationKind::Underline, "#ffcc00", None, vec![flipped])).as_deref(), Some("annotate.rect"));
+        let nan = RectPt { left: f32::NAN, ..rect };
+        assert_eq!(v(ann(AnnotationKind::Underline, "#ffcc00", None, vec![nan])).as_deref(), Some("annotate.rect"));
+        assert_eq!(
+            v(ann(AnnotationKind::Note, "#ffcc00", Some("  "), vec![rect])).as_deref(),
+            Some("annotate.note_empty")
+        );
+        let empty = Operation::Annotate { input: "a".into(), annotations: vec![], output: "o".into() };
+        assert_eq!(v(empty).as_deref(), Some("annotate.empty"));
         let mut r = OperationRequest::new(Operation::Inspect { input: "a".into() });
         r.schema_version = 2;
         assert_eq!(r.validate().expect_err("version").code, "op.schema_version");

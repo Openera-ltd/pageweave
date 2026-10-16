@@ -27,7 +27,9 @@ CRATE_FALLBACK = {"@tauri-apps/plugin-dialog": "tauri-plugin-dialog", "@tauri-ap
 
 
 def crate_license(crate: str, version: str) -> str | None:
-    registry = Path.home() / ".cargo" / "registry" / "src"
+    import os
+
+    registry = Path(os.environ.get("CARGO_HOME") or Path.home() / ".cargo") / "registry" / "src"
     for d in registry.glob(f"*/{crate}-{version}"):
         for n in LICENSE_NAMES + ("LICENSE-APACHE", "LICENSE_APACHE-2.0"):
             if (d / n).is_file():
@@ -65,7 +67,8 @@ def npm_text() -> str:
             if text is not None:
                 text = f"(License text taken from the same-version Rust crate {CRATE_FALLBACK[name]} {version}.)\n\n{text}"
         if text is None:
-            raise SystemExit(f"error: {name}@{version} ships no license file")
+            hint = " (run `cargo fetch --locked` first so the crate fallback is available)" if name in CRATE_FALLBACK else ""
+            raise SystemExit(f"error: {name}@{version} ships no license file{hint}")
         parts += ["=" * 78, f"{name} {version} — {lic}", "=" * 78, text.strip(), ""]
     return "\n".join(parts) + "\n"
 
