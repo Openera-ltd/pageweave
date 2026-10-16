@@ -367,7 +367,7 @@ pub fn annotate(
     }
     for spec in specs {
         let mut page = doc.pages().get(spec.page as PdfPageIndex).map_err(|e| map_pdfium_error(&e, "page"))?;
-        let before = *expected.entry(spec.page).or_insert_with(|| page.annotations().len() as usize);
+        let before = *expected.entry(spec.page).or_insert_with(|| page.annotations().len());
         let color = parse_color(&spec.color)?;
         let first = spec
             .rects
@@ -427,7 +427,7 @@ pub fn annotate(
                 PwError::new(ErrorCategory::ValidationFailed, "output.verify", "The output could not be reopened.")
             })?;
         for (page, want) in &expected {
-            let got = reopened.pages().get(*page as PdfPageIndex).map(|p| p.annotations().len() as usize).unwrap_or(0);
+            let got = reopened.pages().get(*page as PdfPageIndex).map(|p| p.annotations().len()).unwrap_or(0);
             if got != *want {
                 return Err(PwError::new(
                     ErrorCategory::ValidationFailed,
