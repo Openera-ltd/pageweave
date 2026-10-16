@@ -88,6 +88,10 @@ jobs:
         run: |
           node scripts/audit-controls.mjs --strict
           git diff --exit-code -- ../docs/INTERACTION_INVENTORY.md
+      - name: Third-party license bundles are current (UI packages + Rust crates)
+        run: |
+          cargo install --locked cargo-about@0.9.2 --features cli
+          python3 -I tools/gen_licenses.py --check
       - name: rustfmt
         run: cargo fmt --all -- --check
       - name: clippy
@@ -189,7 +193,7 @@ jobs:
           if ($p.ExitCode -ne 0) { throw "installer exit $($p.ExitCode)" }
           Get-ChildItem -Recurse $dir | Select-Object FullName, Length | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
           $exe = Get-ChildItem $dir -Filter *.exe | Where-Object { $_.Name -notlike "uninstall*" } | Select-Object -First 1
-          foreach ($f in @("pdfium.dll", "THIRD_PARTY_NOTICES.md", "licenses/pdfium/pdfium.txt")) {
+          foreach ($f in @("pdfium.dll", "THIRD_PARTY_NOTICES.md", "licenses/pdfium/pdfium.txt", "licenses/rust-crates.txt", "licenses/ui-npm.txt")) {
             if (-not (Test-Path (Join-Path $dir $f))) { throw "installed package is missing $f" }
           }
           $fixture = Join-Path $env:RUNNER_TEMP "smoke input.pdf"

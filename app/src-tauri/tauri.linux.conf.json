@@ -1,10 +1,14 @@
 {
   "bundle": {
-    "targets": ["deb"],
+    "targets": [
+      "deb"
+    ],
     "resources": {
       "../../third_party/pdfium/linux-x64/lib/libpdfium.so": "libpdfium.so",
       "../../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
-      "../../third_party/licenses/pdfium/": "licenses/pdfium/"
+      "../../third_party/licenses/pdfium/": "licenses/pdfium/",
+      "../../third_party/licenses/rust-crates.txt": "licenses/rust-crates.txt",
+      "../../third_party/licenses/ui-npm.txt": "licenses/ui-npm.txt"
     }
   }
 }
