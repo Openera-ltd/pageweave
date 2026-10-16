@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/pw-core"]
+members = ["crates/pw-core", "crates/pw-pdf", "crates/pw-cli"]
 
 [workspace.package]
 version = "0.1.0"
@@ -17,7 +17,7 @@ tempfile = "3"
 uuid = { version = "1", features = ["v4", "serde"] }
 time = { version = "0.3", features = ["formatting", "macros"] }
 sha2 = "0.10"
-pdfium-render = { version = "=0.9.4", default-features = false, features = ["pdfium_7881", "thread_safe", "image"] }
+pdfium-render = { version = "=0.9.4", default-features = false, features = ["pdfium_7881", "thread_safe", "image_025"] }
 lopdf = "0.45"
 image = { version = "0.25", default-features = false, features = ["png"] }
 clap = { version = "4", features = ["derive"] }

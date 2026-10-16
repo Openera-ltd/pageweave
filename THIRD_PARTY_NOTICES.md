@@ -1,0 +1,36 @@
+# Third-Party Notices
+
+PageWeave is licensed under the MIT License (see `LICENSE`). It redistributes the third-party
+components below. Full license texts are in `third_party/licenses/` and must ship with every
+installer/package (release checklist item). This file covers redistributed binaries and is not yet
+a complete inventory of every Rust crate — see "Rust crate inventory" below.
+
+## PDFium (PDF engine)
+
+- Source: prebuilt binaries from https://github.com/bblanchon/pdfium-binaries, tag `chromium/7881`
+  (PDFium 151.0.7881.0), built with V8 (JavaScript) and XFA **disabled**.
+- Pinned SHA-256 per platform: `resources/pdfium.lock.json`.
+- PDFium: BSD-3-Clause and Apache-2.0 — `third_party/licenses/pdfium/pdfium.txt`.
+- Packaging scripts (pdfium-binaries): MIT — `third_party/licenses/pdfium/pdfium-binaries-packaging-MIT.txt`.
+- Components compiled into PDFium, each under its own license in `third_party/licenses/pdfium/`:
+  Abseil (`abseil.txt`), Anti-Grain Geometry 2.3 (`agg23.txt`), fast_float (`fast_float.txt`),
+  FreeType (`freetype.txt`), ICU (`icu.txt`), Little CMS (`lcms.txt`), libjpeg-turbo
+  (`libjpeg_turbo.ijg`, `libjpeg_turbo.md`), OpenJPEG (`libopenjpeg.txt`), libpng (`libpng.txt`),
+  libtiff (`libtiff.txt`), LLVM libc (`llvm-libc.txt`), simdutf (`simdutf.txt`), zlib (`zlib.txt`).
+
+Required attributions:
+
+- Portions of this software are copyright © The FreeType Project (www.freetype.org). All rights reserved.
+  (FreeType is used under the FreeType License.)
+- This software is based in part on the work of the Independent JPEG Group.
+
+## Rust crate inventory
+
+Rust dependencies are permissively licensed (Apache-2.0, MIT, Zlib, ISC, Unicode-3.0 at the time
+of writing). A generated, per-crate license inventory and a CI license-policy check are **not yet
+in place** — tracked as a release blocker in `docs/WORK_JOURNAL.md`.
+
+## Test-only tools (not redistributed)
+
+- `pypdf` (BSD-3-Clause) generates the encrypted test fixture; `lopdf` (MIT) independently parses
+  outputs in tests.

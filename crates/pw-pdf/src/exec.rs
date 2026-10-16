@@ -1,0 +1,109 @@
+//! Single dispatcher from the typed [`OperationRequest`] to the engine — the one implementation that
+//! the desktop UI, CLI, local API and MCP all call (PRD 04 "Shared engine").
+
+use crate::document::{open_document, page_count, page_texts, render_page_png, search, OpenOptions};
+use crate::edit;
+use pw_core::job::JobContext;
+use pw_core::ops::{Operation, OperationRequest, OperationResult, OutputInfo, SCHEMA_VERSION};
+use pw_core::output::write_atomic_bytes;
+use pw_core::range::parse_page_ranges;
+use pw_core::PwResult;
+use serde_json::json;
+use std::time::Instant;
+
+fn out(c: &pw_core::output::CommittedOutput, pages: Option<u32>) -> OutputInfo {
+    OutputInfo { path: c.path.clone(), bytes: c.bytes, pages }
+}
+
+/// Execute a request. `ctx` provides cancellation and progress when run as a job.
+pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<OperationResult> {
+    req.validate()?;
+    let started = Instant::now();
+    let cancelled = || ctx.map(|c| c.is_cancelled()).unwrap_or(false);
+    let progress = |done: u64, total: u64| {
+        if let Some(c) = ctx {
+            c.set_progress(done, total, "files");
+        }
+    };
+    if let Some(c) = ctx {
+        c.set_phase(req.operation.id());
+    }
+    let opts = OpenOptions { password: req.password.as_deref() };
+    let policy = req.collision;
+    let mut warnings = Vec::new();
+    let (outputs, data) = match &req.operation {
+        Operation::Inspect { input } => {
+            let info = open_document(input, &opts)?;
+            warnings.extend(info.warnings.iter().cloned());
+            (vec![], serde_json::to_value(&info).unwrap_or_default())
+        }
+        Operation::ExtractText { input, pages } => {
+            let n = page_count(input, &opts)?;
+            let idx = match pages {
+                Some(spec) => parse_page_ranges(spec, n)?,
+                None => (0..n).collect(),
+            };
+            let texts = page_texts(input, &opts, &idx)?;
+            let pages: Vec<_> = texts.into_iter().map(|(p, t)| json!({"page": p + 1, "text": t})).collect();
+            (vec![], json!({ "pages": pages }))
+        }
+        Operation::Search { input, query, match_case, whole_word } => {
+            let (hits, truncated) = search(input, &opts, query, *match_case, *whole_word, &cancelled)?;
+            if truncated {
+                warnings.push(format!("Showing the first {} matches.", hits.len()));
+            }
+            (vec![], json!({ "count": hits.len(), "truncated": truncated, "hits": hits }))
+        }
+        Operation::Render { input, page, scale, output } => {
+            let (png, w, h) = render_page_png(input, &opts, page - 1, *scale)?;
+            let c = write_atomic_bytes(output, policy, &req.operation.inputs(), &png, |p| {
+                let back = std::fs::read(p).map_err(|e| pw_core::PwError::from_io(&e, "output file"))?;
+                if back.starts_with(b"\x89PNG\r\n\x1a\n") {
+                    Ok(())
+                } else {
+                    Err(pw_core::PwError::new(
+                        pw_core::ErrorCategory::ValidationFailed,
+                        "output.verify",
+                        "The rendered image failed verification.",
+                    ))
+                }
+            })?;
+            (vec![out(&c, None)], json!({ "width": w, "height": h }))
+        }
+        Operation::Merge { inputs, output } => {
+            let (c, n, w) = edit::merge(inputs, &opts, output, policy, &cancelled, &progress)?;
+            warnings.extend(w);
+            (vec![out(&c, Some(n))], json!({ "page_count": n }))
+        }
+        Operation::ExtractPages { input, pages, output } => {
+            let (c, n, w) = edit::extract_pages(input, &opts, pages, output, policy)?;
+            warnings.extend(w);
+            (vec![out(&c, Some(n))], json!({ "page_count": n }))
+        }
+        Operation::DeletePages { input, pages, output } => {
+            let (c, n, w) = edit::delete_pages(input, &opts, pages, output, policy)?;
+            warnings.extend(w);
+            (vec![out(&c, Some(n))], json!({ "page_count": n }))
+        }
+        Operation::RotatePages { input, pages, degrees, output } => {
+            let (c, n, w) = edit::rotate_pages(input, &opts, pages.as_deref(), *degrees, output, policy)?;
+            warnings.extend(w);
+            (vec![out(&c, Some(n))], json!({ "page_count": n }))
+        }
+        Operation::Split { input, split, output_dir } => {
+            let (parts, w) = edit::split(input, &opts, split, output_dir, policy, &cancelled)?;
+            warnings.extend(w);
+            let outs: Vec<OutputInfo> = parts.iter().map(|(c, n)| out(c, Some(*n))).collect();
+            let n = outs.len();
+            (outs, json!({ "parts": n }))
+        }
+    };
+    Ok(OperationResult {
+        schema_version: SCHEMA_VERSION,
+        operation: req.operation.id().to_string(),
+        outputs,
+        data,
+        warnings,
+        duration_ms: started.elapsed().as_millis() as u64,
+    })
+}

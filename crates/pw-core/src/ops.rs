@@ -169,6 +169,10 @@ pub struct OperationRequest {
     pub operation: Operation,
     #[serde(default)]
     pub collision: CollisionPolicy,
+    /// Document open password. Accepted on input but never serialized, so it cannot leak into
+    /// results, logs or diagnostics.
+    #[serde(default, skip_serializing)]
+    pub password: Option<String>,
 }
 
 impl OperationRequest {
@@ -178,6 +182,7 @@ impl OperationRequest {
             request_id: None,
             operation,
             collision: CollisionPolicy::Fail,
+            password: None,
         }
     }
 
@@ -229,6 +234,16 @@ mod tests {
         assert_eq!(v["collision"], "fail");
         let back: OperationRequest = serde_json::from_value(v).expect("de");
         assert_eq!(back, req);
+    }
+
+    #[test]
+    fn password_is_accepted_but_never_serialized() {
+        let input =
+            serde_json::json!({"schema_version":1,"operation":{"op":"inspect","input":"a.pdf"},"password":"hunter2"});
+        let req: OperationRequest = serde_json::from_value(input).expect("de");
+        assert_eq!(req.password.as_deref(), Some("hunter2"));
+        let out = serde_json::to_string(&req).expect("ser");
+        assert!(!out.contains("hunter2") && !out.contains("password"), "{out}");
     }
 
     #[test]
