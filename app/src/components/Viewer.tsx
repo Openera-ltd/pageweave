@@ -1,5 +1,7 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { StickyNote } from "lucide-react";
 import { useApi } from "../api";
+import { KIND_LABEL, type PendingAnnotation } from "../annotations";
 import { CSS_PX_PER_PT, displaySizePx, mostVisiblePage, pdfRectToScreen, renderScalePermille, unrotatedLayer } from "../geometry";
 import type { OpenedDoc, PageInfo, PageText, SearchHit } from "../types";
 
@@ -20,14 +22,23 @@ interface ViewerProps {
   hits: SearchHit[];
   currentHit: number;
   onPageContextMenu: (page: number, x: number, y: number) => void;
+  /** Unsaved annotations to draw over the pages. */
+  annotations: PendingAnnotation[];
   /** Called once after mount with the real viewport width, so the first zoom can fit the page. */
   onMeasured?: (width: number) => void;
 }
 
 const PAGE_GAP = 16;
+const NO_ANNOTATIONS: PendingAnnotation[] = [];
 
-export function Viewer({ doc, zoom, onZoomStep, onCurrentPage, scrollRequest, hits, currentHit, onPageContextMenu, onMeasured }: ViewerProps) {
+export function Viewer({ doc, zoom, onZoomStep, onCurrentPage, scrollRequest, hits, currentHit, onPageContextMenu, annotations, onMeasured }: ViewerProps) {
   const ref = useRef<HTMLDivElement>(null);
+  // Per-page lists with stable identity, so adding an annotation re-renders only its page.
+  const byPage = useMemo(() => {
+    const m = new Map<number, PendingAnnotation[]>();
+    for (const a of annotations) m.set(a.page, [...(m.get(a.page) ?? []), a]);
+    return m;
+  }, [annotations]);
 
   useLayoutEffect(() => {
     if (ref.current && onMeasured) onMeasured(ref.current.clientWidth);
@@ -140,6 +151,7 @@ export function Viewer({ doc, zoom, onZoomStep, onCurrentPage, scrollRequest, hi
             hits={hits}
             currentHit={currentHit}
             onContextMenu={onPageContextMenu}
+            annotations={byPage.get(p.index) ?? NO_ANNOTATIONS}
           />
         ))}
       </div>
@@ -155,9 +167,10 @@ interface PageProps {
   hits: SearchHit[];
   currentHit: number;
   onContextMenu: (page: number, x: number, y: number) => void;
+  annotations: PendingAnnotation[];
 }
 
-const Page = memo(function Page({ docId, page, zoom, root, hits, currentHit, onContextMenu }: PageProps) {
+const Page = memo(function Page({ docId, page, zoom, root, hits, currentHit, onContextMenu, annotations }: PageProps) {
   const api = useApi();
   const ref = useRef<HTMLDivElement>(null);
   const [near, setNear] = useState(false);
@@ -218,6 +231,7 @@ const Page = memo(function Page({ docId, page, zoom, root, hits, currentHit, onC
           </div>
         </div>
       )}
+      {annotations.length > 0 && <AnnotationLayer page={page} zoom={zoom} annotations={annotations} />}
       {near && <TextLayer docId={docId} page={page} zoom={zoom} />}
       {pageHits.flatMap(({ h, i }) =>
         h.rects.map((r, j) => {
@@ -229,6 +243,36 @@ const Page = memo(function Page({ docId, page, zoom, root, hits, currentHit, onC
               data-hit={i}
               style={{ left: s.left, top: s.top, width: Math.max(2, s.width), height: Math.max(2, s.height) }}
             />
+          );
+        }),
+      )}
+    </div>
+  );
+});
+
+/**
+ * Unsaved annotations drawn over the page image, under the text layer so selection keeps working.
+ * Decorative for pointer input; the status bar announces the count and the saved file is the record.
+ */
+const AnnotationLayer = memo(function AnnotationLayer({ page, zoom, annotations }: { page: PageInfo; zoom: number; annotations: PendingAnnotation[] }) {
+  // The text baseline side of a rectangle on screen: PDF "bottom" after the page's /Rotate.
+  const edge = ({ 0: "bottom", 90: "left", 180: "top", 270: "right" } as const)[page.rotation];
+  return (
+    <div className="annotlayer" aria-hidden="true">
+      {annotations.flatMap((a) =>
+        a.rects.slice(0, a.kind === "note" ? 1 : undefined).map((r, j) => {
+          const s = pdfRectToScreen(r, page, zoom);
+          return (
+            <div
+              key={`${a.id}-${j}`}
+              className={`annot ${a.kind}`}
+              data-annot={a.kind}
+              data-edge={edge}
+              title={a.kind === "note" ? (a.contents ?? "") : KIND_LABEL[a.kind]}
+              style={{ left: s.left, top: s.top, width: Math.max(1, s.width), height: Math.max(1, s.height), ["--annot" as string]: a.color }}
+            >
+              {a.kind === "note" && <StickyNote />}
+            </div>
           );
         }),
       )}

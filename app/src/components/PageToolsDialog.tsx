@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, FolderOpen, Plus, Trash2 } from "lucide-react";
 import { useApi } from "../api";
 import { basename, dirname, siblingOutput } from "../paths";
-import { toPwError, type CollisionPolicy, type JobSnapshot, type OpenedDoc, type Operation, type PwError } from "../types";
+import { toPwError, type AnnotationSpec, type CollisionPolicy, type JobSnapshot, type OpenedDoc, type Operation, type PwError } from "../types";
 import { Dialog, useDebounced } from "./ui";
 
-export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge";
+export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "annotate";
 
 const TITLES: Record<PageTool, string> = {
   extract: "Extract pages",
@@ -13,6 +13,7 @@ const TITLES: Record<PageTool, string> = {
   rotate: "Rotate pages",
   split: "Split document",
   merge: "Combine files",
+  annotate: "Save annotated copy",
 };
 
 const SUFFIX: Record<PageTool, string> = {
@@ -21,12 +22,15 @@ const SUFFIX: Record<PageTool, string> = {
   rotate: "rotated",
   split: "",
   merge: "combined",
+  annotate: "annotated",
 };
 
 interface Props {
   tool: PageTool;
   doc: OpenedDoc;
   initialPages?: string;
+  /** For the annotate tool: the annotations to write into the copy. */
+  annotations?: AnnotationSpec[];
   jobs: Record<string, JobSnapshot>;
   onClose: () => void;
   onFinished: (job: JobSnapshot) => void;
@@ -56,7 +60,7 @@ function useRangeCheck(docId: number, spec: string, enabled: boolean): RangeChec
   return check;
 }
 
-export function PageToolsDialog({ tool, doc, initialPages, jobs, onClose, onFinished }: Props) {
+export function PageToolsDialog({ tool, doc, initialPages, annotations, jobs, onClose, onFinished }: Props) {
   const api = useApi();
   const [pages, setPages] = useState(initialPages ?? (tool === "rotate" ? "" : ""));
   const [allPages, setAllPages] = useState(tool === "rotate" && !initialPages);
@@ -101,6 +105,7 @@ export function PageToolsDialog({ tool, doc, initialPages, jobs, onClose, onFini
     if (tool === "split" && splitMode === "every_n" && !everyNValid) return `Enter a number from 1 to ${doc.info.page_count}.`;
     if (tool === "split" && splitMode === "ranges" && rangeLines.length === 0) return "Enter one page range per line.";
     if (tool === "merge" && files.length < 2) return "Add at least one more file.";
+    if (tool === "annotate" && !annotations?.length) return "There are no annotations to save.";
     if (!output.trim()) return tool === "split" ? "Choose an output folder." : "Choose where to save the new file.";
     return null;
   })();
@@ -122,6 +127,14 @@ export function PageToolsDialog({ tool, doc, initialPages, jobs, onClose, onFini
         };
       case "merge":
         return { op: "merge", inputs: files, output };
+      case "annotate":
+        // Only the contract fields: UI bookkeeping (ids) stays in the UI.
+        return {
+          op: "annotate",
+          input: doc.path,
+          annotations: (annotations ?? []).map(({ page, kind, rects, color, contents }) => ({ page, kind, rects, color, contents: contents ?? null })),
+          output,
+        };
     }
   };
 
@@ -174,10 +187,16 @@ export function PageToolsDialog({ tool, doc, initialPages, jobs, onClose, onFini
 
   return (
     <Dialog title={TITLES[tool]} onClose={onClose} footer={footer} busy={busy} wide={tool === "merge"}>
-      {tool !== "merge" && (
+      {tool === "annotate" ? (
         <p className="hint" style={{ marginTop: 0 }}>
-          From <strong>{doc.name}</strong> ({doc.info.page_count} pages). The original file is not changed.
+          Adds {annotations?.length ?? 0} annotation{annotations?.length === 1 ? "" : "s"} to a copy of <strong>{doc.name}</strong>. The original file is not changed.
         </p>
+      ) : (
+        tool !== "merge" && (
+          <p className="hint" style={{ marginTop: 0 }}>
+            From <strong>{doc.name}</strong> ({doc.info.page_count} pages). The original file is not changed.
+          </p>
+        )
       )}
 
       {tool === "rotate" && (

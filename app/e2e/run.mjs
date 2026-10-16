@@ -4,7 +4,8 @@
 // Usage: node e2e/run.mjs <app-binary> <artifact-dir>   (run via e2e/run.sh, which starts the display + driver)
 
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -64,7 +65,14 @@ async function withApp(args, fn) {
   }
 }
 
+// E2E_ONLY=<substring> runs only matching scenarios (local iteration; CI always runs everything).
+const ONLY = process.env.E2E_ONLY;
+
+/** Thrown by a scenario that cannot run on this platform; reported as SKIP, never as PASS. */
+class Skip extends Error {}
+
 async function test(name, fn) {
+  if (ONLY && !name.includes(ONLY)) return;
   currentTest = name;
   phase.create = 0;
   phase.teardown = 0;
@@ -74,6 +82,11 @@ async function test(name, fn) {
     results.push({ name, status: "PASS", ms: Date.now() - t0, create_ms: phase.create, teardown_ms: phase.teardown });
     console.log(`PASS ${name} (${Date.now() - t0} ms; app start ${phase.create} ms, close ${phase.teardown} ms)`);
   } catch (e) {
+    if (e instanceof Skip) {
+      results.push({ name, status: "SKIP", reason: e.message });
+      console.log(`SKIP ${name}: ${e.message}`);
+      return;
+    }
     results.push({ name, status: "FAIL", ms: Date.now() - t0, error: String(e?.message ?? e) });
     console.log(`FAIL ${name}: ${e?.stack ?? e}`);
   }
@@ -599,14 +612,192 @@ await test("bookmarks panel navigates; disabled with a reason when a document ha
   });
 });
 
+const annotCount = (s, kind) => s.exec(`return document.querySelectorAll('.annot${kind ? "." + kind : ""}').length`);
+const unsavedText = (s) => s.exec("return document.querySelector('[data-testid=unsaved]')?.textContent ?? ''");
+const sha = (p) => createHash("sha256").update(readFileSync(p)).digest("hex");
+
+await test("annotate: highlight/underline/strike/note from selection and menus; undo/redo; save a verified copy", async () => {
+  const src = join(FIX, "single-page.pdf");
+  const before = sha(src);
+  const out = join(work, "annotated.pdf");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    const w = await markSpan(s, 0, "PWMARK001");
+    const selectWord = async () => {
+      await s.doubleClick('[data-e2e="target"]', w * 0.3, 0);
+      await s.waitUntil(async () => (await selection(s)).trim() === "PWMARK001", "word selected");
+    };
+    // Disabled with a reason while nothing is selected.
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Highlight selected");
+    const opt = await s.exec("const o=document.querySelector('[role=option][data-command=\"annotate.highlight\"]'); return o ? o.getAttribute('aria-disabled') + '|' + o.textContent : null");
+    assert(opt && opt.startsWith("true") && opt.includes("Select text"), `highlight unavailable without a selection (${opt})`);
+    await s.keys(["Escape"]);
+
+    // 1. Right-click the selection → Highlight.
+    await selectWord();
+    await s.contextClick('[data-e2e="target"]', w * 0.3, 0);
+    await s.click('[role="menuitem"][data-command="annotate.highlight"]');
+    await s.waitUntil(async () => (await annotCount(s, "highlight")) === 1, "highlight drawn");
+    assert((await selection(s)) === "", "selection cleared so the highlight is visible");
+    await s.waitUntil(async () => (await unsavedText(s)) === "1 unsaved annotation", "status bar counts it");
+    // The overlay covers the word it was made from.
+    const cover = await s.exec(`const a=document.querySelector('.annot.highlight').getBoundingClientRect(); const t=document.querySelector('[data-e2e=target]').getBoundingClientRect();
+      return [a.left, a.right, a.top, a.bottom, t.left, t.right, t.top, t.bottom]`);
+    assert(cover[0] >= cover[4] - 2 && cover[1] <= cover[5] + 2 && Math.abs(cover[2] - cover[6]) < 3 && Math.abs(cover[3] - cover[7]) < 3, `highlight lies on the word (${cover})`);
+
+    // 2. Keyboard shortcut → Underline. 3. Menu → Strikethrough.
+    await selectWord();
+    await s.keys(["Control", "Shift", "U"]);
+    await s.waitUntil(async () => (await annotCount(s, "underline")) === 1, "underline drawn");
+    await selectWord();
+    await s.contextClick('[data-e2e="target"]', w * 0.3, 0);
+    await s.click('[role="menuitem"][data-command="annotate.strikeOut"]');
+    await s.waitUntil(async () => (await annotCount(s, "strike_out")) === 1, "strikethrough drawn");
+
+    // Undo / redo (Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z).
+    await s.keys(["Control", "z"]);
+    await s.waitUntil(async () => (await annotCount(s, "strike_out")) === 0, "undo removed the last annotation");
+    await s.keys(["Control", "y"]);
+    await s.waitUntil(async () => (await annotCount(s, "strike_out")) === 1, "redo restored it");
+    await s.keys(["Control", "z"]);
+    await s.keys(["Control", "Shift", "Z"]);
+    await s.waitUntil(async () => (await annotCount(s, "strike_out")) === 1, "Ctrl+Shift+Z redoes too");
+
+    // (Add is disabled until text is written.)
+    // 4. Right-click blank page area just below the marked line → Add note here…
+    await s.contextClick('[data-e2e="target"]', 0, 48);
+    await s.click('[role="menuitem"][data-command="annotate.note"]');
+    await s.waitFor("#note-text");
+    assert((await s.attr('[data-testid="note-add"]', "aria-disabled")) === "true", "Add disabled while the note is empty");
+    await s.click('[data-testid="note-add"]');
+    assert((await s.exec("return !!document.querySelector('#note-text')")) === true, "empty note is not added");
+    await s.type("#note-text", "PW note 1");
+    await axeCheck(s, "note-dialog");
+    await s.keys(["Control", "Enter"]);
+    await s.waitUntil(async () => (await annotCount(s, "note")) === 1, "note marker drawn");
+    await s.waitUntil(async () => (await unsavedText(s)) === "4 unsaved annotations", "four unsaved");
+    await axeCheck(s, "viewer-with-annotations");
+    writeFileSync(join(ART, "annotations-pending.png"), await s.screenshot());
+
+    // Save a copy (Ctrl+S): default name next to the source; saved here into the work folder.
+    await s.keys(["Control", "s"]);
+    await s.waitFor("#output");
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("single-page-annotated.pdf"), "default output name");
+    assert((await s.text('[role="dialog"] h2')) === "Save annotated copy", "save dialog title");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved annotated.pdf")), "saved notice");
+    await s.waitUntil(async () => (await annotCount(s)) === 0 && (await unsavedText(s)) === "", "pending annotations cleared after saving");
+  });
+  assert(existsSync(out), "annotated copy exists");
+  const bytes = readFileSync(out).toString("latin1");
+  const subtypes = [...bytes.matchAll(/\/Subtype\s*\/(Highlight|Underline|StrikeOut|Text)\b/g)].map((m) => m[1]).sort();
+  assert(subtypes.join(",") === "Highlight,StrikeOut,Text,Underline", `annotation subtypes in the saved file: ${subtypes}`);
+  assert(bytes.includes("(PW note 1)"), "note text saved");
+  assert(sha(src) === before, "source PDF unchanged");
+  const n = pdfPages(out);
+  assert(n === null || n === 1, `copy keeps its page (got ${n})`);
+});
+
+await test("unsaved annotations: closing the tab asks (Save focused); Cancel keeps it; discard can be undone; Discard closes", async () => {
+  await withApp([join(FIX, "single-page.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    const w = await markSpan(s, 0, "PWMARK001");
+    await s.doubleClick('[data-e2e="target"]', w * 0.3, 0);
+    await s.waitUntil(async () => (await selection(s)).trim() === "PWMARK001", "word selected");
+    await s.keys(["Control", "Shift", "H"]);
+    await s.waitUntil(async () => (await annotCount(s, "highlight")) === 1, "highlight drawn");
+
+    await s.keys(["Control", "w"]);
+    await s.waitFor('[data-testid="unsaved-save"]');
+    assert((await s.exec("return document.activeElement?.dataset.testid")) === "unsaved-save", "Save copy… has initial focus");
+    await axeCheck(s, "unsaved-dialog");
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => (await s.exec("return !document.querySelector('[role=dialog]')")) === true, "prompt closed");
+    assert((await s.exec("return document.querySelectorAll('.tab-label').length")) === 1, "Cancel keeps the tab open");
+    assert((await annotCount(s, "highlight")) === 1, "and keeps the annotation");
+
+    // Discard from the command palette, then undo the discard from its notice.
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Discard unsaved");
+    await s.click('[role="option"][data-command="annotate.discard"]');
+    await s.waitUntil(async () => (await annotCount(s)) === 0, "discarded");
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.startsWith("Discarded 1 annotation")), "discard notice");
+    await s.exec("[...document.querySelectorAll('.notice button')].find(b => b.textContent === 'Undo').click(); return 1");
+    await s.waitUntil(async () => (await annotCount(s, "highlight")) === 1, "discard undone");
+
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "w"]);
+    await s.click('[data-testid="unsaved-discard"]');
+    await s.waitFor(".home");
+  });
+});
+
+/** Send the window a real close request (title-bar X). Linux/X11 only; see e2e/wm_close.py. */
+function wmClose() {
+  if (process.platform !== "linux" || !process.env.DISPLAY) throw new Skip("needs an X11 display to send a window close request");
+  execFileSync("python3", ["-I", fileURLToPath(new URL("./wm_close.py", import.meta.url)), "PageWeave"], { stdio: "inherit" });
+}
+/** Click a control that quits the app: the driver may lose the session before it can reply. */
+const clickThatQuits = (s, css) =>
+  s.click(css).catch((e) => {
+    if (!/Session terminated without a reply|invalid session id/.test(String(e.message))) throw e;
+  });
+const appGone = (s) => s.waitUntil(() => s.exec("return 0").then(() => false, () => true), "app closed", 15000);
+const highlightMarker = async (s) => {
+  await pageLoaded(s, 0);
+  const w = await markSpan(s, 0, "PWMARK001");
+  await s.doubleClick('[data-e2e="target"]', w * 0.3, 0);
+  await s.waitUntil(async () => (await selection(s)).trim() === "PWMARK001", "word selected");
+  await s.keys(["Control", "Shift", "H"]);
+  await s.waitUntil(async () => (await annotCount(s, "highlight")) === 1, "highlight drawn");
+};
+
+await test("window close: clean app closes at once; unsaved annotations ask first (Cancel keeps app, Discard quits)", async () => {
+  await withApp([join(FIX, "single-page.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    wmClose();
+    await appGone(s);
+  });
+  await withApp([join(FIX, "single-page.pdf")], async (s) => {
+    await highlightMarker(s);
+    wmClose();
+    await s.waitFor('[data-testid="unsaved-save"]');
+    assert((await s.exec("return document.querySelector('[role=dialog] p').textContent")).includes("1 unsaved annotation"), "prompt names the count");
+    await s.click('[data-testid="unsaved-cancel"]');
+    await s.waitUntil(async () => (await s.exec("return !document.querySelector('[role=dialog]')")) === true, "prompt closed");
+    assert((await annotCount(s, "highlight")) === 1, "Cancel keeps the app and the annotation");
+    wmClose();
+    await clickThatQuits(s, '[data-testid="unsaved-discard"]');
+    await appGone(s);
+  });
+});
+
+await test("window close: Save copy… saves the annotations, then quits", async () => {
+  const out = join(work, "saved-on-quit.pdf");
+  await withApp([join(FIX, "single-page.pdf")], async (s) => {
+    await highlightMarker(s);
+    wmClose();
+    await s.click('[data-testid="unsaved-save"]');
+    await s.waitFor("#output");
+    await s.type("#output", out);
+    await clickThatQuits(s, '[data-testid="tool-start"]');
+    await appGone(s);
+  });
+  assert(existsSync(out), "annotated copy saved before quitting");
+  assert(/\/Subtype\s*\/Highlight\b/.test(readFileSync(out).toString("latin1")), "copy contains the highlight");
+});
+
 /* ------------------------------------------------------------------ */
 const summary = {
   app: APP,
   when: new Date().toISOString(),
   passed: results.filter((r) => r.status === "PASS").length,
   failed: results.filter((r) => r.status === "FAIL").length,
+  skipped: results.filter((r) => r.status === "SKIP").length,
   results,
 };
 writeFileSync(join(ART, "e2e-results.json"), JSON.stringify(summary, null, 2));
-console.log(`\n${summary.passed} passed, ${summary.failed} failed`);
+console.log(`\n${summary.passed} passed, ${summary.failed} failed, ${summary.skipped} skipped`);
 process.exit(summary.failed ? 1 : 0);

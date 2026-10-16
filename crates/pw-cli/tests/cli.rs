@@ -151,6 +151,7 @@ fn capabilities_lists_operations() {
     assert!(out.status.success());
     let v = json(&out);
     assert!(v["result"]["operations"].as_array().expect("ops").iter().any(|o| o == "merge"));
+    assert!(v["result"]["operations"].as_array().expect("ops").iter().any(|o| o == "annotate"));
     assert_eq!(v["result"]["network"], "none");
 }
 

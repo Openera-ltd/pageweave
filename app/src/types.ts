@@ -113,12 +113,26 @@ export type CollisionPolicy = "fail" | "rename" | "replace";
 
 export type SplitMode = { mode: "every_n"; n: number } | { mode: "ranges"; ranges: string[] };
 
+export type AnnotationKind = "highlight" | "underline" | "strike_out" | "note";
+
+export interface AnnotationSpec {
+  /** 0-based page index. */
+  page: number;
+  kind: AnnotationKind;
+  /** PDF points, unrotated page space. */
+  rects: SearchRect[];
+  /** `#rrggbb`. */
+  color: string;
+  contents?: string | null;
+}
+
 export type Operation =
   | { op: "extract_pages"; input: string; pages: string; output: string }
   | { op: "delete_pages"; input: string; pages: string; output: string }
   | { op: "rotate_pages"; input: string; pages: string | null; degrees: number; output: string }
   | { op: "merge"; inputs: string[]; output: string }
-  | { op: "split"; input: string; split: SplitMode; output_dir: string };
+  | { op: "split"; input: string; split: SplitMode; output_dir: string }
+  | { op: "annotate"; input: string; annotations: AnnotationSpec[]; output: string };
 
 export interface OperationRequest {
   schema_version: number;

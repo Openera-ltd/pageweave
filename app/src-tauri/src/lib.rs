@@ -164,6 +164,24 @@ fn log_dir(state: State<'_, AppState>) -> String {
     state.log_dir.to_string_lossy().into_owned()
 }
 
+/// The UI reports how many unsaved edits exist so the window-close guard can hold back a close.
+#[tauri::command]
+fn set_unsaved_changes(state: State<'_, AppState>, count: u32) {
+    state.set_unsaved(count);
+}
+
+/// Close the window after the user chose to discard unsaved edits.
+#[tauri::command]
+fn quit_app(state: State<'_, AppState>, window: tauri::Window) -> CmdResult<()> {
+    state.set_unsaved(0);
+    window.destroy().map_err(|_| PwError::internal("window.close", "The window could not be closed."))
+}
+
+/// Whether a window close request must wait for the user (unsaved edits exist).
+pub fn close_needs_confirmation(state: &AppState) -> bool {
+    state.unsaved() > 0
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -172,6 +190,14 @@ pub fn run() {
             let state = ctx.app_handle().state::<AppState>().inner().clone();
             let uri = request.uri().clone();
             std::thread::spawn(move || responder.respond(pages::serve(&state, &uri)));
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if close_needs_confirmation(&window.state::<AppState>()) {
+                    api.prevent_close();
+                    let _ = window.emit("close-requested", ());
+                }
+            }
         })
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
@@ -207,6 +233,8 @@ pub fn run() {
             list_jobs,
             log_dir,
             launch_files,
+            set_unsaved_changes,
+            quit_app,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PageWeave");

@@ -6,7 +6,7 @@ for the full product scope).
 ## Status — early development, not production ready
 
 Release status: **BLOCKED**. What exists today is a first vertical slice; most of the product scope in
-`prd/` (OCR, conversion, annotations, forms, redaction, translation, read-aloud, design reconstruction,
+`prd/` (OCR, conversion, forms, redaction, translation, read-aloud, design reconstruction,
 resource installer, API/MCP, …) is **not implemented**. `docs/FEATURE_PARITY_MATRIX.md` is the
 authoritative per-capability ledger with evidence and limitations.
 
@@ -17,13 +17,15 @@ Implemented and tested:
 | PDF engine | Open (with password), inspect metadata/pages/bookmarks, extract text, search with match geometry, render pages | `crates/pw-pdf/tests/engine.rs` (Linux and Windows CI) |
 | Page operations | Extract, delete, rotate, split, combine — always to a **new** file; source never modified; outputs re-opened and verified before an atomic commit; explicit conflict policy | engine tests (outputs re-parsed with an independent parser) |
 | CLI | `pageweave` with JSON output and stable exit codes | `crates/pw-cli/tests/cli.rs`; packaged Windows smoke test in CI |
-| Desktop app | Tabs, continuous viewer, thumbnails, zoom/fit, find with highlights, page tools, settings (theme/accent/density/text size/motion/shortcuts), command palette, context menus, drag-and-drop and command-line open | `app/e2e/run.mjs` drives the real app (19 scenarios) on Linux; Windows installer install/launch/uninstall smoke in CI |
+| Desktop app | Tabs, continuous viewer, thumbnails, bookmarks, zoom/fit, find with highlights, text selection and copy, page tools, settings (theme/accent/density/text size/motion/shortcuts), command palette, context menus, drag-and-drop and command-line open | `app/e2e/run.mjs` drives the real app (33 scenarios incl. axe-core accessibility checks) on Linux; Windows installer install/launch/uninstall smoke in CI |
+| Annotations | Highlight, underline, strikethrough and sticky notes from a text selection or a right-click; undo/redo; saved into a **new** PDF (verified by reopening); closing a tab or the window with unsaved annotations asks first | engine tests (independent parser + rendered pixels); E2E checks the saved file and the real window-close request |
 
 Known limitations (selection):
 
 - Combining PDFs does not carry over bookmarks or document metadata (the app says so).
 - Outputs made by extract/delete/split/combine from a password-protected PDF are **not** protected (the app warns); rotate keeps the protection.
-- No text selection/copy on the page canvas yet; no annotations, OCR, conversion, printing or forms.
+- Annotations: fixed colours, no editing/moving/deleting of individual or existing annotations yet (undo covers unsaved ones); not saved back into the original file by design.
+- No OCR, conversion, printing or forms.
 - XFA forms are detected but cannot be displayed or filled.
 - No measured performance budgets or hardware support claims yet (`docs/HARDWARE_SUPPORT.md`).
 - Screen-reader behaviour has not yet been verified with Narrator/NVDA.

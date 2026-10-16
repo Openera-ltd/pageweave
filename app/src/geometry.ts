@@ -151,3 +151,36 @@ export function applyLayerTransform(rotation: PageInfo["rotation"], W: number, H
       return [x, y];
   }
 }
+
+/**
+ * Inverse of `pdfRectToScreen`: CSS pixels inside the displayed page box (origin top-left) back to
+ * unrotated PDF user space (origin bottom-left), honouring the page's clockwise /Rotate.
+ */
+export function screenRectToPdf(
+  s: ScreenRect,
+  page: Pick<PageInfo, "width_pt" | "height_pt" | "rotation">,
+  zoom: number,
+): SearchRect {
+  const k = zoom * CSS_PX_PER_PT;
+  const w = page.width_pt;
+  const h = page.height_pt;
+  const corners: Array<[number, number]> = [
+    [s.left / k, s.top / k],
+    [(s.left + s.width) / k, (s.top + s.height) / k],
+  ];
+  const mapped = corners.map(([dx, dy]) => {
+    switch (page.rotation) {
+      case 90:
+        return [dy, dx];
+      case 180:
+        return [w - dx, dy];
+      case 270:
+        return [w - dy, h - dx];
+      default:
+        return [dx, h - dy];
+    }
+  });
+  const xs = mapped.map((m) => m[0]!);
+  const ys = mapped.map((m) => m[1]!);
+  return { left: Math.min(...xs), bottom: Math.min(...ys), right: Math.max(...xs), top: Math.max(...ys) };
+}

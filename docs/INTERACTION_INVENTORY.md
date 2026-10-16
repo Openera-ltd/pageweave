@@ -11,6 +11,14 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `file.reveal` | Show in folder | — | Exercised by tests |
 | `file.properties` | Document properties | Ctrl+D | Exercised by tests |
 | `edit.copy` | Copy selected text | — | Exercised by tests |
+| `edit.undo` | Undo annotation | Ctrl+Z | Exercised by tests |
+| `edit.redo` | Redo annotation | Ctrl+Y, Ctrl+Shift+Z | Exercised by tests |
+| `annotate.highlight` | Highlight selected text | Ctrl+Shift+H | Exercised by tests |
+| `annotate.underline` | Underline selected text | Ctrl+Shift+U | Exercised by tests |
+| `annotate.strikeOut` | Strike through selected text | — | Exercised by tests |
+| `annotate.note` | Add note… | — | Exercised by tests |
+| `annotate.save` | Save annotated copy… | Ctrl+S | Exercised by tests |
+| `annotate.discard` | Discard unsaved annotations | — | Exercised by tests |
 | `tab.next` | Next tab | Ctrl+Tab | Exercised by tests |
 | `tab.previous` | Previous tab | Ctrl+Shift+Tab | Exercised by tests |
 | `view.zoomIn` | Zoom in | Ctrl+=, Ctrl+Plus | Exercised by tests |
@@ -38,4 +46,4 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `app.commandPalette` | Command palette | Ctrl+K, Ctrl+Shift+P | Exercised by tests |
 | `app.openLogs` | Show log folder | — | Exercised by tests |
 
-Coverage: 31 of 31 commands exercised by unit or real-app E2E tests.
+Coverage: 39 of 39 commands exercised by unit or real-app E2E tests.

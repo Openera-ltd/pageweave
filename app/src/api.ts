@@ -43,6 +43,12 @@ export interface Api {
   logDir(): Promise<string>;
   pageText(docId: number, page: number): Promise<PageText>;
   copyText(text: string): Promise<void>;
+  /** Tell the host how many unsaved edits exist, so closing the window asks first. */
+  setUnsavedChanges(count: number): Promise<void>;
+  /** The window close button was pressed while unsaved edits exist (the host held the close back). */
+  onCloseRequested(cb: () => void): Promise<UnlistenFn>;
+  /** Close the window, discarding unsaved edits. */
+  quitApp(): Promise<void>;
 }
 
 export const tauriApi: Api = {
@@ -76,6 +82,9 @@ export const tauriApi: Api = {
   launchFiles: () => invoke("launch_files"),
   logDir: () => invoke("log_dir"),
   pageText: (docId, page) => invoke("page_text", { docId, page }),
+  setUnsavedChanges: (count) => invoke("set_unsaved_changes", { count }),
+  onCloseRequested: (cb) => listen("close-requested", () => cb()),
+  quitApp: () => invoke("quit_app"),
   copyText: async (text) => {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(text);

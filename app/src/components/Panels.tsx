@@ -167,6 +167,8 @@ export function StatusBar({
   onGoToPage,
   goToNonce,
   onCancelJob,
+  unsaved = 0,
+  onSaveAnnotations,
 }: {
   doc: OpenedDoc | null;
   currentPage: number;
@@ -175,6 +177,9 @@ export function StatusBar({
   onGoToPage: (page: number) => void;
   goToNonce: number;
   onCancelJob: (id: string) => void;
+  /** Unsaved annotations in the active document. */
+  unsaved?: number;
+  onSaveAnnotations?: () => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
@@ -217,6 +222,13 @@ export function StatusBar({
           </span>
           <span>{Math.round(zoom * 100)}%</span>
           {doc.info.encrypted && <span title="This document is password protected">Protected</span>}
+          <span aria-live="polite">
+            {unsaved > 0 && (
+              <button type="button" className="btn link" data-testid="unsaved" title="Save annotated copy (Ctrl+S)" onClick={() => onSaveAnnotations?.()}>
+                {unsaved} unsaved annotation{unsaved === 1 ? "" : "s"}
+              </button>
+            )}
+          </span>
         </>
       ) : (
         <span>No document open</span>

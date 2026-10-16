@@ -582,6 +582,53 @@ textarea {
   color: transparent;
 }
 
+/* Unsaved annotations (drawn under the text layer so selection still works). */
+.annotlayer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.annot {
+  position: absolute;
+  --annot: #ffd400;
+}
+
+.annot.highlight {
+  background: color-mix(in srgb, var(--annot) 45%, transparent);
+  mix-blend-mode: multiply;
+}
+
+.annot.underline[data-edge="bottom"] { border-bottom: 2px solid var(--annot); }
+.annot.underline[data-edge="top"] { border-top: 2px solid var(--annot); }
+.annot.underline[data-edge="left"] { border-left: 2px solid var(--annot); }
+.annot.underline[data-edge="right"] { border-right: 2px solid var(--annot); }
+
+.annot.strike_out[data-edge="bottom"],
+.annot.strike_out[data-edge="top"] {
+  background: linear-gradient(to bottom, transparent calc(50% - 1px), var(--annot) calc(50% - 1px), var(--annot) calc(50% + 1px), transparent calc(50% + 1px));
+}
+
+.annot.strike_out[data-edge="left"],
+.annot.strike_out[data-edge="right"] {
+  background: linear-gradient(to right, transparent calc(50% - 1px), var(--annot) calc(50% - 1px), var(--annot) calc(50% + 1px), transparent calc(50% + 1px));
+}
+
+.annot.note {
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--annot) 85%, white);
+  border: 1px solid color-mix(in srgb, var(--annot) 60%, black);
+  border-radius: 2px;
+  color: #3d3200;
+  box-shadow: var(--shadow-1);
+}
+
+.annot.note svg {
+  width: 70%;
+  height: 70%;
+}
+
 .page .hit {
   position: absolute;
   background: var(--hit);
@@ -635,6 +682,23 @@ textarea {
 
 .statusbar .spacer {
   flex: 1;
+}
+
+.statusbar .btn.link {
+  height: calc(20px * var(--ui-scale));
+  padding: 0 var(--space-2);
+  color: var(--text);
+  font-size: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.statusbar .btn.link::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warning);
 }
 
 .statusbar .page-input {

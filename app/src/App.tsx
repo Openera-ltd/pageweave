@@ -12,17 +12,33 @@ import {
   MoveHorizontal,
 } from "lucide-react";
 import { useApi } from "./api";
+import {
+  addAnnotations,
+  ANNOTATION_COLORS,
+  clientRectsToPageRects,
+  EMPTY_HISTORY,
+  KIND_LABEL,
+  makeId,
+  noteRect,
+  pageBoxes,
+  redo,
+  selectionClientRects,
+  undo,
+  type AnnotationHistory,
+  type PendingAnnotation,
+} from "./annotations";
 import { COMMAND_BY_ID, COMMANDS, commandForShortcut, effectiveBindings, type CommandHandlers, type CommandId } from "./commands";
-import { clampZoom, fitWidthZoom, nextZoom, ZOOM_PRESETS } from "./geometry";
+import { clampZoom, fitWidthZoom, nextZoom, screenRectToPdf, ZOOM_PRESETS, CSS_PX_PER_PT, displaySizePt } from "./geometry";
 import { basename } from "./paths";
 import { eventToShortcut, isTextEntry } from "./shortcuts";
 import { applyAppearance } from "./theme";
-import { toPwError, type AppInfo, type JobSnapshot, type OpenedDoc, type PwError, type SearchHit, type Settings } from "./types";
+import { toPwError, type AnnotationKind, type AppInfo, type JobSnapshot, type OpenedDoc, type PwError, type SearchHit, type SearchRect, type Settings } from "./types";
 import { CommandButton, Menu, type MenuItemOrSeparator } from "./components/ui";
 import { Viewer, type ScrollRequest } from "./components/Viewer";
 import { Sidebar, type SidebarView } from "./components/Sidebar";
 import { PageToolsDialog, type PageTool } from "./components/PageToolsDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
+import { NoteDialog, UnsavedDialog } from "./components/AnnotationDialogs";
 import { CommandPalette, Home, Notices, PasswordDialog, PropertiesDialog, SearchBar, StatusBar, type Notice, type NoticeAction, type SearchState } from "./components/Panels";
 
 interface ViewState {
@@ -38,7 +54,17 @@ type DialogState =
   | { kind: "palette" }
   | { kind: "properties" }
   | { kind: "password"; path: string; error: PwError | null }
+  | { kind: "note"; page: number; rect: SearchRect }
+  | { kind: "unsaved"; reason: "tab"; docId: number }
+  | { kind: "unsaved"; reason: "quit" }
   | null;
+
+/** What to do once an annotated copy has been saved from the unsaved-changes prompt. */
+type AfterSave = { kind: "close"; docId: number } | { kind: "quit" } | null;
+
+const NO_PENDING: PendingAnnotation[] = [];
+/** Mirrors pw-core MAX_ANNOTATIONS_PER_REQUEST. */
+const MAX_PENDING = 10_000;
 
 interface MenuState {
   items: MenuItemOrSeparator[];
@@ -72,6 +98,9 @@ export function App() {
   const [searchFocus, setSearchFocus] = useState(0);
   const [scrollRequest, setScrollRequest] = useState<ScrollRequest | null>(null);
   const [goToNonce, setGoToNonce] = useState(0);
+  const [annots, setAnnots] = useState<Record<number, AnnotationHistory>>({});
+  const annGroup = useRef(1);
+  const afterSave = useRef<AfterSave>(null);
   const noticeId = useRef(1);
   const searchToken = useRef(0);
   const viewerHost = useRef<HTMLDivElement>(null);
@@ -79,6 +108,10 @@ export function App() {
   const active = tabs.find((t) => t.doc_id === activeId) ?? null;
   const view: ViewState = (active && views[active.doc_id]) || { zoom: 1, page: 0 };
   const effective = preview ?? settings;
+  const pendingOf = (id: number) => annots[id]?.items ?? NO_PENDING;
+  const activePending = active ? pendingOf(active.doc_id) : NO_PENDING;
+  const dirtyTabs = tabs.filter((t) => pendingOf(t.doc_id).length > 0);
+  const totalUnsaved = dirtyTabs.reduce((n, t) => n + pendingOf(t.doc_id).length, 0);
   const bindings = useMemo(() => effectiveBindings(effective?.shortcuts ?? {}), [effective?.shortcuts]);
 
   const notify = useCallback((n: Omit<Notice, "id">) => {
@@ -169,7 +202,7 @@ export function App() {
     }
   }, [api, openPath, notifyError]);
 
-  const closeTab = useCallback(
+  const closeTabNow = useCallback(
     (id: number) => {
       api.closeDocument(id).catch(() => undefined);
       setTabs((ts) => {
@@ -179,6 +212,7 @@ export function App() {
         return next;
       });
       setViews(({ [id]: _gone, ...rest }) => rest);
+      setAnnots(({ [id]: _dropped, ...rest }) => rest);
       if (id === activeId) {
         setSearchOpen(false);
         setHits([]);
@@ -187,6 +221,32 @@ export function App() {
     },
     [api, activeId],
   );
+
+  /** Close a tab, asking first when it has unsaved annotations. */
+  const closeTab = useCallback(
+    (id: number) => {
+      if ((annots[id]?.items.length ?? 0) > 0) setDialog({ kind: "unsaved", reason: "tab", docId: id });
+      else closeTabNow(id);
+    },
+    [annots, closeTabNow],
+  );
+
+  // Keep the host's window-close guard in step with the number of unsaved annotations.
+  useEffect(() => {
+    api.setUnsavedChanges(totalUnsaved).catch((e) => notifyError("Unsaved-changes protection is not active", e));
+  }, [api, totalUnsaved, notifyError]);
+
+  useEffect(() => {
+    let off: (() => void) | undefined;
+    api
+      .onCloseRequested(() => {
+        setMenu(null);
+        setDialog({ kind: "unsaved", reason: "quit" });
+      })
+      .then((u) => (off = u))
+      .catch(() => undefined);
+    return () => off?.();
+  }, [api]);
 
   useEffect(() => {
     // Open in order so the last file listed ends up as the active tab.
@@ -308,8 +368,90 @@ export function App() {
     }
   };
 
+  /** PDF rectangles of the current page-text selection, grouped by page. */
+  const selectionRects = (): Map<number, SearchRect[]> => {
+    if (!active || !pageSelection()) return new Map();
+    return clientRectsToPageRects(selectionClientRects(window.getSelection()), pageBoxes(), active.info.pages);
+  };
+
+  const updateAnnots = (docId: number, f: (h: AnnotationHistory) => AnnotationHistory) =>
+    setAnnots((a) => ({ ...a, [docId]: f(a[docId] ?? EMPTY_HISTORY) }));
+
+  const annotateSelection = (kind: Exclude<AnnotationKind, "note">, snapshot?: Map<number, SearchRect[]>) => {
+    if (!active) return;
+    const rects = snapshot ?? selectionRects();
+    if (rects.size === 0) {
+      notify({ kind: "warning", title: `Nothing to ${KIND_LABEL[kind].toLowerCase()}`, detail: "The selection has no text on a page.", persistent: false });
+      return;
+    }
+    const group = annGroup.current++;
+    const added: PendingAnnotation[] = [...rects.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([page, r], n) => ({ id: makeId(group, n), page, kind, rects: r.slice(0, 1000), color: ANNOTATION_COLORS[kind] }));
+    updateAnnots(active.doc_id, (h) => addAnnotations(h, added));
+    window.getSelection()?.removeAllRanges();
+  };
+
+  /** Open the note editor anchored at the selection, a clicked point, or the current page's corner. */
+  const startNote = (at?: { page: number; x: number; y: number }, snapshot?: Map<number, SearchRect[]>) => {
+    if (!active) return;
+    const rects = snapshot ?? selectionRects();
+    const first = [...rects.entries()].sort(([a], [b]) => a - b)[0];
+    if (first && first[1][0]) {
+      const p = active.info.pages[first[0]]!;
+      setDialog({ kind: "note", page: first[0], rect: noteRect(first[1][0].left, first[1][0].top, p) });
+      return;
+    }
+    const pageIndex = at?.page ?? view.page;
+    const p = active.info.pages[pageIndex];
+    if (!p) return;
+    const box = at && pageBoxes().find((b) => b.page === pageIndex);
+    if (at && box) {
+      const zoom = box.width / (displaySizePt(p).w * CSS_PX_PER_PT);
+      const pt = screenRectToPdf({ left: at.x - box.left, top: at.y - box.top, width: 0, height: 0 }, p, zoom);
+      setDialog({ kind: "note", page: pageIndex, rect: noteRect(pt.left, pt.top, p) });
+    } else {
+      setDialog({ kind: "note", page: pageIndex, rect: noteRect(36, p.height_pt - 36, p) });
+    }
+  };
+
+  const discardAnnotations = (docId: number) => {
+    const before = annots[docId];
+    if (!before?.items.length) return;
+    setAnnots(({ [docId]: _gone, ...rest }) => rest);
+    notify({
+      kind: "info",
+      title: `Discarded ${before.items.length} annotation${before.items.length === 1 ? "" : "s"}`,
+      actions: [{ label: "Undo", run: () => setAnnots((a) => ({ ...a, [docId]: before })) }],
+      persistent: false,
+    });
+  };
+
+  const selectionAvail = (): true | string => (pageSelection() ? true : "Select text on a page first.");
+  const roomAvail = (): true | string => (activePending.length < MAX_PENDING ? true : "Save the annotated copy first; too many unsaved annotations.");
+
   const handlers: CommandHandlers = {
     "edit.copy": { run: () => copySelection(), available: () => (pageSelection() ? true : "Select text on a page first.") },
+    "edit.undo": {
+      run: () => active && updateAnnots(active.doc_id, undo),
+      available: all(needDoc, () => (activePending.length ? true : "There is nothing to undo.")),
+    },
+    "edit.redo": {
+      run: () => active && updateAnnots(active.doc_id, redo),
+      available: all(needDoc, () => (active && annots[active.doc_id]?.redo.length ? true : "There is nothing to redo.")),
+    },
+    "annotate.highlight": { run: () => annotateSelection("highlight"), available: all(needDoc, noDialog, roomAvail, selectionAvail) },
+    "annotate.underline": { run: () => annotateSelection("underline"), available: all(needDoc, noDialog, roomAvail, selectionAvail) },
+    "annotate.strikeOut": { run: () => annotateSelection("strike_out"), available: all(needDoc, noDialog, roomAvail, selectionAvail) },
+    "annotate.note": { run: () => startNote(), available: all(needDoc, noDialog, roomAvail) },
+    "annotate.save": {
+      run: () => openTool("annotate"),
+      available: all(needDoc, noDialog, () => (activePending.length ? true : "There are no unsaved annotations.")),
+    },
+    "annotate.discard": {
+      run: () => active && discardAnnotations(active.doc_id),
+      available: all(needDoc, () => (activePending.length ? true : "There are no unsaved annotations.")),
+    },
     "file.open": { run: openDialog, available: () => true },
     "file.close": { run: () => active && closeTab(active.doc_id), available: needDoc },
     "file.reveal": { run: () => active && api.revealInFolder(active.path).catch((e) => notifyError("Couldn’t show the file", e)), available: needDoc },
@@ -424,6 +566,8 @@ export function App() {
     const multi = (active?.info.page_count ?? 0) > 1;
     // Opening the menu moves focus, which can clear the page selection: snapshot it and restore on close.
     const selected = pageSelection();
+    const rects = selected ? selectionRects() : null;
+    const room = roomAvail();
     const sel = window.getSelection();
     const range = selected && sel && sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
     const restore = () => {
@@ -440,7 +584,17 @@ export function App() {
       y,
       afterClose: restore,
       items: [
-        ...(selected ? [{ ...(item("edit.copy", "Copy", () => copySelection(selected), true) as Exclude<MenuItemOrSeparator, "separator">), shortcut: "Ctrl+C" }, "separator" as const] : []),
+        ...(selected
+          ? [
+              { ...(item("edit.copy", "Copy", () => copySelection(selected), true) as Exclude<MenuItemOrSeparator, "separator">), shortcut: "Ctrl+C" },
+              "separator" as const,
+              { ...(item("annotate.highlight", "Highlight", () => annotateSelection("highlight", rects!), room) as Exclude<MenuItemOrSeparator, "separator">), shortcut: bindings["annotate.highlight"]?.[0] },
+              { ...(item("annotate.underline", "Underline", () => annotateSelection("underline", rects!), room) as Exclude<MenuItemOrSeparator, "separator">), shortcut: bindings["annotate.underline"]?.[0] },
+              item("annotate.strikeOut", "Strikethrough", () => annotateSelection("strike_out", rects!), room),
+              item("annotate.note", "Add note…", () => startNote(undefined, rects!), room),
+              "separator" as const,
+            ]
+          : [item("annotate.note", "Add note here…", () => startNote({ page, x, y }, new Map()), room), "separator" as const]),
         item("pages.extract", `Extract page ${n}…`, () => openTool("extract", String(n))),
         item("pages.rotate", `Rotate page ${n}…`, () => openTool("rotate", String(n))),
         item("pages.delete", `Delete page ${n}…`, () => openTool("delete", String(n)), multi ? true : "A one-page document has no pages to delete."),
@@ -454,6 +608,16 @@ export function App() {
     });
   };
 
+  /** Close every other tab; tabs with unsaved annotations stay open (one prompt per tab would pile up). */
+  const closeOthers = (keepId: number) => {
+    const others = tabs.filter((t) => t.doc_id !== keepId);
+    const kept = others.filter((t) => pendingOf(t.doc_id).length > 0);
+    others.filter((t) => !kept.includes(t)).forEach((t) => closeTabNow(t.doc_id));
+    if (kept.length) {
+      notify({ kind: "warning", title: `${kept.length} tab${kept.length === 1 ? " was" : "s were"} kept open`, detail: `Unsaved annotations: ${kept.map((t) => t.name).join(", ")}.`, persistent: true });
+    }
+  };
+
   const tabMenu = (doc: OpenedDoc, x: number, y: number) =>
     setMenu({
       label: doc.name,
@@ -461,7 +625,7 @@ export function App() {
       y,
       items: [
         item("file.close", "Close", () => closeTab(doc.doc_id), true),
-        item("file.close", "Close other tabs", () => tabs.filter((t) => t.doc_id !== doc.doc_id).forEach((t) => closeTab(t.doc_id)), tabs.length > 1 ? true : "No other tabs are open."),
+        item("file.close", "Close other tabs", () => closeOthers(doc.doc_id), tabs.length > 1 ? true : "No other tabs are open."),
         "separator",
         item("file.reveal", "Show in folder", () => api.revealInFolder(doc.path).catch((e) => notifyError("Couldn’t show the file", e)), true),
       ],
@@ -476,6 +640,16 @@ export function App() {
   const onJobFinished = (job: JobSnapshot) => {
     const r = job.result;
     if (!r) return;
+    if (r.operation === "annotate" && active) {
+      const docId = active.doc_id;
+      setAnnots(({ [docId]: _saved, ...rest }) => rest);
+      const next = afterSave.current;
+      afterSave.current = null;
+      if (next?.kind === "close") closeTabNow(next.docId);
+      if (next?.kind === "quit" && dirtyTabs.every((t) => t.doc_id === docId)) {
+        api.quitApp().catch((e) => notifyError("PageWeave could not close", e));
+      }
+    }
     const out = r.outputs[0];
     const title = r.outputs.length > 1 ? `Saved ${r.outputs.length} files` : out ? `Saved ${basename(out.path)}` : "Done";
     const actions: NoticeAction[] = [];
@@ -637,6 +811,7 @@ export function App() {
               hits={hits}
               currentHit={search.current}
               onPageContextMenu={pageMenu}
+              annotations={activePending}
               onMeasured={(width) => {
                 if (view.fitPending) setView({ zoom: Math.min(1.5, fitWidthZoom(active.info.pages, width)), fitPending: false });
               }}
@@ -656,7 +831,7 @@ export function App() {
         </div>
       )}
 
-      <StatusBar doc={active} currentPage={view.page} zoom={view.zoom} jobs={Object.values(jobs)} onGoToPage={goToPage} goToNonce={goToNonce} onCancelJob={(id) => api.cancelJob(id)} />
+      <StatusBar doc={active} currentPage={view.page} zoom={view.zoom} jobs={Object.values(jobs)} onGoToPage={goToPage} goToNonce={goToNonce} onCancelJob={(id) => api.cancelJob(id)} unsaved={activePending.length} onSaveAnnotations={() => runCommand("annotate.save")} />
 
       {menu && (
         <Menu
@@ -669,7 +844,18 @@ export function App() {
       )}
 
       {dialog?.kind === "tool" && active && (
-        <PageToolsDialog tool={dialog.tool} doc={active} initialPages={dialog.initialPages} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />
+        <PageToolsDialog
+          tool={dialog.tool}
+          doc={active}
+          initialPages={dialog.initialPages}
+          annotations={dialog.tool === "annotate" ? activePending : undefined}
+          jobs={jobs}
+          onClose={() => {
+            afterSave.current = null;
+            setDialog(null);
+          }}
+          onFinished={onJobFinished}
+        />
       )}
       {dialog?.kind === "settings" && (
         <SettingsDialog
@@ -694,6 +880,41 @@ export function App() {
       {dialog?.kind === "password" && (
         <PasswordDialog name={basename(dialog.path)} error={dialog.error} onSubmit={(pw) => openPath(dialog.path, pw)} onCancel={() => setDialog(null)} />
       )}
+
+      {dialog?.kind === "note" && active && (
+        <NoteDialog
+          page={dialog.page}
+          onCancel={() => setDialog(null)}
+          onAdd={(text) => {
+            const group = annGroup.current++;
+            updateAnnots(active.doc_id, (h) => addAnnotations(h, [{ id: makeId(group, 0), page: dialog.page, kind: "note", rects: [dialog.rect], color: ANNOTATION_COLORS.note, contents: text }]));
+            setDialog(null);
+          }}
+        />
+      )}
+      {dialog?.kind === "unsaved" && (() => {
+        const docs = dialog.reason === "tab" ? tabs.filter((t) => t.doc_id === dialog.docId) : dirtyTabs;
+        const target = docs.length === 1 ? docs[0]! : null;
+        return (
+          <UnsavedDialog
+            names={docs.map((d) => d.name)}
+            count={docs.reduce((n, d) => n + pendingOf(d.doc_id).length, 0)}
+            canSave={!!target}
+            onCancel={() => setDialog(null)}
+            onDiscard={() => {
+              setDialog(null);
+              if (dialog.reason === "tab") closeTabNow(dialog.docId);
+              else api.quitApp().catch((e) => notifyError("PageWeave could not close", e));
+            }}
+            onSave={() => {
+              if (!target) return;
+              afterSave.current = dialog.reason === "tab" ? { kind: "close", docId: target.doc_id } : { kind: "quit" };
+              setActiveId(target.doc_id);
+              setDialog({ kind: "tool", tool: "annotate" });
+            }}
+          />
+        );
+      })()}
 
       <Notices notices={notices} onDismiss={dismiss} />
     </div>

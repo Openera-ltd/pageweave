@@ -80,7 +80,23 @@ export class Session {
     const el = await this.waitFor(css);
     await this.cmd("POST", `/element/${el}/clear`, {});
     await this.cmd("POST", `/element/${el}/value`, { text });
-    const got = await this.exec("return arguments[0].value", { [ELEMENT]: el });
+    let got = await this.exec("return arguments[0].value", { [ELEMENT]: el });
+    if (got !== text && got.toLowerCase() === text.toLowerCase()) {
+      // WebKitWebDriver loses Shift for capitals in element send-keys after earlier pointer actions.
+      // Re-type through the Actions API with explicit Shift presses (still real key events).
+      await this.cmd("POST", `/element/${el}/clear`, {});
+      await this.exec("arguments[0].focus(); return 1", { [ELEMENT]: el });
+      const acts = [];
+      for (const ch of text) {
+        const shifted = ch !== ch.toLowerCase();
+        if (shifted) acts.push({ type: "keyDown", value: KEYS.Shift });
+        acts.push({ type: "keyDown", value: ch }, { type: "keyUp", value: ch });
+        if (shifted) acts.push({ type: "keyUp", value: KEYS.Shift });
+      }
+      await this.cmd("POST", "/actions", { actions: [{ type: "key", id: "kb", actions: acts }] });
+      await this.cmd("DELETE", "/actions");
+      got = await this.exec("return arguments[0].value", { [ELEMENT]: el });
+    }
     if (got !== text) throw new Error(`typed ${JSON.stringify(text)} into ${css} but the field contains ${JSON.stringify(got)} (WebDriver input simulation)`);
   }
 

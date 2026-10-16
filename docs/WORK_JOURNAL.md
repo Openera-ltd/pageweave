@@ -65,6 +65,16 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 6. **Credential hygiene** — the Kaggle/GitHub/Cloudflare tokens were shared in chat; PRD 16 requires rotation and runtime-only injection (environment secrets).
 
 ### Next engineering steps (no owner input needed)
-- Annotations from selection (highlight/underline/strike/note) with save-to-new-file and E2E verification of the written annotations.
+- ~~Annotations from selection~~ — done in checkpoint 13.
 - Persisted job state + restart recovery; app startup and first-page timing in the real app.
 - Windows UI automation (msedgedriver + tauri-driver on windows-latest) to run the E2E suite on Windows.
+
+## 2026-10-16 — Session 1, checkpoint 13: annotations end to end, unsaved-changes protection
+- Engine (`2dc0f6b`, `7cff5e0`): typed `annotate` operation; output reopened and verified; lopdf + rendered-pixel tests.
+- App: Highlight / Underline / Strikethrough / Add note from the page context menu (selection snapshot taken before the menu steals focus), shortcuts Ctrl+Shift+H / Ctrl+Shift+U, Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z, Ctrl+S "Save annotated copy…" (default `<name>-annotated.pdf`), status-bar unsaved count (button), Discard with Undo in the notice.
+- Selection → PDF: only selected text-node fragments are measured (never element boxes, so Ctrl+A cannot become a whole-page highlight); clipped per page; zoom derived from the measured page box; merged per line in PDF space; inverse mapping unit-tested for 0/90/180/270°.
+- Unsaved protection: tab close prompt (Save copy… focused) and a host-side window close guard — the Rust `CloseRequested` handler holds the close only while the UI reports unsaved annotations, so a hung UI cannot block a clean close.
+- E2E: 33/33 locally (new: annotate + verified saved file, tab-close prompt, real `WM_DELETE_WINDOW` close via `app/e2e/wm_close.py`: clean close, Cancel, Discard, Save-then-quit). WebDriver's own close-window bypasses the OS close request, so it cannot test this.
+- Harness findings: WebKitWebDriver loses Shift for capitals in element send-keys after pointer actions — `type()` now falls back to explicit Shift key actions and still verifies the field. `tools/check.sh` silently passed a failing strict audit because `set -e` ignores failures left of `&&`; fixed (each check is its own command).
+- Totals: Rust 83, UI unit 32, E2E 33, audit 39/39.
+- Next: CI result for this push (incl. first `windows-e2e` run); persisted job state/recovery; startup/first-page timing.

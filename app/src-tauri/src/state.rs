@@ -8,6 +8,7 @@ use pw_pdf::DocumentInfo;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub type DocId = u64;
@@ -48,6 +49,9 @@ struct Inner {
     next_id: Mutex<DocId>,
     settings: Mutex<Settings>,
     store: SettingsStore,
+    /// Number of unsaved edits (pending annotations) the UI reports; closing the window is held
+    /// back while it is non-zero so work is not lost silently.
+    unsaved: AtomicU32,
 }
 
 impl AppState {
@@ -72,6 +76,7 @@ impl AppState {
                 next_id: Mutex::new(1),
                 settings: Mutex::new(settings),
                 store,
+                unsaved: AtomicU32::new(0),
             }),
             jobs: Arc::new(JobManager::new(workers)),
             logger: Arc::new(logger),
@@ -79,6 +84,14 @@ impl AppState {
             settings_outcome: outcome,
             log_dir,
         }
+    }
+
+    pub fn set_unsaved(&self, count: u32) {
+        self.inner.unsaved.store(count, Ordering::SeqCst);
+    }
+
+    pub fn unsaved(&self) -> u32 {
+        self.inner.unsaved.load(Ordering::SeqCst)
     }
 
     pub fn settings(&self) -> Settings {
@@ -224,6 +237,17 @@ mod tests {
         s.set_launch_files(files);
         assert_eq!(s.take_launch_files().len(), 1);
         assert!(s.take_launch_files().is_empty());
+    }
+
+    #[test]
+    fn unsaved_count_guards_window_close() {
+        let (s, _d) = state();
+        assert!(!crate::close_needs_confirmation(&s));
+        s.set_unsaved(3);
+        assert!(crate::close_needs_confirmation(&s));
+        assert!(crate::close_needs_confirmation(&s.clone()), "clones share the count");
+        s.set_unsaved(0);
+        assert!(!crate::close_needs_confirmation(&s));
     }
 
     #[test]

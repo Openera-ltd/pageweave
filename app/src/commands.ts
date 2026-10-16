@@ -10,6 +10,14 @@ export type CommandId =
   | "file.reveal"
   | "file.properties"
   | "edit.copy"
+  | "edit.undo"
+  | "edit.redo"
+  | "annotate.highlight"
+  | "annotate.underline"
+  | "annotate.strikeOut"
+  | "annotate.note"
+  | "annotate.save"
+  | "annotate.discard"
   | "tab.next"
   | "tab.previous"
   | "view.zoomIn"
@@ -40,7 +48,7 @@ export type CommandId =
 export interface CommandSpec {
   id: CommandId;
   label: string;
-  category: "File" | "View" | "Navigate" | "Search" | "Pages" | "App";
+  category: "File" | "Edit" | "View" | "Navigate" | "Search" | "Pages" | "Annotate" | "App";
   /** Default bindings; the first is shown in menus. */
   shortcuts: string[];
   /** Allowed while typing in a text field (e.g. Escape, F3). */
@@ -53,7 +61,15 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "file.reveal", label: "Show in folder", category: "File", shortcuts: [] },
   { id: "file.properties", label: "Document properties", category: "File", shortcuts: ["Ctrl+D"] },
   // Ctrl+C is handled natively by the text layer; this command backs the context-menu entry.
-  { id: "edit.copy", label: "Copy selected text", category: "File", shortcuts: [] },
+  { id: "edit.copy", label: "Copy selected text", category: "Edit", shortcuts: [] },
+  { id: "edit.undo", label: "Undo annotation", category: "Edit", shortcuts: ["Ctrl+Z"] },
+  { id: "edit.redo", label: "Redo annotation", category: "Edit", shortcuts: ["Ctrl+Y", "Ctrl+Shift+Z"] },
+  { id: "annotate.highlight", label: "Highlight selected text", category: "Annotate", shortcuts: ["Ctrl+Shift+H"] },
+  { id: "annotate.underline", label: "Underline selected text", category: "Annotate", shortcuts: ["Ctrl+Shift+U"] },
+  { id: "annotate.strikeOut", label: "Strike through selected text", category: "Annotate", shortcuts: [] },
+  { id: "annotate.note", label: "Add note…", category: "Annotate", shortcuts: [] },
+  { id: "annotate.save", label: "Save annotated copy…", category: "Annotate", shortcuts: ["Ctrl+S"] },
+  { id: "annotate.discard", label: "Discard unsaved annotations", category: "Annotate", shortcuts: [] },
   { id: "tab.next", label: "Next tab", category: "View", shortcuts: ["Ctrl+Tab"], allowInInput: true },
   { id: "tab.previous", label: "Previous tab", category: "View", shortcuts: ["Ctrl+Shift+Tab"], allowInInput: true },
   { id: "view.zoomIn", label: "Zoom in", category: "View", shortcuts: ["Ctrl+=", "Ctrl+Plus"] },
