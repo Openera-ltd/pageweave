@@ -47,3 +47,24 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - Watchdog (PRD 12): logic unit-tested (8); live dry run detected the real failing Linux job of run #1. **Blocked:** GitHub runs `schedule` only from the default branch — the 10-minute trigger cannot be proven until this branch is merged to `main` (owner decision).
 - Defects fixed this checkpoint: PDFium page size is post-rotation → rotated pages laid out portrait and geometry off (engine now reports unrotated size; regression test fails without fix); rotated text runs over-stretched 16×; menu focus cleared page selection (snapshot + restore); shortcut capture focus race.
 - Next: read CI run #5; fix Linux CI E2E; then text-selection keyboard support (Ctrl+A scope), annotations/print scoping decision, accessibility review plan.
+
+## 2026-10-16 — Session 1, checkpoints 10–12: accessibility, bookmarks, license bundles, CI fully green
+- Commits: `c3cdbaa` (axe + document list semantics + landmarks), `828d2f2` (bookmarks), `5bb456b` (license bundles), `21898ce` (E2E timing).
+- **CI run #6 (commit `c3cdbaa`): all four jobs green** — Linux (fmt, clippy, Rust tests, UI tests, interaction audit, real-app E2E 28/28 with axe-core), Windows (tests, NSIS+MSI build, silent install → launch with PDF → log verified → uninstall), gitleaks, cargo-deny.
+- CI E2E duration fixed: ~31 s per app launch on ubuntu-24.04 runners was a missing D-Bus session; running under `dbus-run-session` cut the step from ~14 min to 70 s for 28 scenarios.
+- Accessibility: axe-core (test-only) reports 0 findings of any severity across 10 UI states (light/dark). Fixed nested interactive tabs → document list; landmarks/headings. Manual screen-reader review still NOT done.
+- Licenses: generated bundles for all compiled Rust crates (cargo-about) and bundled UI packages, installed with the app; CI fails when stale.
+- Local totals: Rust 80, UI unit 20, real-app E2E 29, watchdog 8; audit 31/31 commands exercised.
+
+### Decisions needed from the owner (blocking further release progress)
+1. **Merge to `main`** — required for the 10-minute watchdog schedule to run at all (GitHub only schedules from the default branch) and for release tagging.
+2. **DW-001** — full document/spreadsheet authoring vs. existing-file editing + conversion via mature engines.
+3. **Office conversion engine** — LibreOffice (MPL-2.0, ~300 MB runtime) is the realistic local option for DOCX/XLSX/PPTX/ODF; needs approval for size/licensing.
+4. **Specialist model choices and rights** (OCR, translation, TTS, layout) — PRD 14/15 require license/provenance approval before any download or training; Kaggle use requires a rights-cleared dataset decision.
+5. **Code signing** — Windows installers are unsigned (SmartScreen warnings); requires a certificate the owner must obtain.
+6. **Credential hygiene** — the Kaggle/GitHub/Cloudflare tokens were shared in chat; PRD 16 requires rotation and runtime-only injection (environment secrets).
+
+### Next engineering steps (no owner input needed)
+- Annotations from selection (highlight/underline/strike/note) with save-to-new-file and E2E verification of the written annotations.
+- Persisted job state + restart recovery; app startup and first-page timing in the real app.
+- Windows UI automation (msedgedriver + tauri-driver on windows-latest) to run the E2E suite on Windows.
