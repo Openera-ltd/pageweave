@@ -117,3 +117,37 @@ export function mostVisiblePage(tops: number[], heights: number[], viewTop: numb
   }
   return best;
 }
+
+/**
+ * CSS for a layer laid out in unrotated page space (W×H px, origin top-left) so that, after the
+ * transform, it covers the displayed (rotated) page box. CSS rotate(θ) about the top-left corner
+ * followed by a translation back into the box: 90° → (H−y, x); 180° → (W−x, H−y); 270° → (y, W−x).
+ */
+export function unrotatedLayer(page: Pick<PageInfo, "width_pt" | "height_pt" | "rotation">, zoom: number): { width: number; height: number; transform: string } {
+  const k = zoom * CSS_PX_PER_PT;
+  const W = page.width_pt * k;
+  const H = page.height_pt * k;
+  const transform =
+    page.rotation === 90
+      ? `translate(${H}px, 0px) rotate(90deg)`
+      : page.rotation === 180
+        ? `translate(${W}px, ${H}px) rotate(180deg)`
+        : page.rotation === 270
+          ? `translate(0px, ${W}px) rotate(270deg)`
+          : "none";
+  return { width: W, height: H, transform };
+}
+
+/** Apply `unrotatedLayer`'s transform to a point (for tests and hit-testing). */
+export function applyLayerTransform(rotation: PageInfo["rotation"], W: number, H: number, x: number, y: number): [number, number] {
+  switch (rotation) {
+    case 90:
+      return [H - y, x];
+    case 180:
+      return [W - x, H - y];
+    case 270:
+      return [y, W - x];
+    default:
+      return [x, y];
+  }
+}

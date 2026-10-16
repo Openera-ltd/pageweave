@@ -13,7 +13,8 @@ xvfb-run -a -s "-screen 0 1366x900x24" bash -c '
   tauri-driver --port 4444 > "'"$ART"'/tauri-driver.log" 2>&1 &
   DRIVER=$!
   for i in $(seq 1 50); do curl -sf http://127.0.0.1:4444/status >/dev/null && break; sleep 0.2; done
-  node e2e/run.mjs "'"$APP"'" "'"$ART"'"; code=$?
+  timeout 900 node e2e/run.mjs "'"$APP"'" "'"$ART"'"; code=$?
+  [ "$code" = 124 ] && echo "E2E suite exceeded 15 minutes and was stopped" >&2
   kill $DRIVER 2>/dev/null || true
   exit $code
 '

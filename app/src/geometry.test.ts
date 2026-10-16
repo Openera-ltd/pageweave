@@ -8,6 +8,8 @@ import {
   nextZoom,
   pdfRectToScreen,
   renderScalePermille,
+  unrotatedLayer,
+  applyLayerTransform,
 } from "./geometry";
 import type { PageInfo } from "./types";
 
@@ -80,4 +82,29 @@ describe("visible page", () => {
     expect(mostVisiblePage(tops, heights, 700, 800)).toBe(1);
     expect(mostVisiblePage(tops, heights, 2500, 800)).toBe(2);
   });
+});
+
+describe("text layer transform agrees with the search-rect mapping for every rotation", () => {
+  const r = { left: 72, bottom: 700, right: 172, top: 712 };
+  for (const rot of [0, 90, 180, 270] as const) {
+    it(`rotation ${rot}`, () => {
+      const page = letter(rot);
+      const zoom = 1.25;
+      const k = zoom * CSS_PX_PER_PT;
+      const layer = unrotatedLayer(page, zoom);
+      // Rect corners in the unrotated layer (origin top-left).
+      const corners: Array<[number, number]> = [
+        [r.left * k, (page.height_pt - r.top) * k],
+        [r.right * k, (page.height_pt - r.bottom) * k],
+      ];
+      const mapped = corners.map(([x, y]) => applyLayerTransform(rot, layer.width, layer.height, x, y));
+      const left = Math.min(mapped[0]![0], mapped[1]![0]);
+      const top = Math.min(mapped[0]![1], mapped[1]![1]);
+      const expected = pdfRectToScreen(r, page, zoom);
+      expect(left).toBeCloseTo(expected.left, 6);
+      expect(top).toBeCloseTo(expected.top, 6);
+      if (rot === 0) expect(layer.transform).toBe("none");
+      else expect(layer.transform).toContain(`rotate(${rot}deg)`);
+    });
+  }
 });

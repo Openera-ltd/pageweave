@@ -9,6 +9,7 @@ export type CommandId =
   | "file.close"
   | "file.reveal"
   | "file.properties"
+  | "edit.copy"
   | "tab.next"
   | "tab.previous"
   | "view.zoomIn"
@@ -50,6 +51,8 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "file.close", label: "Close tab", category: "File", shortcuts: ["Ctrl+W", "Ctrl+F4"], allowInInput: true },
   { id: "file.reveal", label: "Show in folder", category: "File", shortcuts: [] },
   { id: "file.properties", label: "Document properties", category: "File", shortcuts: ["Ctrl+D"] },
+  // Ctrl+C is handled natively by the text layer; this command backs the context-menu entry.
+  { id: "edit.copy", label: "Copy selected text", category: "File", shortcuts: [] },
   { id: "tab.next", label: "Next tab", category: "View", shortcuts: ["Ctrl+Tab"], allowInInput: true },
   { id: "tab.previous", label: "Previous tab", category: "View", shortcuts: ["Ctrl+Shift+Tab"], allowInInput: true },
   { id: "view.zoomIn", label: "Zoom in", category: "View", shortcuts: ["Ctrl+=", "Ctrl+Plus"] },

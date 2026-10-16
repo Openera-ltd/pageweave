@@ -164,3 +164,17 @@ export interface AppInfo {
   engine_error: PwError | null;
   platform: string;
 }
+
+export interface TextSegment {
+  text: string;
+  left: number;
+  bottom: number;
+  right: number;
+  top: number;
+}
+
+export interface PageText {
+  page: number;
+  segments: TextSegment[];
+  truncated: boolean;
+}

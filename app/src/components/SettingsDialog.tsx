@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { COMMANDS, bindingConflicts, effectiveBindings, type CommandId } from "../commands";
 import { eventToShortcut, validateShortcut } from "../shortcuts";
 import { toPwError, type Density, type Motion, type PwError, type Settings, type Theme } from "../types";
@@ -158,9 +158,6 @@ function ShortcutEditor({ overrides, conflicts, onChange }: { overrides: Record<
   const bindings = effectiveBindings(overrides);
   const conflicted = new Set([...conflicts.values()].flat());
 
-  useEffect(() => {
-    if (capturing) captureRef.current?.focus();
-  }, [capturing]);
 
   const onCaptureKey = (e: React.KeyboardEvent, id: CommandId) => {
     e.preventDefault();
@@ -216,6 +213,8 @@ function ShortcutEditor({ overrides, conflicts, onChange }: { overrides: Record<
                   <>
                     <input
                       ref={captureRef}
+                      // Focus on mount (not in an effect) so keys pressed right after "Change" are captured.
+                      autoFocus
                       readOnly
                       className="input"
                       style={{ width: "14ch" }}

@@ -112,6 +112,15 @@ body {
   line-height: 1.4;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
+  /* App chrome is not selectable; page text and form fields are. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 button,
@@ -430,6 +439,30 @@ textarea {
 
 .page .page-error {
   color: #b42318;
+}
+
+.textlayer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  user-select: text;
+  -webkit-user-select: text;
+  line-height: 1;
+}
+
+.textlayer span {
+  position: absolute;
+  white-space: pre;
+  color: transparent;
+  transform-origin: 0 0;
+  cursor: text;
+  font-family: sans-serif;
+}
+
+.textlayer span::selection {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: transparent;
 }
 
 .page .hit {

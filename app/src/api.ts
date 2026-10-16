@@ -12,6 +12,7 @@ import type {
   JobSnapshot,
   OpenedDoc,
   OperationRequest,
+  PageText,
   SearchHit,
   Settings,
 } from "./types";
@@ -40,6 +41,8 @@ export interface Api {
   revealInFolder(path: string): Promise<void>;
   launchFiles(): Promise<string[]>;
   logDir(): Promise<string>;
+  pageText(docId: number, page: number): Promise<PageText>;
+  copyText(text: string): Promise<void>;
 }
 
 export const tauriApi: Api = {
@@ -72,6 +75,14 @@ export const tauriApi: Api = {
   revealInFolder: (path) => revealItemInDir(path),
   launchFiles: () => invoke("launch_files"),
   logDir: () => invoke("log_dir"),
+  pageText: (docId, page) => invoke("page_text", { docId, page }),
+  copyText: async (text) => {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    if (!document.execCommand("copy")) throw new Error("copy failed");
+  },
 };
 
 export const ApiContext = createContext<Api>(tauriApi);

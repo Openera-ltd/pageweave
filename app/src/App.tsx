@@ -45,6 +45,8 @@ interface MenuState {
   x: number;
   y: number;
   label: string;
+  /** Called after the menu closes (e.g. to restore a text selection the menu's focus cleared). */
+  afterClose?: () => void;
 }
 
 const EMPTY_SEARCH: SearchState = { query: "", matchCase: false, wholeWord: false, status: "idle", count: 0, current: 0, truncated: false };
@@ -286,7 +288,27 @@ export function App() {
 
   const openTool = (tool: PageTool, initialPages?: string) => setDialog({ kind: "tool", tool, initialPages });
 
+  /** Text currently selected inside a page's text layer (not elsewhere in the UI). */
+  const pageSelection = (): string => {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed) return "";
+    const node = sel.anchorNode instanceof Element ? sel.anchorNode : sel.anchorNode?.parentElement;
+    return node?.closest(".textlayer") ? sel.toString().replace(/\n+$/, "") : "";
+  };
+
+  const copySelection = async (snapshot?: string) => {
+    const text = snapshot ?? pageSelection();
+    if (!text) return;
+    try {
+      await api.copyText(text);
+      notify({ kind: "success", title: "Copied", detail: `${text.length} characters`, persistent: false });
+    } catch (e) {
+      notifyError("Couldn’t copy the text", e);
+    }
+  };
+
   const handlers: CommandHandlers = {
+    "edit.copy": { run: () => copySelection(), available: () => (pageSelection() ? true : "Select text on a page first.") },
     "file.open": { run: openDialog, available: () => true },
     "file.close": { run: () => active && closeTab(active.doc_id), available: needDoc },
     "file.reveal": { run: () => active && api.revealInFolder(active.path).catch((e) => notifyError("Couldn’t show the file", e)), available: needDoc },
@@ -391,11 +413,25 @@ export function App() {
   const pageMenu = (page: number, x: number, y: number) => {
     const n = page + 1;
     const multi = (active?.info.page_count ?? 0) > 1;
+    // Opening the menu moves focus, which can clear the page selection: snapshot it and restore on close.
+    const selected = pageSelection();
+    const sel = window.getSelection();
+    const range = selected && sel && sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+    const restore = () => {
+      if (!range) return;
+      const s2 = window.getSelection();
+      if (s2 && (s2.isCollapsed || s2.rangeCount === 0)) {
+        s2.removeAllRanges();
+        s2.addRange(range);
+      }
+    };
     setMenu({
       label: `Page ${n}`,
       x,
       y,
+      afterClose: restore,
       items: [
+        ...(selected ? [{ ...(item("edit.copy", "Copy", () => copySelection(selected), true) as Exclude<MenuItemOrSeparator, "separator">), shortcut: "Ctrl+C" }, "separator" as const] : []),
         item("pages.extract", `Extract page ${n}…`, () => openTool("extract", String(n))),
         item("pages.rotate", `Rotate page ${n}…`, () => openTool("rotate", String(n))),
         item("pages.delete", `Delete page ${n}…`, () => openTool("delete", String(n)), multi ? true : "A one-page document has no pages to delete."),
@@ -596,7 +632,15 @@ export function App() {
 
       <StatusBar doc={active} currentPage={view.page} zoom={view.zoom} jobs={Object.values(jobs)} onGoToPage={goToPage} goToNonce={goToNonce} onCancelJob={(id) => api.cancelJob(id)} />
 
-      {menu && <Menu {...menu} onClose={() => setMenu(null)} />}
+      {menu && (
+        <Menu
+          {...menu}
+          onClose={() => {
+            setMenu(null);
+            menu.afterClose?.();
+          }}
+        />
+      )}
 
       {dialog?.kind === "tool" && active && (
         <PageToolsDialog tool={dialog.tool} doc={active} initialPages={dialog.initialPages} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />

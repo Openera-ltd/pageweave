@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useApi } from "../api";
-import { displaySizePx, mostVisiblePage, pdfRectToScreen, renderScalePermille } from "../geometry";
-import type { OpenedDoc, PageInfo, SearchHit } from "../types";
+import { CSS_PX_PER_PT, displaySizePx, mostVisiblePage, pdfRectToScreen, renderScalePermille, unrotatedLayer } from "../geometry";
+import type { OpenedDoc, PageInfo, PageText, SearchHit } from "../types";
 
 export interface ScrollRequest {
   page: number;
@@ -193,7 +193,12 @@ const Page = memo(function Page({ docId, page, zoom, root, hits, currentHit, onC
       data-page={page.index}
       style={{ width: size.w, height: size.h }}
       aria-label={`Page ${page.index + 1}`}
-      role="img"
+      role="group"
+      aria-roledescription="page"
+      onMouseDown={(e) => {
+        // Right-clicking inside the current text selection must not clear it (INTERACTION_CONTRACT).
+        if (e.button === 2 && selectionContains(e.clientX, e.clientY)) e.preventDefault();
+      }}
       onContextMenu={(e) => {
         e.preventDefault();
         onContextMenu(page.index, e.clientX, e.clientY);
@@ -213,6 +218,7 @@ const Page = memo(function Page({ docId, page, zoom, root, hits, currentHit, onC
           </div>
         </div>
       )}
+      {near && <TextLayer docId={docId} page={page} zoom={zoom} />}
       {pageHits.flatMap(({ h, i }) =>
         h.rects.map((r, j) => {
           const s = pdfRectToScreen(r, page, zoom);
@@ -229,3 +235,72 @@ const Page = memo(function Page({ docId, page, zoom, root, hits, currentHit, onC
     </div>
   );
 });
+
+/**
+ * Invisible, selectable text positioned over the rendered page so native selection, double-click
+ * word selection and Ctrl+C work. Laid out in unrotated page space and rotated with the page.
+ */
+const TextLayer = memo(function TextLayer({ docId, page, zoom }: { docId: number; page: PageInfo; zoom: number }) {
+  const api = useApi();
+  const [text, setText] = useState<PageText | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let live = true;
+    api
+      .pageText(docId, page.index)
+      .then((t) => live && setText(t))
+      // A page without a text layer stays viewable; selection is simply unavailable on it.
+      .catch(() => live && setText({ page: page.index, segments: [], truncated: false }));
+    return () => {
+      live = false;
+    };
+  }, [api, docId, page.index]);
+
+  // Stretch each run horizontally so the selectable text matches the rendered glyph extent.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    for (const span of Array.from(el.children) as HTMLElement[]) {
+      span.style.transform = "";
+      const target = Number(span.dataset.w);
+      // offsetWidth is the untransformed layout width; getBoundingClientRect() would report the
+      // rotated box on 90°/270° pages and over-stretch the run.
+      const natural = span.offsetWidth;
+      if (natural > 0 && target > 0) span.style.transform = `scaleX(${target / natural})`;
+    }
+  }, [text, zoom]);
+
+  if (!text || text.segments.length === 0) return null;
+  const k = zoom * CSS_PX_PER_PT;
+  const layer = unrotatedLayer(page, zoom);
+  return (
+    <div ref={ref} className="textlayer" data-textlayer={page.index} style={{ width: layer.width, height: layer.height, transform: layer.transform }}>
+      {text.segments.map((s, i) => {
+        const h = Math.max(1, (s.top - s.bottom) * k);
+        return (
+          <span
+            key={i}
+            data-w={(s.right - s.left) * k}
+            style={{ left: s.left * k, top: (page.height_pt - s.top) * k, fontSize: h, height: h }}
+          >
+            {s.text}
+            {"\n"}
+          </span>
+        );
+      })}
+    </div>
+  );
+});
+
+/** Whether a viewport point lies inside the current (non-empty) selection's rectangles. */
+function selectionContains(x: number, y: number): boolean {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) return false;
+  for (let i = 0; i < sel.rangeCount; i++) {
+    for (const r of Array.from(sel.getRangeAt(i).getClientRects())) {
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return true;
+    }
+  }
+  return false;
+}

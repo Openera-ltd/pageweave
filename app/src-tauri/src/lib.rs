@@ -97,6 +97,16 @@ async fn search(
     .await
 }
 
+/// Text runs with geometry for one page (selectable text layer). Runs on a worker thread.
+#[tauri::command]
+async fn page_text(state: State<'_, AppState>, doc_id: DocId, page: u32) -> CmdResult<pw_pdf::PageText> {
+    let doc = state.doc(doc_id)?;
+    blocking(move || {
+        pw_pdf::page_text_segments(&doc.path, &pw_pdf::OpenOptions { password: doc.password.as_deref() }, page)
+    })
+    .await
+}
+
 /// Start an operation as a job. When `doc_id` is given, its password is supplied by the host so
 /// the UI never has to hold it. Returns the job ID; progress arrives as `job-update` events.
 #[tauri::command]
@@ -191,6 +201,7 @@ pub fn run() {
             close_document,
             validate_range,
             search,
+            page_text,
             start_operation,
             cancel_job,
             list_jobs,

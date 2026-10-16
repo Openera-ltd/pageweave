@@ -60,6 +60,8 @@ fn inspect_reports_structure() {
     assert_eq!((mixed.pages[0].width_pt, mixed.pages[0].height_pt), (612.0, 792.0));
     assert_eq!((mixed.pages[1].width_pt, mixed.pages[1].height_pt), (595.0, 842.0));
     assert_eq!(mixed.pages[2].rotation, 90);
+    // Regression: sizes are reported unrotated (MediaBox 612×792), not PDFium's rotated 792×612.
+    assert_eq!((mixed.pages[2].width_pt, mixed.pages[2].height_pt), (612.0, 792.0));
 }
 
 #[test]
@@ -378,4 +380,23 @@ fn protection_status_of_outputs_from_encrypted_input() {
             );
         }
     }
+}
+
+#[test]
+fn page_text_segments_have_text_and_geometry() {
+    let t = pw_pdf::page_text_segments(&fixture("five-pages.pdf"), &opts(), 1).expect("segments");
+    let all: String = t.segments.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join("\n");
+    assert!(all.contains("PWMARK002"), "{all}");
+    assert!(!t.truncated);
+    for s in &t.segments {
+        assert!(s.right > s.left && s.top > s.bottom, "{s:?}");
+        assert!(s.left >= 0.0 && s.right <= 612.0 && s.bottom >= 0.0 && s.top <= 792.0, "inside the page: {s:?}");
+    }
+    // Lines appear top to bottom in this simple single-column fixture.
+    let tops: Vec<f32> = t.segments.iter().map(|s| s.top).collect();
+    assert!(tops.windows(2).all(|w| w[0] >= w[1]), "{tops:?}");
+    assert_eq!(
+        pw_pdf::page_text_segments(&fixture("five-pages.pdf"), &opts(), 9).expect_err("oob").code,
+        "text.page_out_of_bounds"
+    );
 }

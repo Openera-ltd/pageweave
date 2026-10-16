@@ -471,6 +471,59 @@ await test("show-in-folder and log-folder never fail silently", async () => {
   });
 });
 
+const selection = (s) => s.exec("return window.getSelection().toString()");
+/** Span in a page's text layer whose text contains `needle`, as a CSS selector via a marker attribute. */
+async function markSpan(s, page, needle) {
+  await s.waitUntil(() => s.exec(`return !!document.querySelector('[data-textlayer="${page}"] span')`), `text layer on page ${page + 1}`);
+  const width = await s.exec(
+    `const sp=[...document.querySelectorAll('[data-textlayer="${page}"] span')].find(x=>x.textContent.includes(arguments[0])); if(!sp) return 0; sp.setAttribute('data-e2e','target'); sp.scrollIntoView({block:'center', inline:'center'}); const r=sp.getBoundingClientRect(); return Math.max(r.width, r.height);`,
+    needle,
+  );
+  assert(width > 0, `text run containing ${needle} on page ${page + 1}`);
+  return width;
+}
+
+await test("double-click selects the word under the pointer; right-click → Copy", async () => {
+  await withApp([join(FIX, "single-page.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    const w = await markSpan(s, 0, "PWMARK001");
+    // "Marker token PWMARK001": aim at ~80% of the run, inside the last word.
+    await s.doubleClick('[data-e2e="target"]', w * 0.3, 0);
+    await s.waitUntil(async () => (await selection(s)).trim() === "PWMARK001", "word selected");
+    // Right-click on the selected word itself: the selection must survive and offer Copy.
+    await s.contextClick('[data-e2e="target"]', w * 0.3, 0);
+    await s.waitFor('[role="menuitem"][data-command="edit.copy"]');
+    await s.click('[role="menuitem"][data-command="edit.copy"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.startsWith("Copied") && t.includes("9 characters")), "copied the 9-character word");
+    assert((await selection(s)).trim() === "PWMARK001", "selection still present after using the menu");
+    const clip = await s.exec("return navigator.clipboard.readText().then(t => t, e => 'ERR ' + e.name)").catch((e) => `ERR ${e.message}`);
+    if (!String(clip).startsWith("ERR")) assert(clip.trim() === "PWMARK001", `clipboard holds the selection (${clip})`);
+    else console.log(`  note: clipboard read-back unavailable in this WebDriver session (${clip}); copy success notice verified instead`);
+  });
+});
+
+await test("text layer is aligned on a 90°-rotated page", async () => {
+  await withApp([join(FIX, "mixed-sizes-rotated.pdf")], async (s) => {
+    // Regression: the rotated page is laid out landscape and initial fit-width accounts for it.
+    const box = await s.exec("const p=document.querySelector('[data-page=\"2\"]'); return [p.offsetWidth, p.offsetHeight]");
+    assert(box[0] > box[1], `rotated page laid out landscape (${box})`);
+    const overflow = await s.exec("const v=document.querySelector('.viewer'); return v.scrollWidth - v.clientWidth");
+    assert(overflow <= 1, `fit width includes the rotated page (overflow ${overflow})`);
+    await s.click('[data-thumb="2"]');
+    await pageLoaded(s, 2);
+    await markSpan(s, 2, "PWMARK003");
+    // On a page rotated 90° clockwise the run reads top-to-bottom: aim 80% down its drawn box.
+    const r = await s.exec("const r=document.querySelector('[data-e2e=target]').getBoundingClientRect(); return [r.left, r.top, r.width, r.height]");
+    assert(r[3] > r[2], `rotated run is taller than wide (${r})`);
+    // Regression: the run must not be stretched beyond the rotated page box.
+    const page = await s.exec("const p=document.querySelector('[data-page=\"2\"]').getBoundingClientRect(); return [p.top, p.height]");
+    assert(r[3] < page[1] * 0.5, `run height ${r[3]} is plausible for page height ${page[1]}`);
+    await s.doubleClickAt(r[0] + r[2] / 2, r[1] + r[3] * 0.8);
+    await s.waitUntil(async () => (await selection(s)).trim() === "PWMARK003", "word selected on rotated page");
+    writeFileSync(join(ART, "rotated-selection.png"), await s.screenshot());
+  });
+});
+
 /* ------------------------------------------------------------------ */
 const summary = {
   app: APP,

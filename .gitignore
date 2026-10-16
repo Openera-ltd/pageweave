@@ -40,3 +40,7 @@ access_token
 Thumbs.db
 .idea/
 .vscode/
+
+# Python bytecode
+__pycache__/
+*.pyc

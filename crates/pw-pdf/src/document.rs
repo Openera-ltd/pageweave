@@ -24,6 +24,8 @@ pub struct OpenOptions<'a> {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PageInfo {
     pub index: u32,
+    /// Page size in points *before* the intrinsic /Rotate is applied (the coordinate space of text,
+    /// search geometry and annotations). The displayed size swaps these for 90°/270°.
     pub width_pt: f32,
     pub height_pt: f32,
     /// Intrinsic /Rotate value in degrees (0, 90, 180, 270).
@@ -148,13 +150,19 @@ pub fn open_document(path: &Path, opts: &OpenOptions) -> PwResult<DocumentInfo> 
     let mut pages = Vec::with_capacity(count as usize);
     for i in 0..count {
         match pages_api.get(i as PdfPageIndex) {
-            Ok(page) => pages.push(PageInfo {
-                index: i,
-                width_pt: page.width().value,
-                height_pt: page.height().value,
-                rotation: rotation_degrees(page.rotation()),
-                label: page.label().map(str::to_string),
-            }),
+            Ok(page) => {
+                // PDFium reports the size after /Rotate; convert back to the unrotated size.
+                let rotation = rotation_degrees(page.rotation());
+                let (w, h) = (page.width().value, page.height().value);
+                let (width_pt, height_pt) = if matches!(rotation, 90 | 270) { (h, w) } else { (w, h) };
+                pages.push(PageInfo {
+                    index: i,
+                    width_pt,
+                    height_pt,
+                    rotation,
+                    label: page.label().map(str::to_string),
+                })
+            }
             Err(_) => {
                 warnings.push(format!("Page {} could not be loaded.", i + 1));
                 pages.push(PageInfo { index: i, width_pt: 0.0, height_pt: 0.0, rotation: 0, label: None });
@@ -248,6 +256,62 @@ pub(crate) fn page_count(path: &Path, opts: &OpenOptions) -> PwResult<u32> {
     Ok(doc.pages().len().max(0) as u32)
 }
 
+/// Upper bound on text runs returned for one page (hostile files can contain millions).
+pub const MAX_TEXT_SEGMENTS: usize = 20_000;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TextSegment {
+    pub text: String,
+    /// Bounds in PDF points, unrotated page space, origin bottom-left.
+    pub left: f32,
+    pub bottom: f32,
+    pub right: f32,
+    pub top: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PageText {
+    pub page: u32,
+    pub segments: Vec<TextSegment>,
+    pub truncated: bool,
+}
+
+/// Text runs of one page with geometry, in the engine's character order, for the selectable text layer.
+pub fn page_text_segments(path: &Path, opts: &OpenOptions, page_index: u32) -> PwResult<PageText> {
+    let pdfium = init(None)?;
+    let doc = load(pdfium, path, opts)?;
+    let count = doc.pages().len().max(0) as u32;
+    if page_index >= count {
+        return Err(PwError::invalid(
+            "text.page_out_of_bounds",
+            format!("Page {} does not exist; the document has {count} pages.", page_index + 1),
+        ));
+    }
+    let page = doc.pages().get(page_index as PdfPageIndex).map_err(|e| map_pdfium_error(&e, "page"))?;
+    let text = page.text().map_err(|e| map_pdfium_error(&e, "text"))?;
+    let mut segments = Vec::new();
+    let mut truncated = false;
+    for seg in text.segments().iter() {
+        if segments.len() >= MAX_TEXT_SEGMENTS {
+            truncated = true;
+            break;
+        }
+        let t = seg.text();
+        if t.trim().is_empty() {
+            continue;
+        }
+        let b = seg.bounds();
+        segments.push(TextSegment {
+            text: t,
+            left: b.left().value,
+            bottom: b.bottom().value,
+            right: b.right().value,
+            top: b.top().value,
+        });
+    }
+    Ok(PageText { page: page_index, segments, truncated })
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SearchRect {
     pub left: f32,
@@ -327,9 +391,8 @@ pub fn render_page_png(path: &Path, opts: &OpenOptions, page_index: u32, scale: 
         ));
     }
     let page = doc.pages().get(page_index as PdfPageIndex).map_err(|e| map_pdfium_error(&e, "page"))?;
-    let rotated = matches!(rotation_degrees(page.rotation()), 90 | 270);
-    let (w_pt, h_pt) =
-        if rotated { (page.height().value, page.width().value) } else { (page.width().value, page.height().value) };
+    // PDFium's width/height are already the displayed (rotated) size, which is what gets rendered.
+    let (w_pt, h_pt) = (page.width().value, page.height().value);
     let w = (w_pt * scale).ceil().max(1.0) as u64;
     let h = (h_pt * scale).ceil().max(1.0) as u64;
     if w * h > MAX_RENDER_PIXELS || w > i32::MAX as u64 || h > i32::MAX as u64 {

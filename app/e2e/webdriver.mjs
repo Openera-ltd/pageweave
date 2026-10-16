@@ -28,6 +28,7 @@ export class Session {
 
   static async create(base, application, args = []) {
     const res = await fetch(`${base}/session`, {
+      signal: AbortSignal.timeout(60_000),
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ capabilities: { alwaysMatch: { "tauri:options": { application, args } } } }),
@@ -38,7 +39,9 @@ export class Session {
   }
 
   async cmd(method, path, data) {
+    // Every command is bounded so a hung driver or app fails fast instead of stalling CI.
     const res = await fetch(`${this.base}/session/${this.id}${path}`, {
+      signal: AbortSignal.timeout(30_000),
       method,
       headers: { "content-type": "application/json" },
       body: data === undefined ? undefined : JSON.stringify(data),
@@ -96,7 +99,7 @@ export class Session {
   }
 
   /** Right-click at the centre of an element. */
-  async contextClick(css) {
+  async contextClick(css, dx = 0, dy = 0) {
     const el = await this.waitFor(css);
     await this.cmd("POST", "/actions", {
       actions: [
@@ -105,12 +108,38 @@ export class Session {
           id: "mouse",
           parameters: { pointerType: "mouse" },
           actions: [
-            { type: "pointerMove", origin: { [ELEMENT]: el }, x: 0, y: 0 },
+            { type: "pointerMove", origin: { [ELEMENT]: el }, x: Math.round(dx), y: Math.round(dy) },
             { type: "pointerDown", button: 2 },
             { type: "pointerUp", button: 2 },
           ],
         },
       ],
+    });
+    await this.cmd("DELETE", "/actions");
+  }
+
+  /** Double-click at an offset (CSS px) from the element's centre. */
+  async doubleClick(css, dx = 0, dy = 0) {
+    const el = await this.waitFor(css);
+    const click = [{ type: "pointerDown", button: 0 }, { type: "pointerUp", button: 0 }];
+    await this.cmd("POST", "/actions", {
+      actions: [
+        {
+          type: "pointer",
+          id: "mouse",
+          parameters: { pointerType: "mouse" },
+          actions: [{ type: "pointerMove", origin: { [ELEMENT]: el }, x: Math.round(dx), y: Math.round(dy) }, ...click, ...click],
+        },
+      ],
+    });
+    await this.cmd("DELETE", "/actions");
+  }
+
+  /** Double-click at viewport coordinates (for transformed elements whose layout box differs from what is drawn). */
+  async doubleClickAt(x, y) {
+    const click = [{ type: "pointerDown", button: 0 }, { type: "pointerUp", button: 0 }];
+    await this.cmd("POST", "/actions", {
+      actions: [{ type: "pointer", id: "mouse", parameters: { pointerType: "mouse" }, actions: [{ type: "pointerMove", origin: "viewport", x: Math.round(x), y: Math.round(y) }, ...click, ...click] }],
     });
     await this.cmd("DELETE", "/actions");
   }
@@ -152,6 +181,6 @@ export class Session {
   }
 
   async delete() {
-    await fetch(`${this.base}/session/${this.id}`, { method: "DELETE" }).catch(() => undefined);
+    await fetch(`${this.base}/session/${this.id}`, { method: "DELETE", signal: AbortSignal.timeout(20_000) }).catch(() => undefined);
   }
 }

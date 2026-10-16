@@ -10,6 +10,7 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `file.close` | Close tab | Ctrl+W, Ctrl+F4 | Exercised by tests |
 | `file.reveal` | Show in folder | — | Exercised by tests |
 | `file.properties` | Document properties | Ctrl+D | Exercised by tests |
+| `edit.copy` | Copy selected text | — | Exercised by tests |
 | `tab.next` | Next tab | Ctrl+Tab | Exercised by tests |
 | `tab.previous` | Previous tab | Ctrl+Shift+Tab | Exercised by tests |
 | `view.zoomIn` | Zoom in | Ctrl+=, Ctrl+Plus | Exercised by tests |
@@ -36,4 +37,4 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `app.commandPalette` | Command palette | Ctrl+K, Ctrl+Shift+P | Exercised by tests |
 | `app.openLogs` | Show log folder | — | Exercised by tests |
 
-Coverage: 29 of 29 commands exercised by unit or real-app E2E tests.
+Coverage: 30 of 30 commands exercised by unit or real-app E2E tests.
