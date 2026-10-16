@@ -222,3 +222,57 @@ jobs:
             target/release/bundle/nsis/*.exe
             target/release/bundle/msi/*.msi
           retention-days: 14
+
+  windows-e2e:
+    name: Windows — real-app E2E (WebView2 via Edge WebDriver)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: e2e
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Fetch pinned PDFium (checksum verified)
+        run: python -I tools/fetch_pdfium.py --platform win-x64
+      - name: Build UI and the real app (embedded UI), plus CLI for independent checks
+        working-directory: app
+        run: |
+          npm ci --no-audit --no-fund
+          npx vite build
+          npx tauri build --debug --no-bundle
+          cargo build -p pw-cli
+      - name: Install tauri-driver
+        run: cargo install --locked tauri-driver@2.1.0
+      - name: Real-app end-to-end tests on Windows
+        shell: pwsh
+        working-directory: app
+        env:
+          PAGEWEAVE_CLI: ${{ github.workspace }}\target\debug\pageweave.exe
+        run: |
+          $ErrorActionPreference = "Stop"
+          $edge = Join-Path $env:EDGEWEBDRIVER "msedgedriver.exe"
+          if (-not (Test-Path $edge)) { throw "Edge WebDriver not found at $edge" }
+          & $edge --version
+          (Get-ItemProperty "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" -ErrorAction SilentlyContinue).pv | ForEach-Object { "WebView2 runtime: $_" }
+          New-Item -ItemType Directory -Force ..\e2e-artifacts-windows | Out-Null
+          $drv = Start-Process tauri-driver -ArgumentList "--port", "4444", "--native-driver", "`"$edge`"" -PassThru -RedirectStandardOutput ..\e2e-artifacts-windows\tauri-driver.out.log -RedirectStandardError ..\e2e-artifacts-windows\tauri-driver.err.log
+          for ($i = 0; $i -lt 50; $i++) { try { Invoke-WebRequest http://127.0.0.1:4444/status -UseBasicParsing | Out-Null; break } catch { Start-Sleep -Milliseconds 200 } }
+          node e2e/run.mjs ..\target\debug\pageweave-app.exe ..\e2e-artifacts-windows
+          $code = $LASTEXITCODE
+          Stop-Process -Id $drv.Id -Force -ErrorAction SilentlyContinue
+          exit $code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-windows
+          path: e2e-artifacts-windows
+          retention-days: 14

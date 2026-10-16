@@ -7,12 +7,13 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Session } from "./webdriver.mjs";
 
 const APP = resolve(process.argv[2] ?? "../target/debug/pageweave-app");
 const ART = resolve(process.argv[3] ?? "e2e-artifacts");
 const DRIVER = process.env.WEBDRIVER_URL ?? "http://127.0.0.1:4444";
-const FIX = resolve(new URL("../../fixtures/pdf", import.meta.url).pathname);
+const FIX = resolve(fileURLToPath(new URL("../../fixtures/pdf", import.meta.url)));
 const CLI = process.env.PAGEWEAVE_CLI; // optional: independent page count check via the CLI
 mkdirSync(ART, { recursive: true });
 
