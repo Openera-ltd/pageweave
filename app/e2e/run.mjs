@@ -44,8 +44,12 @@ async function captureFailure(s) {
   }
 }
 
+const phase = { create: 0, teardown: 0 };
+
 async function withApp(args, fn) {
+  const t0 = Date.now();
   const s = await Session.create(DRIVER, APP, args);
+  phase.create += Date.now() - t0;
   try {
     await s.waitFor(args.length ? '.tab-label' : ".home", { timeout: 20000 });
     return await fn(s);
@@ -53,17 +57,21 @@ async function withApp(args, fn) {
     await captureFailure(s);
     throw e;
   } finally {
+    const t1 = Date.now();
     await s.delete();
+    phase.teardown += Date.now() - t1;
   }
 }
 
 async function test(name, fn) {
   currentTest = name;
+  phase.create = 0;
+  phase.teardown = 0;
   const t0 = Date.now();
   try {
     await fn();
-    results.push({ name, status: "PASS", ms: Date.now() - t0 });
-    console.log(`PASS ${name} (${Date.now() - t0} ms)`);
+    results.push({ name, status: "PASS", ms: Date.now() - t0, create_ms: phase.create, teardown_ms: phase.teardown });
+    console.log(`PASS ${name} (${Date.now() - t0} ms; app start ${phase.create} ms, close ${phase.teardown} ms)`);
   } catch (e) {
     results.push({ name, status: "FAIL", ms: Date.now() - t0, error: String(e?.message ?? e) });
     console.log(`FAIL ${name}: ${e?.stack ?? e}`);
