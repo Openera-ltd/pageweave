@@ -39,3 +39,11 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - Test-tool quirk (not an app bug, documented in harness): WebKitWebDriver drops Shift on synthetic typing after a pointer action; `type()` now verifies field contents.
 - NOT RUN / gaps: Windows UI automation; screen-reader (Narrator/NVDA) review; performance baselines (startup, render, memory); drag-and-drop automation; non-US keyboard/IME; high-DPI/mixed-DPI; clean-VM install beyond CI runner; text selection layer not built.
 - Next: confirm CI run #3 green (installer smoke on Windows); then PRD 12 watchdog; performance baseline harness; text selection/copy layer.
+
+## 2026-10-16 — Session 1, checkpoints 7–9: watchdog, benchmark, text selection, Windows installer evidence
+- Commits: `7db1bf3` (watchdog), `ac30855` (benchmark + `docs/PERFORMANCE_BASELINE.md`), `c209179` (text layer, rotation fix, bounded E2E).
+- **Windows evidence (CI run #4, windows-latest, commit `1438e41`):** workspace tests passed; NSIS + MSI installers built; silent install; installed app launched with a PDF; privacy-safe log showed `startup` and `open … ok:true … pages:5` with no file name; silent uninstall removed the executable. Packaged CLI smoke test passed.
+- Linux CI E2E step in run #4 ran >13 min (local: ~1.5 min) — suspected hang; WebDriver calls had no timeouts. All calls now bounded (30–60 s) and the suite capped at 15 min. Hypothesis to verify from run #5 logs: WebKitGTK sandbox blocked by Ubuntu 24.04 AppArmor user-namespace restriction.
+- Watchdog (PRD 12): logic unit-tested (8); live dry run detected the real failing Linux job of run #1. **Blocked:** GitHub runs `schedule` only from the default branch — the 10-minute trigger cannot be proven until this branch is merged to `main` (owner decision).
+- Defects fixed this checkpoint: PDFium page size is post-rotation → rotated pages laid out portrait and geometry off (engine now reports unrotated size; regression test fails without fix); rotated text runs over-stretched 16×; menu focus cleared page selection (snapshot + restore); shortcut capture focus race.
+- Next: read CI run #5; fix Linux CI E2E; then text-selection keyboard support (Ctrl+A scope), annotations/print scoping decision, accessibility review plan.
