@@ -1,0 +1,140 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /Outlines 14 0 R /PageMode /UseOutlines >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R 7 0 R 9 0 R 11 0 R 13 0 R] /Count 5 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Length 145 >>
+stream
+BT
+/F1 12 Tf
+18 TL
+72 720 Td
+(PageWeave fixture page 1) Tj
+T* (Marker token PWMARK001) Tj
+T* (The quick brown fox jumps over the lazy dog.) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Length 145 >>
+stream
+BT
+/F1 12 Tf
+18 TL
+72 720 Td
+(PageWeave fixture page 2) Tj
+T* (Marker token PWMARK002) Tj
+T* (The quick brown fox jumps over the lazy dog.) Tj
+ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 6 0 R >>
+endobj
+8 0 obj
+<< /Length 145 >>
+stream
+BT
+/F1 12 Tf
+18 TL
+72 720 Td
+(PageWeave fixture page 3) Tj
+T* (Marker token PWMARK003) Tj
+T* (The quick brown fox jumps over the lazy dog.) Tj
+ET
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 8 0 R >>
+endobj
+10 0 obj
+<< /Length 145 >>
+stream
+BT
+/F1 12 Tf
+18 TL
+72 720 Td
+(PageWeave fixture page 4) Tj
+T* (Marker token PWMARK004) Tj
+T* (The quick brown fox jumps over the lazy dog.) Tj
+ET
+endstream
+endobj
+11 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 10 0 R >>
+endobj
+12 0 obj
+<< /Length 145 >>
+stream
+BT
+/F1 12 Tf
+18 TL
+72 720 Td
+(PageWeave fixture page 5) Tj
+T* (Marker token PWMARK005) Tj
+T* (The quick brown fox jumps over the lazy dog.) Tj
+ET
+endstream
+endobj
+13 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 12 0 R >>
+endobj
+14 0 obj
+<< /Type /Outlines /First 15 0 R /Last 19 0 R /Count 5 >>
+endobj
+15 0 obj
+<< /Title (Chapter 1) /Parent 14 0 R /Dest [5 0 R /Fit] /Next 16 0 R >>
+endobj
+16 0 obj
+<< /Title (Chapter 2) /Parent 14 0 R /Dest [7 0 R /Fit] /Prev 15 0 R /Next 17 0 R >>
+endobj
+17 0 obj
+<< /Title (Chapter 3) /Parent 14 0 R /Dest [9 0 R /Fit] /Prev 16 0 R /Next 18 0 R >>
+endobj
+18 0 obj
+<< /Title (Chapter 4) /Parent 14 0 R /Dest [11 0 R /Fit] /Prev 17 0 R /Next 19 0 R >>
+endobj
+19 0 obj
+<< /Title (Chapter 5) /Parent 14 0 R /Dest [13 0 R /Fit] /Prev 18 0 R >>
+endobj
+20 0 obj
+<< /Title (Five pages) /Author (PageWeave fixtures) /Producer (gen_fixtures.py) >>
+endobj
+xref
+0 21
+0000000000 65535 f 
+0000000015 00000 n 
+0000000104 00000 n 
+0000000187 00000 n 
+0000000284 00000 n 
+0000000480 00000 n 
+0000000606 00000 n 
+0000000802 00000 n 
+0000000928 00000 n 
+0000001124 00000 n 
+0000001250 00000 n 
+0000001447 00000 n 
+0000001575 00000 n 
+0000001772 00000 n 
+0000001900 00000 n 
+0000001974 00000 n 
+0000002062 00000 n 
+0000002163 00000 n 
+0000002264 00000 n 
+0000002366 00000 n 
+0000002455 00000 n 
+trailer
+<< /Size 21 /Root 1 0 R /Info 20 0 R /ID [<70616765776561766566697874757265> <70616765776561766566697874757265>] >>
+startxref
+2554
+%%EOF

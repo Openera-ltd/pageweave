@@ -13,6 +13,8 @@ This directory is the durable product/engineering memory. Use it with the root `
 - `FEATURE_ACCEPTANCE_TEMPLATE.md` — use for each feature or meaningful feature change.
 - `DECISIONS.md` — record approved architectural/product decisions, date, rationale, consequences, and status.
 
+- `../prd/INDEX.md` — detailed multi-document product requirements suite, including Acrobat-style desktop parity, user interactions, specialist AI, model training/data rights, offline resources, watchdog and release acceptance.
+
 ## Required maintenance
 
 Before changing a feature, consult the relevant documents and current implementation. After changes, update documentation only when the actual behavior or an approved decision changes. Add regression tests for discovered defects. Do not turn plans into claims of existing functionality.

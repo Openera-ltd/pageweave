@@ -2,6 +2,12 @@
 
 These are mandatory project rules for every Claude Code session. They are not suggestions. Apply them to planning, coding, reviews, tests, documentation, packaging, and release work.
 
+## 0. Mandatory PRD suite and continuing execution
+
+Before planning or implementing features, read `prd/INDEX.md`, `prd/00_MASTER_PRD.md`, and all relevant domain PRDs. For broad scope, architecture, parity, or release work, review the entire suite. PRDs are binding requirements, not optional inspiration. Maintain a requirement-to-code-to-test evidence matrix and durable `docs/WORK_JOURNAL.md` so decisions, experiments, checkpoints, failures, and the next exact step survive context/session changes.
+
+Continue through implementation, tests, actual app use, error reproduction, root-cause fixes, performance/quality measurement, regression tests, documentation, and release packaging until mandatory gates pass or an external/human blocker prevents meaningful progress. Never stop after a plan, prototype, or successful compile. Never claim background work runs after Claude Code/the host stops. Use tested local/CI automation and checkpoints. Do not create recursive unbounded agents, duplicate training, empty token-consuming loops, or uncontrolled cloud spending. Follow `prd/19_AUTOMATION_BUILD_LOOP_AND_TASK_JOURNAL.md`.
+
 ## 1. Read, remember, and preserve project truth
 
 1. At the beginning of every task, read this file, `docs/INDEX.md`, the current product decisions, the relevant specifications, and the affected code/tests. Inspect `git status`, the recent diff, and the repository structure before changing anything.
@@ -37,6 +43,7 @@ Before implementation, identify affected requirements, states, dependencies, dat
 6. Only the local general-purpose chat LLM is optional and must not be bundled. Specialist capabilities—including OCR, translation, layout understanding, table extraction, scan processing, speech, voice functions, and design reconstruction—are required product capabilities. Resource and model details are technical documentation, not model-name labels in the user-facing UI.
 7. External AI APIs/MCP agents may interpret instructions and orchestrate calls. They must not replace PageWeave's own document conversion, OCR, translation, speech, or reconstruction engines. Ordinary actions and engine operations must remain available without external AI.
 8. Preserve originals by default; use safe temporary files, atomic writes where appropriate, recoverable jobs, and explicit approval for destructive operations. See `docs/ARCHITECTURE.md` and `docs/AI_AND_RESOURCES.md`.
+9. Training data must have verified rights for its intended use; an online PDF is not automatically lawful training data. Follow `prd/15_DATASET_ACQUISITION_AND_RIGHTS.md`. Keep Kaggle/GitHub/Cloudflare credentials out of prompts, screenshots, logs, and Git; follow `prd/16_CREDENTIALS_GITHUB_CLOUDFLARE_AND_SECRET_HANDLING.md`.
 
 ## 5. Interaction and visual design rules
 

@@ -1,0 +1,76 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R 7 0 R 9 0 R] /Count 3 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Length 96 >>
+stream
+BT
+/F1 12 Tf
+18 TL
+72 720 Td
+(Alpha beta gamma) Tj
+T* (alpha ALPHA alphabet) Tj
+T* (delta) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Length 50 >>
+stream
+BT
+/F1 12 Tf
+18 TL
+72 720 Td
+(No match here) Tj
+ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 6 0 R >>
+endobj
+8 0 obj
+<< /Length 58 >>
+stream
+BT
+/F1 12 Tf
+18 TL
+72 720 Td
+(Gamma and alpha again) Tj
+ET
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 8 0 R >>
+endobj
+10 0 obj
+<< /Title (Search terms) /Author (PageWeave fixtures) /Producer (gen_fixtures.py) >>
+endobj
+xref
+0 11
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000133 00000 n 
+0000000230 00000 n 
+0000000376 00000 n 
+0000000502 00000 n 
+0000000602 00000 n 
+0000000728 00000 n 
+0000000836 00000 n 
+0000000962 00000 n 
+trailer
+<< /Size 11 /Root 1 0 R /Info 10 0 R /ID [<70616765776561766566697874757265> <70616765776561766566697874757265>] >>
+startxref
+1063
+%%EOF
