@@ -34,6 +34,9 @@ describe("eventToShortcut", () => {
     expect(eventToShortcut(ev("=", { ctrl: true }))).toBe("Ctrl+=");
     expect(eventToShortcut(ev("Control", { ctrl: true }))).toBeNull();
     expect(eventToShortcut(ev("Dead"))).toBeNull();
+    // WebKitGTK reports Shift+Tab as key "Unidentified" with code "Tab".
+    expect(eventToShortcut({ ...ev("Unidentified", { ctrl: true, shift: true }), code: "Tab" })).toBe("Ctrl+Shift+Tab");
+    expect(eventToShortcut({ ...ev("Unidentified"), code: "KeyQ" })).toBeNull();
   });
 });
 

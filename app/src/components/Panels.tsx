@@ -347,6 +347,7 @@ export function CommandPalette({ handlers, bindings, onClose }: { handlers: Comm
           <li
             key={c.id}
             id={`cmd-${c.id}`}
+            data-command={c.id}
             role="option"
             aria-selected={i === sel}
             aria-disabled={avail !== true || undefined}

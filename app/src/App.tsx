@@ -186,7 +186,13 @@ export function App() {
   );
 
   useEffect(() => {
-    api.launchFiles().then((files) => files.forEach((f) => openPath(f))).catch(() => undefined);
+    // Open in order so the last file listed ends up as the active tab.
+    api
+      .launchFiles()
+      .then(async (files) => {
+        for (const f of files) await openPath(f);
+      })
+      .catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

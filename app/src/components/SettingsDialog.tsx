@@ -154,7 +154,7 @@ function ShortcutEditor({ overrides, conflicts, onChange }: { overrides: Record<
   const [filter, setFilter] = useState("");
   const [capturing, setCapturing] = useState<CommandId | null>(null);
   const [captureError, setCaptureError] = useState<string | null>(null);
-  const captureRef = useRef<HTMLButtonElement>(null);
+  const captureRef = useRef<HTMLInputElement>(null);
   const bindings = effectiveBindings(overrides);
   const conflicted = new Set([...conflicts.values()].flat());
 
@@ -214,9 +214,16 @@ function ShortcutEditor({ overrides, conflicts, onChange }: { overrides: Record<
               <td>
                 {capturing === c.id ? (
                   <>
-                    <button ref={captureRef} type="button" className="btn outline" aria-label={`Press the new shortcut for ${c.label}, or Escape to cancel`} onKeyDown={(e) => onCaptureKey(e, c.id)} onBlur={() => setCapturing(null)}>
-                      Press keys…
-                    </button>
+                    <input
+                      ref={captureRef}
+                      readOnly
+                      className="input"
+                      style={{ width: "14ch" }}
+                      value="Press keys…"
+                      aria-label={`Press the new shortcut for ${c.label}, or Escape to cancel`}
+                      onKeyDown={(e) => onCaptureKey(e, c.id)}
+                      onBlur={() => setCapturing(null)}
+                    />
                     {captureError && (
                       <span className="error" role="alert" style={{ marginLeft: 8 }}>
                         {captureError}

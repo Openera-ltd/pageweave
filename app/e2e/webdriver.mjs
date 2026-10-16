@@ -1,17 +1,20 @@
 // Minimal W3C WebDriver client (no dependencies) for driving the real PageWeave app via tauri-driver.
 
 const KEYS = {
-  Control: "",
-  Shift: "",
-  Alt: "",
-  Enter: "",
-  Escape: "",
-  Tab: "",
-  Backspace: "",
-  F3: "",
-  F10: "",
-  PageDown: "",
-  ArrowDown: "",
+  Control: "\uE009",
+  Shift: "\uE008",
+  Alt: "\uE00A",
+  Enter: "\uE007",
+  Escape: "\uE00C",
+  Tab: "\uE004",
+  Backspace: "\uE003",
+  PageUp: "\uE00E",
+  PageDown: "\uE00F",
+  End: "\uE010",
+  Home: "\uE011",
+  ArrowDown: "\uE015",
+  F3: "\uE033",
+  F10: "\uE03A",
 };
 export { KEYS };
 

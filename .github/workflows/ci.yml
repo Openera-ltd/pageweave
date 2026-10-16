@@ -79,6 +79,11 @@ jobs:
           npx tsc --noEmit
           npx vitest run
           npx vite build
+      - name: Interaction audit (every control has a handler/name; every command is tested; inventory is current)
+        working-directory: app
+        run: |
+          node scripts/audit-controls.mjs --strict
+          git diff --exit-code -- ../docs/INTERACTION_INVENTORY.md
       - name: rustfmt
         run: cargo fmt --all -- --check
       - name: clippy

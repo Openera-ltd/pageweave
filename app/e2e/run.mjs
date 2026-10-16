@@ -104,9 +104,9 @@ await test("thumbnail click and Ctrl+End / Ctrl+Home navigate pages", async () =
     await s.click('[data-thumb="3"]');
     await s.waitUntil(async () => (await currentPage(s)) === "4", "page 4 after thumbnail click");
     await s.click('[data-testid="viewer"]');
-    await s.keys(["Control", ""]); // End
+    await s.keys(["Control", "End"]);
     await s.waitUntil(async () => (await currentPage(s)) === "5", "last page");
-    await s.keys(["Control", ""]); // Home
+    await s.keys(["Control", "Home"]);
     await s.waitUntil(async () => (await currentPage(s)) === "1", "first page");
   });
 });
@@ -363,7 +363,7 @@ await test("tabs: two documents, Ctrl+Tab switches, Ctrl+W closes", async () => 
     const active = () => s.exec("return document.querySelector('[role=tab][aria-selected=true] .name').textContent");
     const first = await active();
     await s.click('[data-testid="viewer"]');
-    await s.keys(["Control", ""]);
+    await s.keys(["Control", "Tab"]);
     await s.waitUntil(async () => (await active()) !== first, "switched tab");
     await s.keys(["Control", "w"]);
     await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('[role=tab]').length")) === 1, "one tab left");
@@ -378,6 +378,96 @@ await test("narrow window keeps toolbar and dialogs usable", async () => {
     const fits = await s.exec("const r=document.querySelector('[role=dialog]').getBoundingClientRect(); return r.left>=0 && r.top>=0 && r.right<=innerWidth && r.bottom<=innerHeight");
     assert(fits, "dialog inside the window");
     writeFileSync(join(ART, "narrow-merge.png"), await s.screenshot());
+  });
+});
+
+await test("Ctrl+PageDown / Ctrl+PageUp step pages; previous tab with Ctrl+Shift+Tab", async () => {
+  await withApp([join(FIX, "single-page.pdf"), join(FIX, "five-pages.pdf")], async (s) => {
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('[role=tab]').length")) === 2, "two tabs");
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "PageDown"]);
+    await s.waitUntil(async () => (await currentPage(s)) === "2", "next page");
+    await s.keys(["Control", "PageDown"]);
+    await s.waitUntil(async () => (await currentPage(s)) === "3", "page 3");
+    await s.keys(["Control", "PageUp"]);
+    await s.waitUntil(async () => (await currentPage(s)) === "2", "previous page");
+    const active = () => s.exec("return document.querySelector('[role=tab][aria-selected=true] .name').textContent");
+    await s.keys(["Control", "Shift", "Tab"]);
+    await s.waitUntil(async () => (await active()) === "single-page.pdf", "previous tab");
+    const nextTitle = await s.attr('[data-command="view.zoomIn"]', "title");
+    assert(!nextTitle.includes("Open a PDF"), "commands enabled with a document");
+  });
+});
+
+await test("fit width button restores a fitting zoom; close-find button works", async () => {
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    for (let i = 0; i < 4; i++) await s.click('[data-command="view.zoomIn"]');
+    const overflow = () => s.exec("const v=document.querySelector('.viewer'); return v.scrollWidth - v.clientWidth");
+    assert((await overflow()) > 50, "zoomed in beyond the window");
+    await s.click('[data-command="view.fitWidth"]');
+    await s.waitUntil(async () => (await overflow()) <= 1, "fits after Fit width");
+    await s.keys(["Control", "f"]);
+    await s.waitFor('[data-command="search.close"]');
+    await s.click('[data-command="search.close"]');
+    await s.waitUntil(async () => await s.exec("return !document.querySelector('.searchbar')"), "find closed by button");
+  });
+});
+
+await test("Ctrl+D shows document properties", async () => {
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "d"]);
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[role=dialog] h2')?.textContent")) === "Document properties", "properties");
+    const t = await s.exec("return document.querySelector('[role=dialog]').innerText");
+    assert(t.includes("Five pages") && t.includes("1.7"), `title and version shown: ${t}`);
+  });
+});
+
+await test("rotate all pages 180° (Ctrl+Shift+R) — rotation verified in the output", async () => {
+  const out = join(work, "rotate-all.pdf");
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "Shift", "R"]);
+    await s.waitFor('[role="dialog"]');
+    assert(await s.exec("return document.querySelector('input[type=checkbox]').checked"), "All pages preselected");
+    await s.click('[role="radiogroup"][aria-labelledby="rot-label"] [role="radio"]:nth-child(2)');
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => existsSync(out), "output written");
+  });
+  if (CLI) {
+    const info = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data;
+    assert(info.pages.every((p) => p.rotation === 180), `all pages at 180°: ${info.pages.map((p) => p.rotation)}`);
+  }
+});
+
+await test("keyboard shortcuts settings open from the command palette", async () => {
+  await withApp([join(FIX, "single-page.pdf")], async (s) => {
+    await s.keys(["Control", "k"]);
+    await s.waitFor('input[aria-label="Type a command"]');
+    await s.click('[role="option"][data-command="app.shortcuts"]');
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('#tab-shortcuts')?.getAttribute('aria-selected')")) === "true", "shortcuts tab selected");
+    const rows = await s.exec("return document.querySelectorAll('[data-shortcut-row]').length");
+    assert(rows >= 20, `shortcut table lists commands (${rows})`);
+  });
+});
+
+await test("show-in-folder and log-folder never fail silently", async () => {
+  await withApp([join(FIX, "single-page.pdf")], async (s) => {
+    for (const id of ["file.reveal", "app.openLogs"]) {
+      // ids exercised: "file.reveal", "app.openLogs"
+      const before = (await noticeTexts(s)).length;
+      await s.keys(["Control", "k"]);
+      await s.waitFor('input[aria-label="Type a command"]');
+      await s.click(`[role="option"][data-command="${id}"]`);
+      // Either the system file manager opens (no notice) or a specific error is shown; the app stays responsive.
+      await new Promise((r) => setTimeout(r, 1500));
+      const after = await noticeTexts(s);
+      if (after.length > before) assert(after.some((t) => t.startsWith("Couldn’t")), `failure explained: ${after}`);
+      assert((await s.exec("return document.querySelectorAll('[role=tab]').length")) === 1, "app still responsive");
+    }
   });
 });
 

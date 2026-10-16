@@ -72,6 +72,8 @@ export function normalizeShortcut(input: string): string | null {
 
 export interface KeyLike {
   key: string;
+  /** Physical key; used when the layout reports `key` as "Unidentified" (e.g. Shift+Tab on WebKitGTK). */
+  code?: string;
   ctrlKey: boolean;
   altKey: boolean;
   shiftKey: boolean;
@@ -79,9 +81,13 @@ export interface KeyLike {
 }
 
 /** Shortcut string for a keyboard event, or null for bare modifier presses. */
+const NAMED_CODES = new Set(["Tab", "Enter", "Escape", "Space", "PageUp", "PageDown", "Home", "End", "Delete", "Backspace", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]);
+
 export function eventToShortcut(e: KeyLike): string | null {
-  if (["Control", "Alt", "Shift", "Meta", "AltGraph", "CapsLock", "Dead", "Process", "Unidentified"].includes(e.key)) return null;
-  const key = normalizeKey(e.key);
+  let raw = e.key;
+  if (raw === "Unidentified" && e.code && (NAMED_CODES.has(e.code) || /^F([1-9]|1[0-9]|2[0-4])$/.test(e.code))) raw = e.code;
+  if (["Control", "Alt", "Shift", "Meta", "AltGraph", "CapsLock", "Dead", "Process", "Unidentified"].includes(raw)) return null;
+  const key = normalizeKey(raw);
   if (key === null) return null;
   const mods: Modifier[] = [];
   if (e.ctrlKey) mods.push("Ctrl");

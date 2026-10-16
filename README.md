@@ -1,19 +1,77 @@
 # PageWeave
 
-PageWeave is planned as a free/open-source Windows desktop document studio. See `docs/PRODUCT_VISION.md` for the intended scope.
+PageWeave is a free/open-source, local-first Windows desktop document studio (see `prd/00_MASTER_PRD.md`
+for the full product scope).
 
-## Status
+## Status — early development, not production ready
 
-**Pre-implementation.** This repository currently holds engineering instructions and specifications only. No application code, build, tests, or packaged release exist yet, and nothing described in `docs/` should be read as implemented functionality.
+Release status: **BLOCKED**. What exists today is a first vertical slice; most of the product scope in
+`prd/` (OCR, conversion, annotations, forms, redaction, translation, read-aloud, design reconstruction,
+resource installer, API/MCP, …) is **not implemented**. `docs/FEATURE_PARITY_MATRIX.md` is the
+authoritative per-capability ledger with evidence and limitations.
 
-## Engineering instructions
+Implemented and tested:
 
-- `CLAUDE.md` — mandatory project rules for every Claude Code session.
-- `docs/INDEX.md` — index of the product/engineering knowledge base (vision, architecture, interaction contract, UX system, AI/resources, quality gates, test matrix, release checklist, decisions).
-- `.claude/rules/` — scoped rules that Claude Code loads for matching files, plus general preferences that load in every session.
+| Area | What works | Evidence |
+|---|---|---|
+| PDF engine | Open (with password), inspect metadata/pages/bookmarks, extract text, search with match geometry, render pages | `crates/pw-pdf/tests/engine.rs` (Linux and Windows CI) |
+| Page operations | Extract, delete, rotate, split, combine — always to a **new** file; source never modified; outputs re-opened and verified before an atomic commit; explicit conflict policy | engine tests (outputs re-parsed with an independent parser) |
+| CLI | `pageweave` with JSON output and stable exit codes | `crates/pw-cli/tests/cli.rs`; packaged Windows smoke test in CI |
+| Desktop app | Tabs, continuous viewer, thumbnails, zoom/fit, find with highlights, page tools, settings (theme/accent/density/text size/motion/shortcuts), command palette, context menus, drag-and-drop and command-line open | `app/e2e/run.mjs` drives the real app (19 scenarios) on Linux; Windows installer install/launch/uninstall smoke in CI |
 
-Instructions alone do not enforce quality. CI and release automation for the gates in `docs/QUALITY_GATES.md` will be added once the toolchain is chosen and recorded in `docs/DECISIONS.md`.
+Known limitations (selection):
+
+- Combining PDFs does not carry over bookmarks or document metadata (the app says so).
+- Outputs made by extract/delete/split/combine from a password-protected PDF are **not** protected (the app warns); rotate keeps the protection.
+- No text selection/copy on the page canvas yet; no annotations, OCR, conversion, printing or forms.
+- XFA forms are detected but cannot be displayed or filled.
+- No measured performance budgets or hardware support claims yet (`docs/HARDWARE_SUPPORT.md`).
+- Screen-reader behaviour has not yet been verified with Narrator/NVDA.
+
+## Architecture
+
+- `crates/pw-core` — engine-independent foundation: typed operation schema, error taxonomy, page-range
+  parser, atomic output writer, bounded job manager with cancellation, privacy-safe JSONL logging,
+  versioned settings.
+- `crates/pw-pdf` — adapter over PDFium (`chromium/7881`, JavaScript and XFA disabled), pinned by SHA-256
+  in `resources/pdfium.lock.json`.
+- `crates/pw-cli` — `pageweave` command-line interface over the same typed operations.
+- `app/` — Tauri 2 desktop app: Rust host (`app/src-tauri`) and React/TypeScript UI (`app/src`).
+
+All interfaces call one dispatcher (`pw_pdf::execute`). Decisions are recorded in `docs/DECISIONS.md`.
+
+## Build and test
+
+Prerequisites: Rust (stable), Node.js 22, Python 3. On Linux also `libwebkit2gtk-4.1-dev`, `librsvg2-dev`.
+
+```sh
+python3 -I tools/fetch_pdfium.py          # download + verify the pinned PDF engine
+cd app && npm ci && npx vite build && cd ..
+cargo test --workspace                    # Rust unit + integration tests
+(cd app && npx vitest run)                # UI unit tests
+cd app && npx tauri build --debug --no-bundle
+./e2e/run.sh ../target/debug/pageweave-app ../e2e-artifacts   # real-app E2E (Linux: needs xvfb, webkit2gtk-driver, tauri-driver)
+npx tauri build                           # Windows installers (NSIS + MSI)
+```
+
+CLI examples:
+
+```sh
+pageweave inspect report.pdf
+pageweave extract --pages "1-3, 5" -o excerpt.pdf report.pdf
+pageweave --json --on-conflict rename merge a.pdf b.pdf -o combined.pdf
+pageweave --password-stdin inspect protected.pdf < password.txt
+```
+
+## Privacy
+
+PageWeave's own code makes no network requests while you work with documents (this has not yet been
+verified with network monitoring on Windows, where the WebView2 runtime is a separate Microsoft component). Logs record operation names, timings,
+page counts and error codes — never document text, file names (paths are replaced by a short hash) or
+passwords. Passwords are held in memory only while a document is open. Logs live in the app's local data
+folder; open it with the command palette (Ctrl+K) → "Show log folder".
 
 ## License
 
-MIT — see `LICENSE`. Third-party dependency and model notices will be added here and in required notice files as dependencies are adopted.
+MIT — see `LICENSE`. Redistributed third-party components and their licenses: `THIRD_PARTY_NOTICES.md`
+and `third_party/licenses/`.
