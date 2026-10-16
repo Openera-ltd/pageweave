@@ -1,0 +1,202 @@
+//! PageWeave desktop host. Owns application state and exposes a narrow, typed command surface to
+//! the WebView UI. All document work runs on the job pool or blocking worker threads, never on the
+//! UI/event-loop thread (CLAUDE.md §4.4).
+
+pub mod pages;
+pub mod state;
+
+use pw_core::job::JobSnapshot;
+use pw_core::ops::{OperationRequest, SCHEMA_VERSION};
+use pw_core::settings::{LoadOutcome, Settings};
+use pw_core::{fields, PwError};
+use serde::Serialize;
+use state::{AppState, DocId, OpenedDoc};
+use std::path::PathBuf;
+use tauri::{Emitter, Manager, State};
+
+type CmdResult<T> = Result<T, PwError>;
+
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> CmdResult<T> + Send + 'static) -> CmdResult<T> {
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|_| PwError::internal("worker.join", "A background task stopped unexpectedly."))?
+}
+
+#[derive(Serialize)]
+pub struct AppInfo {
+    version: &'static str,
+    engine: &'static str,
+    schema_version: u32,
+    settings_status: LoadOutcome,
+    engine_ready: bool,
+    engine_error: Option<PwError>,
+    platform: &'static str,
+}
+
+#[tauri::command]
+fn app_info(state: State<'_, AppState>) -> AppInfo {
+    let engine = pw_pdf::init(state.engine_dir.as_deref());
+    AppInfo {
+        version: env!("CARGO_PKG_VERSION"),
+        engine: pw_pdf::engine_version(),
+        schema_version: SCHEMA_VERSION,
+        settings_status: state.settings_outcome.clone(),
+        engine_ready: engine.is_ok(),
+        engine_error: engine.err(),
+        platform: std::env::consts::OS,
+    }
+}
+
+#[tauri::command]
+fn get_settings(state: State<'_, AppState>) -> Settings {
+    state.settings()
+}
+
+/// Validate and persist settings. Invalid fields are rejected rather than silently changed.
+#[tauri::command]
+fn save_settings(state: State<'_, AppState>, settings: serde_json::Value) -> CmdResult<Settings> {
+    let (s, bad) = Settings::from_value(&settings);
+    if !bad.is_empty() {
+        return Err(PwError::invalid("settings.invalid", format!("Invalid setting: {}.", bad.join(", "))));
+    }
+    state.save_settings(s)
+}
+
+#[tauri::command]
+async fn open_document(state: State<'_, AppState>, path: PathBuf, password: Option<String>) -> CmdResult<OpenedDoc> {
+    let st = state.inner().clone();
+    blocking(move || st.open(path, password)).await
+}
+
+#[tauri::command]
+fn close_document(state: State<'_, AppState>, doc_id: DocId) -> bool {
+    state.close(doc_id)
+}
+
+/// Validate a page-range expression against an open document (single implementation in pw-core).
+#[tauri::command]
+fn validate_range(state: State<'_, AppState>, doc_id: DocId, spec: String) -> CmdResult<Vec<u32>> {
+    let doc = state.doc(doc_id)?;
+    pw_core::range::parse_page_ranges(&spec, doc.info.page_count)
+}
+
+#[tauri::command]
+async fn search(
+    state: State<'_, AppState>,
+    doc_id: DocId,
+    query: String,
+    match_case: bool,
+    whole_word: bool,
+) -> CmdResult<serde_json::Value> {
+    let doc = state.doc(doc_id)?;
+    blocking(move || {
+        let opts = pw_pdf::OpenOptions { password: doc.password.as_deref() };
+        let (hits, truncated) = pw_pdf::search(&doc.path, &opts, &query, match_case, whole_word, &|| false)?;
+        Ok(serde_json::json!({ "hits": hits, "truncated": truncated }))
+    })
+    .await
+}
+
+/// Start an operation as a job. When `doc_id` is given, its password is supplied by the host so
+/// the UI never has to hold it. Returns the job ID; progress arrives as `job-update` events.
+#[tauri::command]
+fn start_operation(
+    state: State<'_, AppState>,
+    request: OperationRequest,
+    doc_id: Option<DocId>,
+) -> CmdResult<pw_core::job::JobId> {
+    request.validate()?;
+    let mut request = request;
+    if let Some(id) = doc_id {
+        request.password = state.doc(id)?.password.clone();
+    }
+    let label = request.operation.id().to_string();
+    let key = serde_json::to_string(&request.operation).unwrap_or_default();
+    let logger = state.logger.clone();
+    let (id, _new) = state.jobs.submit_unique(&label, &key, move |ctx| {
+        let started = std::time::Instant::now();
+        let result = pw_pdf::execute(&request, Some(ctx));
+        logger.log(
+            pw_core::log::Level::Info,
+            "job",
+            "operation.finished",
+            Some(&ctx.id().to_string()),
+            fields! {
+                "operation" => request.operation.id(),
+                "ok" => result.is_ok(),
+                "error_code" => result.as_ref().err().map(|e| e.code.clone()),
+                "ms" => started.elapsed().as_millis() as u64,
+            },
+        );
+        result.map(|r| serde_json::to_value(r).unwrap_or_default())
+    });
+    Ok(id)
+}
+
+#[tauri::command]
+fn cancel_job(state: State<'_, AppState>, job_id: pw_core::job::JobId) -> bool {
+    state.jobs.cancel(job_id)
+}
+
+#[tauri::command]
+fn list_jobs(state: State<'_, AppState>) -> Vec<JobSnapshot> {
+    state.jobs.list()
+}
+
+/// PDF paths passed on the command line (file association / "Open with"), consumed once.
+#[tauri::command]
+fn launch_files(state: State<'_, AppState>) -> Vec<String> {
+    state.take_launch_files()
+}
+
+#[tauri::command]
+fn log_dir(state: State<'_, AppState>) -> String {
+    state.log_dir.to_string_lossy().into_owned()
+}
+
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .register_asynchronous_uri_scheme_protocol("pwpage", |ctx, request, responder| {
+            let state = ctx.app_handle().state::<AppState>().inner().clone();
+            let uri = request.uri().clone();
+            std::thread::spawn(move || responder.respond(pages::serve(&state, &uri)));
+        })
+        .setup(|app| {
+            let config_dir = app.path().app_config_dir()?;
+            let data_dir = app.path().app_local_data_dir()?;
+            let engine_dir = app.path().resource_dir().ok();
+            let state = AppState::new(&config_dir, &data_dir, engine_dir);
+            state.set_launch_files(state::launch_args(std::env::args_os().skip(1)));
+            let handle = app.handle().clone();
+            state.jobs.subscribe(move |snap| {
+                let _ = handle.emit("job-update", snap);
+            });
+            state.logger.log(
+                pw_core::log::Level::Info,
+                "app",
+                "startup",
+                None,
+                fields! {"version" => env!("CARGO_PKG_VERSION")},
+            );
+            app.manage(state);
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            app_info,
+            get_settings,
+            save_settings,
+            open_document,
+            close_document,
+            validate_range,
+            search,
+            start_operation,
+            cancel_job,
+            list_jobs,
+            log_dir,
+            launch_files,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running PageWeave");
+}

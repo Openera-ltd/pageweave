@@ -1,0 +1,9 @@
+{
+  "bundle": {
+    "resources": {
+      "../../third_party/pdfium/win-x64/bin/pdfium.dll": "pdfium.dll",
+      "../../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
+      "../../third_party/licenses/pdfium/": "licenses/pdfium/"
+    }
+  }
+}

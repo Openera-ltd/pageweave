@@ -115,11 +115,15 @@ pub fn write_atomic(
 ) -> PwResult<CommittedOutput> {
     let target = plan_output(desired, policy, protected)?;
     let dir = target.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
-    let staged = tempfile::Builder::new()
-        .prefix(".pw-staged-")
-        .suffix(".tmp")
-        .tempfile_in(dir)
-        .map_err(|e| PwError::from_io(&e, "output folder"))?;
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(".pw-staged-").suffix(".tmp");
+    // Temp files default to 0600; a saved document should get normal permissions (0666 & !umask).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        builder.permissions(fs::Permissions::from_mode(0o666));
+    }
+    let staged = builder.tempfile_in(dir).map_err(|e| PwError::from_io(&e, "output folder"))?;
     produce(staged.path())?;
     // Flush the produced bytes to stable storage before validating and committing.
     fs::OpenOptions::new()
@@ -305,6 +309,18 @@ mod tests {
         assert_eq!(c.path, out);
         let c2 = write_atomic_bytes(&out, CollisionPolicy::Rename, &[], b"ok", no_validate).expect("write");
         assert_eq!(c2.path, dir.path().join("résumé – 文件 (final) (1).pdf"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn committed_outputs_get_normal_permissions_not_private_temp_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let out = dir.path().join("perm.pdf");
+        write_atomic_bytes(&out, CollisionPolicy::Fail, &[], b"x", no_validate).expect("write");
+        let mode = fs::metadata(&out).expect("meta").permissions().mode() & 0o777;
+        assert_ne!(mode, 0o600, "output must not keep the temp file's private mode");
+        assert_eq!(mode & 0o600, 0o600, "owner can read and write");
     }
 
     #[cfg(unix)]

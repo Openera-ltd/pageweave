@@ -1,0 +1,10 @@
+{
+  "bundle": {
+    "targets": ["deb"],
+    "resources": {
+      "../../third_party/pdfium/linux-x64/lib/libpdfium.so": "libpdfium.so",
+      "../../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
+      "../../third_party/licenses/pdfium/": "licenses/pdfium/"
+    }
+  }
+}
