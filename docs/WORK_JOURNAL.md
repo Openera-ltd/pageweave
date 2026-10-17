@@ -132,3 +132,11 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - Also fixed: dark-theme danger button text contrast 2.3:1 (axe, found by the new scenario) → `--on-danger` token; page context-menu order kept stable for keyboard users (redaction group after page operations).
 - Local: gate passes (audit 47/47 commands), UI unit 56, Linux E2E 41/41. Next: confirm on CI (Windows E2E runs the redaction scenario for the first time); then a real-world-shaped redaction corpus (compressed streams, Type0/CID fonts, inline images, clipped/rotated images).
 - CI on `661c74d`: all jobs green; real-app E2E 41/41 on Linux and on Windows (redaction scenario passes on WebView2).
+
+## 2026-10-17 — Session 1, checkpoint 24: ML workspace and OCR engine decision
+- User asked to keep building and to train the required models on Kaggle. Kaggle credentials are not in this environment (CLI installed, kaggle.com reachable); asked for them as an environment secret. Training is gated by PRD 14 (benchmark first; fine-tune only on a measured gap with rights-cleared data).
+- `ml/` workspace (`2e88ab2`): synthetic rights-clean corpus, scorer (verified: perfect engine = 0 on all conditions), benchmark harness, rights gate, budgeted Kaggle runner with env-probe kernel; 15 tests in CI (green, corpus reproducible on the CI machine).
+- OCR benchmark (`docs/benchmarks/OCR_BASELINE.md`): PP-OCRv6 small 0.41% CER vs Tesseract 3.75% on the 72-page blind set → decision D-009 (PP-OCRv6 on ONNX Runtime).
+- Bug in my own scorer found before trusting results: axis-aligned boxes on skewed pages were rejected (Tesseract skew CER showed 159%); fixed (centre matching) with a regression test.
+- Process correction: a detector setting was first compared on blind pages; redone on validation, where the apparent 40% gain did not reproduce. Rule now: tune on val, report blind once.
+- Fine-tuning not yet justified on synthetic numbers; measured gap = word spacing and Latin-script confusions. Next: OCR integration in Rust (task 15); script constraint and spacing post-processing measured on val; Kaggle env probe as soon as credentials exist.

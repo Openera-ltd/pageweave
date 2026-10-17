@@ -25,10 +25,12 @@ def peak_rss_mb() -> dict:
     return {"self_mb": round(own, 1), "children_mb": round(kids, 1)}
 
 
-def run_engine(name: str, corpus: Path, split: str, limit: int | None, details: bool, raw_dir: Path, rescore: bool) -> dict:
+def run_engine(name: str, corpus: Path, split: str, limit: int | None, details: bool, raw_dir: Path, rescore: bool, conditions: list[str] | None = None) -> dict:
     """Run (or, with `rescore`, reuse cached raw output of) an engine and score it. Raw OCR output
     is cached per page so scorer changes never require re-running OCR."""
     pages = sorted((corpus / split).glob("*.json"))
+    if conditions:
+        pages = [p for p in pages if json.loads(p.read_text())["condition"] in conditions]
     if limit:
         pages = pages[:limit]
     if not pages:
@@ -112,6 +114,7 @@ def main() -> None:
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--limit", type=int)
     ap.add_argument("--details", action="store_true", help="keep the worst lines (text) in the report")
+    ap.add_argument("--condition", action="append", help="only pages with this scan condition (repeatable)")
     ap.add_argument("--rescore", action="store_true", help="score cached raw OCR output instead of running engines")
     a = ap.parse_args()
     import os
@@ -120,7 +123,7 @@ def main() -> None:
     machine = {"cpu_count": os.cpu_count(), "platform": platform.platform(), "python": platform.python_version()}
     results = []
     for name in a.engine:
-        r = run_engine(name, a.corpus, a.split, a.limit, a.details, a.out / "raw", a.rescore)
+        r = run_engine(name, a.corpus, a.split, a.limit, a.details, a.out / "raw", a.rescore, a.condition)
         r["machine"] = machine
         (a.out / f"{name}.json").write_text(json.dumps(r, indent=1, ensure_ascii=False) + "\n")
         print(name, json.dumps(r["overall"]), json.dumps(r["timing"]), flush=True)

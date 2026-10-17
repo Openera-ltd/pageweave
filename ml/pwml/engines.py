@@ -43,18 +43,38 @@ class Tesseract:
         return lines
 
 
+def normalize_background(path: Path):
+    """Flatten uneven illumination and stretch contrast: divide by a large-blur estimate of the paper
+    background, then map the darkest 0.5 % to black and the paper to white. Returns an RGB array."""
+    import numpy as np
+    from PIL import Image, ImageFilter
+
+    im = Image.open(path).convert("L")
+    small = im.resize((max(1, im.width // 8), max(1, im.height // 8)), Image.BILINEAR)
+    # Max filter removes text strokes from the estimate, blur smooths it.
+    bg = small.filter(ImageFilter.MaxFilter(7)).filter(ImageFilter.GaussianBlur(6)).resize(im.size, Image.BILINEAR)
+    a = np.asarray(im, dtype=np.float32) / np.maximum(np.asarray(bg, dtype=np.float32), 1.0)
+    lo = float(np.percentile(a, 0.5))
+    a = np.clip((a - lo) / max(1e-3, 1.0 - lo), 0, 1) * 255
+    g = a.astype(np.uint8)
+    return np.stack([g, g, g], axis=-1)
+
+
 class PpOcr:
     """PP-OCRv6 small detection + recognition (Apache-2.0 weights) on ONNX Runtime, via RapidOCR."""
 
-    def __init__(self, use_cls: bool = False, threads: int | None = None) -> None:
+    def __init__(self, use_cls: bool = False, threads: int | None = None, normalize: bool = False, det: dict | None = None) -> None:
+        self.normalize = normalize
+        self.det = det or {}
         from rapidocr import RapidOCR
 
         params = {"Global.use_cls": use_cls, "Global.log_level": "error"}
         if threads:
             params["EngineConfig.onnxruntime.intra_op_num_threads"] = threads
+        params.update({f"Det.{k}": v for k, v in self.det.items()})
         self._eng = RapidOCR(params=params)
         self.use_cls = use_cls
-        self.name = "ppocrv6-small" + ("-cls" if use_cls else "")
+        self.name = "ppocrv6-small" + ("-cls" if use_cls else "") + ("-norm" if normalize else "") + "".join(f"-{k}{v}" for k, v in self.det.items())
 
     def info(self) -> dict:
         import onnxruntime
@@ -70,13 +90,22 @@ class PpOcr:
             "models": {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(models.glob("*.onnx"))},
             "license": "Apache-2.0 (code and weights)",
             "use_cls": self.use_cls,
+            "normalize_background": self.normalize,
+            "det_overrides": self.det,
         }
 
     def run(self, image: Path) -> list[OcrLine]:
-        r = self._eng(str(image))
+        r = self._eng(normalize_background(image) if self.normalize else str(image))
         if r.boxes is None:
             return []
         return [OcrLine(t, [tuple(map(float, p)) for p in box], float(s)) for box, t, s in zip(r.boxes, r.txts, r.scores)]
 
 
-ENGINES = {"tesseract": Tesseract, "ppocr": PpOcr}
+ENGINES = {
+    "tesseract": Tesseract,
+    "ppocr": PpOcr,
+    "ppocr-norm": lambda: PpOcr(normalize=True),
+    "ppocr-nodil": lambda: PpOcr(det={"use_dilation": False}),
+    "ppocr-unclip14": lambda: PpOcr(det={"unclip_ratio": 1.4}),
+    "ppocr-nodil-unclip14": lambda: PpOcr(det={"use_dilation": False, "unclip_ratio": 1.4}),
+}
