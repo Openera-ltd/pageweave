@@ -789,6 +789,7 @@ export function App() {
     "pages.stamp": { run: () => openTool("stamp"), available: all(needDoc, noDialog) },
     "pages.exportImages": { run: () => openTool("images"), available: all(needDoc, noDialog) },
     "pages.exportText": { run: () => openTool("text"), available: all(needDoc, noDialog) },
+    "pages.deskew": { run: () => openTool("deskew"), available: all(needDoc, noDialog) },
     "pages.ocr": { run: () => openTool("ocr"), available: all(needDoc, noDialog) },
     "pages.watermark": { run: () => openTool("watermark"), available: all(needDoc, noDialog) },
     "pages.crop": { run: () => openTool("crop"), available: all(needDoc, noDialog) },
@@ -966,7 +967,7 @@ export function App() {
 
   const pagesMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
-    setMenu({ label: "Page tools", x: r.left, y: r.bottom + 2, items: [item("pages.organize"), "separator", item("pages.extract"), item("pages.delete"), item("pages.rotate"), item("pages.split"), item("pages.stamp"), item("pages.watermark"), item("pages.crop"), item("pages.exportImages"), item("pages.exportText"), item("pages.ocr"), "separator", item("pages.merge")] });
+    setMenu({ label: "Page tools", x: r.left, y: r.bottom + 2, items: [item("pages.organize"), "separator", item("pages.extract"), item("pages.delete"), item("pages.rotate"), item("pages.split"), item("pages.stamp"), item("pages.watermark"), item("pages.crop"), item("pages.exportImages"), item("pages.exportText"), item("pages.ocr"), item("pages.deskew"), "separator", item("pages.merge")] });
   };
 
   /* ---------- Job results ---------- */
@@ -981,8 +982,15 @@ export function App() {
     if (out) actions.push({ label: "Show in folder", run: () => api.revealInFolder(out.path).catch((e) => notifyError("Couldn’t show the file", e)) });
     const before = r.data?.bytes_before;
     const after = r.data?.bytes_after;
+    const straightened = r.data?.straightened;
     const detail =
-      typeof before === "number" && typeof after === "number" ? sizeChange(before, after) : out?.pages != null && r.outputs.length === 1 ? `${out.pages} pages` : undefined;
+      typeof before === "number" && typeof after === "number"
+        ? sizeChange(before, after)
+        : typeof straightened === "number"
+          ? `${straightened} page${straightened === 1 ? "" : "s"} straightened`
+          : out?.pages != null && r.outputs.length === 1
+            ? `${out.pages} pages`
+            : undefined;
     notify({ kind: "success", title, detail, actions, persistent: false });
     for (const w of r.warnings) notify({ kind: "warning", title: "Please note", detail: w, persistent: true });
   };

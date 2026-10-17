@@ -545,6 +545,13 @@ pub enum Operation {
         images: Option<ImageReduce>,
         output: PathBuf,
     },
+    /// Straighten skewed scanned pages (all, or the chosen ones) in a new file.
+    Deskew {
+        input: PathBuf,
+        #[serde(default)]
+        pages: Option<String>,
+        output: PathBuf,
+    },
     /// Check every digital signature in the document (read-only).
     VerifySignatures {
         input: PathBuf,
@@ -607,6 +614,7 @@ pub const OPERATION_IDS: &[&str] = &[
     "optimize",
     "compare",
     "verify_signatures",
+    "deskew",
     "list_attachments",
     "extract_attachment",
     "add_attachments",
@@ -647,6 +655,7 @@ impl Operation {
             Operation::Optimize { .. } => "optimize",
             Operation::Compare { .. } => "compare",
             Operation::VerifySignatures { .. } => "verify_signatures",
+            Operation::Deskew { .. } => "deskew",
             Operation::ListAttachments { .. } => "list_attachments",
             Operation::ExtractAttachment { .. } => "extract_attachment",
             Operation::AddAttachments { .. } => "add_attachments",
@@ -706,6 +715,7 @@ impl Operation {
             | Operation::CropPages { input, .. }
             | Operation::ListAttachments { input }
             | Operation::VerifySignatures { input }
+            | Operation::Deskew { input, .. }
             | Operation::SetBookmarks { input, .. }
             | Operation::ExportText { input, .. }
             | Operation::Optimize { input, .. }
@@ -761,6 +771,7 @@ impl Operation {
             | Operation::ImagesToPdf { output, .. }
             | Operation::ExportText { output, .. }
             | Operation::Optimize { output, .. }
+            | Operation::Deskew { output, .. }
             | Operation::AddAttachments { output, .. }
             | Operation::Sanitize { output, .. }
             | Operation::StampText { output, .. } => parent(output),

@@ -233,6 +233,23 @@ fn signatures_reports_status_and_never_claims_trust() {
 }
 
 #[test]
+fn deskew_straightens_and_reports_each_page() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("straight.pdf");
+    let r = bin()
+        .args(["--json", "deskew", "--pages", "1,5", "-o"])
+        .arg(&out)
+        .arg(fixture("skewed-scan.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let v = json(&r);
+    assert_eq!(v["result"]["data"]["straightened"], 1);
+    assert_eq!(v["result"]["data"]["pages"][1]["action"], "has_text");
+    assert!(out.exists());
+}
+
+#[test]
 fn text_saves_a_file_with_output_and_prints_without() {
     let dir = tempfile::tempdir().expect("tmp");
     let out = dir.path().join("five.txt");

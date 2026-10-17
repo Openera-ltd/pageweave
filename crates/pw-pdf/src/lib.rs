@@ -11,6 +11,7 @@
 mod attachments;
 mod compare;
 mod content_ops;
+pub mod deskew;
 mod document;
 mod downsample;
 mod edit;

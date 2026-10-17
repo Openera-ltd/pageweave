@@ -192,6 +192,15 @@ enum Command {
         #[arg(long, default_value = "pt")]
         unit: String,
     },
+    /// Straighten skewed scanned pages in a new file (lossless: the page content is turned).
+    Deskew {
+        file: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Pages (range syntax); all pages when absent.
+        #[arg(long)]
+        pages: Option<String>,
+    },
     /// Check the document's digital signatures (integrity; signer trust is not checked).
     Signatures { file: PathBuf },
     /// List the differences between two documents (pages, text, format, visual).
@@ -423,6 +432,9 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
             }
             _ => return Err(PwError::invalid("attach.output", "Give -o with --save or --add.")),
         },
+        Command::Deskew { file, output, pages } => {
+            Operation::Deskew { input: file.clone(), pages: pages.clone(), output: output.clone() }
+        }
         Command::Signatures { file } => Operation::VerifySignatures { input: file.clone() },
         Command::Compare { old, new } => Operation::Compare { old: old.clone(), new: new.clone() },
         Command::Optimize { file, output, image_dpi, image_quality } => Operation::Optimize {

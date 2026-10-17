@@ -1344,6 +1344,39 @@ await test("print: Ctrl+P, page range and resolution; prepared pages at page siz
   });
 });
 
+await test("straighten pages: Pages menu; skewed scans turned straight, text page left; verified by measuring the copy", async () => {
+  const out = join(work, "straightened.pdf");
+  await withApp([join(FIX, "skewed-scan.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Straighten");
+    await s.click('[role="option"][data-command="pages.deskew"]');
+    await s.waitFor("#output");
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("skewed-scan-straightened.pdf"), "default name");
+    await s.type("#output", out);
+    await axeCheck(s, "deskew-dialog");
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved straightened.pdf") && t.includes("3 pages straightened")), "saved notice");
+  });
+  if (CLI) {
+    // Measuring the copy again finds nothing left to straighten.
+    const again = spawnSync(CLI, ["--json", "deskew", "-o", join(work, "again.pdf"), out], { encoding: "utf8" });
+    assert(JSON.parse(again.stdout).error.code === "deskew.nothing", `copy is straight: ${again.stdout.slice(0, 200)}`);
+  }
+  // Nothing to do: the dialog explains and writes nothing.
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Straighten");
+    await s.click('[role="option"][data-command="pages.deskew"]');
+    await s.waitFor("#output");
+    await s.type("#output", join(work, "never.pdf"));
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => ((await s.exec("return document.querySelector('[role=dialog] [role=alert]')?.textContent ?? null")) ?? "").includes("No page needed straightening"), "explained");
+  });
+  assert(!existsSync(join(work, "never.pdf")), "nothing written");
+});
+
 await test("protect with password: AES-256 copy needs the password; wrong password refused; content intact", async () => {
   const src = join(FIX, "five-pages.pdf");
   const before = sha(src);

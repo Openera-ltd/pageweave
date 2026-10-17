@@ -5,7 +5,7 @@ import { basename, dirname, join, siblingOutput, stem } from "../paths";
 import { toPwError, type AnnotationSpec, type CollisionPolicy, type FieldValue, type StampPosition, type JobSnapshot, type WatermarkLayer, type OpenedDoc, type Operation, type PwError } from "../types";
 import { Dialog, useDebounced } from "./ui";
 
-export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop" | "text" | "optimize";
+export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop" | "text" | "optimize" | "deskew";
 
 const TITLES: Record<PageTool, string> = {
   extract: "Extract pages",
@@ -21,10 +21,11 @@ const TITLES: Record<PageTool, string> = {
   crop: "Crop pages",
   text: "Export as text",
   optimize: "Reduce file size",
+  deskew: "Straighten pages",
 };
 
 /** Start-button label (the title's first word does not fit every tool). */
-const START: Partial<Record<PageTool, string>> = { ocr: "Recognize", watermark: "Add watermark", crop: "Crop", text: "Export", optimize: "Reduce size" };
+const START: Partial<Record<PageTool, string>> = { ocr: "Recognize", watermark: "Add watermark", crop: "Crop", text: "Export", optimize: "Reduce size", deskew: "Straighten" };
 
 const SUFFIX: Record<PageTool, string> = {
   extract: "extract",
@@ -40,10 +41,11 @@ const SUFFIX: Record<PageTool, string> = {
   crop: "cropped",
   text: "",
   optimize: "smaller",
+  deskew: "straightened",
 };
 
 /** Tools that offer "All pages" (on by default unless pages were preselected). */
-const ALL_PAGES_TOOLS: PageTool[] = ["rotate", "stamp", "images", "ocr", "watermark", "crop", "text"];
+const ALL_PAGES_TOOLS: PageTool[] = ["rotate", "stamp", "images", "ocr", "watermark", "crop", "text", "deskew"];
 
 export type CropUnit = "mm" | "in" | "pt";
 /** Points per unit. */
@@ -262,6 +264,8 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
           digits: digitsN,
           output,
         };
+      case "deskew":
+        return { op: "deskew", input: doc.path, pages: allPages ? null : pages, output };
       case "optimize": {
         const p = IMAGE_PRESETS.find((x) => x.id === imagePreset) ?? IMAGE_PRESETS[1]!;
         return { op: "optimize", input: doc.path, images: reduceImages ? { max_dpi: p.max_dpi, quality: p.quality } : null, output };
@@ -524,6 +528,12 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
             ))}
           </select>
         </div>
+      )}
+
+      {tool === "deskew" && (
+        <p className="hint" style={{ marginTop: 0 }}>
+          Turns skewed scanned pages straight in a new copy. Images are not resampled; pages with their own text are left as they are.
+        </p>
       )}
 
       {tool === "optimize" && (

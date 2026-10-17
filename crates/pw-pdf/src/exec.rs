@@ -306,6 +306,29 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
                 }),
             )
         }
+        Operation::Deskew { input, pages, output } => {
+            let page_progress = |done: u64, total: u64| {
+                if let Some(c) = ctx {
+                    c.set_progress(done, total, "pages");
+                }
+            };
+            let chosen = match pages {
+                Some(spec) => Some(parse_page_ranges(spec, page_count(input, &opts)?)?),
+                None => None,
+            };
+            let (c, report, w) = crate::deskew::deskew_pages(
+                input,
+                &opts,
+                chosen.as_deref(),
+                output,
+                policy,
+                &cancelled,
+                &page_progress,
+            )?;
+            warnings.extend(w);
+            let straightened = report.iter().filter(|r| r.action == crate::deskew::DeskewAction::Straightened).count();
+            (vec![out(&c, None)], json!({ "straightened": straightened, "pages": report }))
+        }
         Operation::VerifySignatures { input } => {
             let report = crate::signatures::verify_signatures(input, &opts)?;
             (vec![], serde_json::to_value(&report).unwrap_or_default())

@@ -233,6 +233,7 @@ export type Operation =
   | { op: "add_attachments"; input: string; files: string[]; output: string }
   | { op: "compare"; old: string; new: string }
   | { op: "verify_signatures"; input: string }
+  | { op: "deskew"; input: string; pages: string | null; output: string }
   | { op: "optimize"; input: string; images: { max_dpi: number; quality: number } | null; output: string }
   | { op: "export_text"; input: string; pages: string | null; output: string }
   | { op: "crop_pages"; input: string; pages: string | null; margins: { top: number; right: number; bottom: number; left: number }; output: string }
