@@ -131,3 +131,4 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - CI run on `41652d6`: Linux E2E failed 1 scenario ("page reload… tab order kept ()"): the test counted the old page's tabs before `location.reload()` navigated. Test now marks the old page and waits for the new one. Not an app defect (already-open files are not duplicated or reordered).
 - Also fixed: dark-theme danger button text contrast 2.3:1 (axe, found by the new scenario) → `--on-danger` token; page context-menu order kept stable for keyboard users (redaction group after page operations).
 - Local: gate passes (audit 47/47 commands), UI unit 56, Linux E2E 41/41. Next: confirm on CI (Windows E2E runs the redaction scenario for the first time); then a real-world-shaped redaction corpus (compressed streams, Type0/CID fonts, inline images, clipped/rotated images).
+- CI on `661c74d`: all jobs green; real-app E2E 41/41 on Linux and on Windows (redaction scenario passes on WebView2).
