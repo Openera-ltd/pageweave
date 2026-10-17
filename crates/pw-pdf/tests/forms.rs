@@ -51,8 +51,8 @@ fn lopdf_fields(path: &Path) -> std::collections::HashMap<String, (String, Vec<(
     for f in fields {
         let id = f.as_reference().expect("ref");
         let d = doc.get_dictionary(id).expect("field");
-        let name = d.get(b"T").map(&value_str).unwrap_or_default();
-        let v = d.get(b"V").map(&value_str).unwrap_or_default();
+        let name = d.get(b"T").map(value_str).unwrap_or_default();
+        let v = d.get(b"V").map(value_str).unwrap_or_default();
         let widgets: Vec<lopdf::ObjectId> = match d.get(b"Kids").and_then(Object::as_array) {
             Ok(kids) => kids.iter().filter_map(|k| k.as_reference().ok()).collect(),
             Err(_) => vec![id],
@@ -60,7 +60,7 @@ fn lopdf_fields(path: &Path) -> std::collections::HashMap<String, (String, Vec<(
         let mut ws = Vec::new();
         for w in widgets {
             let wd = doc.get_dictionary(w).expect("widget");
-            let state = wd.get(b"AS").map(&value_str).unwrap_or_default();
+            let state = wd.get(b"AS").map(value_str).unwrap_or_default();
             let normal = wd
                 .get(b"AP")
                 .ok()
