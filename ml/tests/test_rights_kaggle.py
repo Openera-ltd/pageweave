@@ -70,6 +70,22 @@ class KaggleSafety(unittest.TestCase):
         finally:
             shutil.rmtree(tmp)
 
+    def test_upload_refuses_line_crops_without_a_rights_record(self):
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            d = tmp / "lines-x"
+            d.mkdir()
+            (d / "labels.jsonl").write_text('{"image": "crops/a.png", "text": "a"}\n')
+            with mock.patch.object(kaggle_run, "kaggle", side_effect=AssertionError("must not call Kaggle")):
+                with mock.patch.object(kaggle_run, "username", return_value="someone"):
+                    with self.assertRaisesRegex(kaggle_run.KaggleError, "rights record"):
+                        kaggle_run.publish_dataset(tmp, "pageweave-test", "t")
+                    (d / "lines.json").write_text('{"split": "blind", "manifest_sha256": "x", "rights": "y"}')
+                    with self.assertRaisesRegex(kaggle_run.KaggleError, "non-blind"):
+                        kaggle_run.publish_dataset(tmp, "pageweave-test", "t")
+        finally:
+            shutil.rmtree(tmp)
+
     def test_gpu_ceiling_is_enforced_before_anything_is_sent(self):
         with mock.patch.object(kaggle_run, "kaggle", side_effect=AssertionError("must not call Kaggle")):
             with self.assertRaisesRegex(kaggle_run.KaggleError, "ceiling"):

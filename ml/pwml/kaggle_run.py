@@ -114,6 +114,12 @@ def publish_dataset(src: Path, slug: str, title: str) -> dict:
                 check_trainable(src, d.name)
             except NotTrainable as e:
                 raise KaggleError(f"Refusing to upload: {e}") from e
+        if (d / "labels.jsonl").exists():
+            # Line crops (pwml.lines): built through the rights gate from a manifest; record required.
+            info_path = d / "lines.json"
+            info = json.loads(info_path.read_text()) if info_path.exists() else {}
+            if not info.get("manifest_sha256") or not info.get("rights") or info.get("split") == "blind":
+                raise KaggleError(f"Refusing to upload {d.name}: line crops need a lines.json rights record from a non-blind, gated split.")
     size_mb = sum(f.stat().st_size for f in src.rglob("*") if f.is_file()) / 1e6
     if size_mb > budget()["max_dataset_mb"]:
         raise KaggleError(f"Dataset is {size_mb:.0f} MB, over the {budget()['max_dataset_mb']} MB budget.")
