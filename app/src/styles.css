@@ -1731,3 +1731,31 @@ kbd,
 .signature .btn.link {
   align-self: flex-start;
 }
+
+/* ---------- Printing ---------- */
+/* Prepared pages stay off screen (still loaded); only they are printed. */
+#print-root {
+  position: fixed;
+  left: -100000px;
+  top: 0;
+}
+@media print {
+  body > *:not(#print-root) {
+    display: none !important;
+  }
+  #print-root {
+    position: static;
+  }
+  .print-sheet {
+    break-after: page;
+    overflow: hidden;
+  }
+  .print-sheet:last-child {
+    break-after: auto;
+  }
+  .print-sheet img {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+}

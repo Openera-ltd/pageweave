@@ -52,6 +52,7 @@ import { RedactDialog } from "./components/RedactDialog";
 import { ProtectDialog } from "./components/ProtectDialog";
 import { SanitizeDialog } from "./components/SanitizeDialog";
 import { CompareView } from "./components/CompareView";
+import { PrintDialog } from "./components/PrintDialog";
 import { UnprotectDialog } from "./components/UnprotectDialog";
 import { EditPropertiesDialog } from "./components/EditPropertiesDialog";
 import { SaveAttachmentDialog } from "./components/SaveAttachmentDialog";
@@ -80,6 +81,7 @@ type DialogState =
   | { kind: "protect" }
   | { kind: "sanitize" }
   | { kind: "compare" }
+  | { kind: "print" }
   | { kind: "unprotect" }
   | { kind: "editProperties" }
   | { kind: "saveAttachment"; attachment: AttachmentInfo }
@@ -713,6 +715,7 @@ export function App() {
     "file.sanitize": { run: () => setDialog({ kind: "sanitize" }), available: all(needDoc, noDialog) },
     "file.reduceSize": { run: () => openTool("optimize"), available: all(needDoc, noDialog) },
     "file.compare": { run: () => setDialog({ kind: "compare" }), available: all(needDoc, noDialog) },
+    "file.print": { run: () => setDialog({ kind: "print" }), available: all(needDoc, noDialog) },
     "file.imagesToPdf": { run: () => setDialog({ kind: "images", files: [] }), available: noDialog },
     "file.editBookmarks": { run: () => setDialog({ kind: "bookmarks", addOnOpen: false, page: view.page }), available: all(needDoc, noDialog) },
     "file.attachFiles": { run: () => active && attachFiles(active), available: all(needDoc, noDialog) },
@@ -830,9 +833,12 @@ export function App() {
   handlersRef.current = handlers;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || menu) return;
       const sc = eventToShortcut(e);
-      if (!sc) return;
+      // The browser's own print would print the app's screens: printing always goes through the
+      // Print dialog, never the default action (also while a menu, dialog or text field has focus).
+      if (sc === "Ctrl+P") e.preventDefault();
+      if (e.defaultPrevented && sc !== "Ctrl+P") return;
+      if (menu || !sc) return;
       const id = commandForShortcut(sc, bindings);
       if (!id) return;
       if (dialog) return; // modal dialogs own the keyboard
@@ -1329,6 +1335,7 @@ export function App() {
       {dialog?.kind === "editProperties" && active && <EditPropertiesDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "unprotect" && active && <UnprotectDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "sanitize" && active && <SanitizeDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
+      {dialog?.kind === "print" && active && <PrintDialog doc={active} currentPage={view.page} onClose={() => setDialog(null)} />}
       {dialog?.kind === "compare" && active && <CompareView doc={active} others={tabs.filter((t) => t.doc_id !== active.doc_id)} jobs={jobs} onClose={() => setDialog(null)} />}
       {dialog?.kind === "organize" && active && <OrganizeDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "note" && active && (

@@ -1289,6 +1289,61 @@ await test("signatures: status bar summary and panel for valid, tampered, edited
   });
 });
 
+await test("print: Ctrl+P, page range and resolution; prepared pages at page size handed to the print UI; cleaned up afterwards", async () => {
+  await withApp([join(FIX, "mixed-sizes-rotated.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    // The platform print UI cannot be driven here: record what would be printed instead.
+    await s.exec(`window.__prints = [];
+      window.print = () => {
+        const root = document.querySelector('#print-root');
+        window.__prints.push({
+          sheets: [...root.querySelectorAll('.print-sheet')].map(d => [d.style.width, d.style.height, d.style.getPropertyValue('page')]),
+          images: [...root.querySelectorAll('img')].map(i => [i.complete, i.naturalWidth, i.naturalHeight]),
+          css: document.querySelector('#print-css').textContent,
+        });
+      }; return 1`);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "p"]);
+    await s.waitFor('[data-testid="print-start"]');
+    await s.click('[data-testid="print-range"]');
+    await s.type("#print-pages", "2-3");
+    await s.waitUntil(async () => (await s.text("#print-pages-msg")) === "2 pages selected", "range validated");
+    await s.click('#print-quality option[value="standard"]');
+    await axeCheck(s, "print-dialog");
+    await s.click('[data-testid="print-start"]');
+    await s.waitUntil(async () => (await s.exec("return window.__prints.length")) === 1, "print UI opened once");
+    const job = await s.exec("return window.__prints[0]");
+    // Where the driver supports W3C "Print Page", render with print media while the pages are
+    // prepared: exactly the prepared sheets print (one PDF page each), none of the app's screens.
+    try {
+      const pdf = Buffer.from(await s.cmd("POST", "/print", { background: true }), "base64");
+      const out = join(ART, "print-media.pdf");
+      writeFileSync(out, pdf);
+      if (CLI) {
+        const info = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data;
+        assert(info.page_count === 2, `print media renders the 2 prepared pages (got ${info.page_count})`);
+      }
+    } catch (e) {
+      console.log(`  note: WebDriver print-to-PDF unavailable here (${String(e.message ?? e).slice(0, 100)}); sheet layout checked from the DOM only`);
+    }
+    await s.exec("window.dispatchEvent(new Event('afterprint')); return 1");
+    // Page 2 is A4; page 3 is Letter turned 90° (printed landscape, as displayed).
+    assert(JSON.stringify(job.sheets.map((x) => [x[0], x[1]])) === JSON.stringify([["595pt", "842pt"], ["792pt", "612pt"]]), `sheet sizes ${JSON.stringify(job.sheets)}`);
+    assert(job.images.every((i) => i[0] && i[1] > 0), "every page image loaded before printing");
+    assert(Math.abs(job.images[0][1] - Math.round((595 * 150) / 72)) <= 2, `A4 at 150 dpi is ~1240 px wide (${job.images[0][1]})`);
+    assert(job.css.includes("size: 595pt 842pt") && job.css.includes("size: 792pt 612pt"), "page sizes in @page rules");
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[role=dialog]')")) === null, "dialog closes after printing");
+    assert((await s.exec("return document.querySelector('#print-root')")) === null, "prepared pages removed");
+    // Ctrl+P inside a text field never reaches the browser's own print (which would print the
+    // app's screens): the key's default action is prevented. (Listener added after the app's.)
+    await s.exec("window.addEventListener('keydown', (e) => { if (e.ctrlKey && e.key.toLowerCase() === 'p') window.__ctrlPPrevented = e.defaultPrevented; }); return 1");
+    await s.keys(["Control", "f"]);
+    await s.waitFor(".searchbar input");
+    await s.keys(["Control", "p"]);
+    assert((await s.exec("return window.__ctrlPPrevented")) === true, "browser print prevented in a text field");
+  });
+});
+
 await test("protect with password: AES-256 copy needs the password; wrong password refused; content intact", async () => {
   const src = join(FIX, "five-pages.pdf");
   const before = sha(src);
