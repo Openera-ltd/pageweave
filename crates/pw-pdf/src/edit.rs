@@ -326,6 +326,104 @@ pub fn organize_pages(
     Ok((c, total, warnings))
 }
 
+/// Map a point given in displayed-page space (origin bottom-left of the page as shown, after its
+/// clockwise /Rotate) to unrotated page space. `w`, `h` are the unrotated page size.
+fn display_to_page(rot: u32, w: f32, h: f32, x: f32, y: f32) -> (f32, f32) {
+    match rot {
+        90 => (w - y, x),
+        180 => (w - x, h - y),
+        270 => (y, h - x),
+        _ => (x, y),
+    }
+}
+
+/// Stamp text (page numbers, headers/footers, Bates-style numbers) onto a copy. Each stamp is
+/// placed in the page's displayed orientation, so it reads upright on rotated pages too. The
+/// output is reopened and every stamped page's text is checked for its expanded stamps.
+#[allow(clippy::too_many_arguments)]
+pub fn stamp_text(
+    input: &Path,
+    opts: &OpenOptions,
+    pages: Option<&str>,
+    stamps: &[pw_core::ops::StampSpec],
+    start: u64,
+    digits: u8,
+    output: &Path,
+    policy: CollisionPolicy,
+) -> PwResult<EditOutcome> {
+    use pw_core::ops::{stamp_text_for, StampPosition};
+    let pdfium = engine()?;
+    let mut doc = load(&pdfium, input, opts)?;
+    let total = doc.pages().len().max(0) as u32;
+    let indices = match pages {
+        Some(spec) => parse_page_ranges(spec, total)?,
+        None => (0..total).collect(),
+    };
+    let font = doc.fonts_mut().helvetica();
+    let err = |e: PdfiumError| map_pdfium_error(&e, "stamp");
+    let mut expected: Vec<(u32, Vec<String>)> = Vec::with_capacity(indices.len());
+    for (k, &i) in indices.iter().enumerate() {
+        let number = start + k as u64;
+        let mut page = doc.pages().get(i as PdfPageIndex).map_err(err)?;
+        let rot = rotation_of(&page);
+        let (dw, dh) = (page.width().value, page.height().value);
+        let (w, h) = if matches!(rot, 90 | 270) { (dh, dw) } else { (dw, dh) };
+        let mut texts = Vec::new();
+        for spec in stamps {
+            let text = stamp_text_for(&spec.text, number, digits, total);
+            let mut obj = PdfPageTextObject::new(&doc, &text, font, PdfPoints::new(spec.font_size)).map_err(err)?;
+            obj.set_fill_color(parse_color(&spec.color)?).map_err(err)?;
+            let tw = obj.width().map_err(err)?.value;
+            // Anchor (baseline start) in displayed space.
+            let x = match spec.position {
+                StampPosition::TopLeft | StampPosition::BottomLeft => spec.margin,
+                StampPosition::TopCenter | StampPosition::BottomCenter => (dw - tw) / 2.0,
+                StampPosition::TopRight | StampPosition::BottomRight => dw - spec.margin - tw,
+            };
+            let y = match spec.position {
+                StampPosition::TopLeft | StampPosition::TopCenter | StampPosition::TopRight => {
+                    dh - spec.margin - spec.font_size
+                }
+                _ => spec.margin,
+            };
+            let (px, py) = display_to_page(rot, w, h, x.max(0.0), y.max(0.0));
+            // Turn with the page so the text reads upright as displayed, then move into place.
+            obj.rotate_counter_clockwise_degrees(rot as f32).map_err(err)?;
+            obj.translate(PdfPoints::new(px), PdfPoints::new(py)).map_err(err)?;
+            page.objects_mut().add_text_object(obj).map_err(err)?;
+            texts.push(text);
+        }
+        expected.push((i, texts));
+    }
+    let bytes = save_bytes(&doc)?;
+    let src_encrypted = source_encrypted(&doc);
+    let protected = [input.to_path_buf()];
+    let mut encrypted = false;
+    let c = write_atomic_bytes(output, policy, &protected, &bytes, |staged| {
+        encrypted =
+            verify_output(&pdfium, staged, &Expect { page_count: total, password: opts.password, rotations: None })?;
+        let reopened =
+            pdfium.load_pdf_from_file(staged, if encrypted { opts.password } else { None }).map_err(|_| {
+                PwError::new(ErrorCategory::ValidationFailed, "output.verify", "The output could not be reopened.")
+            })?;
+        let everything = PdfRect::new_from_values(-1.0e6, -1.0e6, 1.0e6, 1.0e6);
+        for (i, texts) in &expected {
+            let page = reopened.pages().get(*i as PdfPageIndex).map_err(|e| map_pdfium_error(&e, "page"))?;
+            let got = page.text().map_err(|e| map_pdfium_error(&e, "text"))?.inside_rect(everything);
+            let squash = |t: &str| t.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+            if texts.iter().any(|t| !squash(&got).contains(&squash(t))) {
+                return Err(PwError::new(
+                    ErrorCategory::ValidationFailed,
+                    "output.verify",
+                    format!("The output failed verification (page {} is missing its stamp).", i + 1),
+                ));
+            }
+        }
+        Ok(())
+    })?;
+    Ok((c, total, protection_warnings(src_encrypted, encrypted)))
+}
+
 /// Split into several files. All parts are built in memory first; if committing any part fails,
 /// parts already written by this call are removed so the result is all-or-nothing.
 pub fn split(

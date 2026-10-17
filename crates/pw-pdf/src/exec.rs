@@ -112,6 +112,11 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(w);
             (vec![out(&c, Some(n))], json!({ "page_count": n }))
         }
+        Operation::StampText { input, pages, stamps, start, digits, output } => {
+            let (c, n, w) = edit::stamp_text(input, &opts, pages.as_deref(), stamps, *start, *digits, output, policy)?;
+            warnings.extend(w);
+            (vec![out(&c, Some(n))], json!({ "page_count": n }))
+        }
         Operation::ApplyEdits { input, form_values, annotations, output } => {
             let (c, w) = crate::forms::apply_edits(input, opts.password, form_values, annotations, output, policy)?;
             warnings.extend(w);

@@ -28,6 +28,54 @@ pub const MAX_ANNOTATIONS_PER_REQUEST: usize = 10_000;
 pub const MAX_NOTE_CHARS: usize = 10_000;
 pub const MAX_FORM_VALUES: usize = 10_000;
 pub const MAX_ORGANIZE_PAGES: usize = 100_000;
+pub const MAX_STAMPS: usize = 6;
+pub const MAX_STAMP_CHARS: usize = 200;
+
+/// Where a stamp sits on the page as displayed (after the page's own rotation).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StampPosition {
+    TopLeft,
+    TopCenter,
+    TopRight,
+    BottomLeft,
+    BottomCenter,
+    BottomRight,
+}
+
+fn default_font_size() -> f32 {
+    10.0
+}
+fn default_margin() -> f32 {
+    28.0
+}
+fn default_color() -> String {
+    "#000000".into()
+}
+fn default_start() -> u64 {
+    1
+}
+
+/// Text placed on pages. `text` may contain `{page}` (running number over the stamped pages,
+/// starting at the operation's `start`, zero-padded to `digits`) and `{total}` (pages in the document).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StampSpec {
+    pub text: String,
+    pub position: StampPosition,
+    #[serde(default = "default_font_size")]
+    pub font_size: f32,
+    #[serde(default = "default_color")]
+    pub color: String,
+    /// Distance from the page edges, in points.
+    #[serde(default = "default_margin")]
+    pub margin: f32,
+}
+
+/// Expand a stamp template for one page.
+pub fn stamp_text_for(template: &str, number: u64, digits: u8, total: u32) -> String {
+    let n = format!("{number:0width$}", width = digits as usize);
+    template.replace("{page}", &n).replace("{total}", &total.to_string())
+}
 
 /// One page of an organized output: page `page` (0-based) of source `source` (0 = the input,
 /// 1.. = `extra_inputs`), turned clockwise by `rotate` degrees relative to its current rotation.
@@ -163,6 +211,19 @@ pub enum Operation {
         pages: Vec<PageRef>,
         output: PathBuf,
     },
+    /// Add page numbers, headers/footers or Bates-style numbers to a copy.
+    StampText {
+        input: PathBuf,
+        /// Pages to stamp (range syntax); all pages when absent.
+        #[serde(default)]
+        pages: Option<String>,
+        stamps: Vec<StampSpec>,
+        #[serde(default = "default_start")]
+        start: u64,
+        #[serde(default)]
+        digits: u8,
+        output: PathBuf,
+    },
     /// Apply pending edits (form values and/or annotations) to one new file.
     ApplyEdits {
         input: PathBuf,
@@ -191,6 +252,7 @@ impl Operation {
             Operation::FillForm { .. } => "fill_form",
             Operation::ApplyEdits { .. } => "apply_edits",
             Operation::OrganizePages { .. } => "organize_pages",
+            Operation::StampText { .. } => "stamp_text",
         }
     }
 
@@ -223,6 +285,7 @@ impl Operation {
             | Operation::Split { input, .. }
             | Operation::Annotate { input, .. }
             | Operation::FillForm { input, .. }
+            | Operation::StampText { input, .. }
             | Operation::ApplyEdits { input, .. } => vec![input.clone()],
         }
     }
@@ -251,7 +314,8 @@ impl Operation {
             | Operation::Annotate { output, .. }
             | Operation::FillForm { output, .. }
             | Operation::ApplyEdits { output, .. }
-            | Operation::OrganizePages { output, .. } => parent(output),
+            | Operation::OrganizePages { output, .. }
+            | Operation::StampText { output, .. } => parent(output),
         }
     }
 
@@ -302,6 +366,38 @@ impl Operation {
             }
             Operation::Annotate { annotations, .. } => validate_annotations(annotations)?,
             Operation::FillForm { values, .. } => validate_form_values(values)?,
+            Operation::StampText { stamps, start, digits, .. } => {
+                if stamps.is_empty() || stamps.len() > MAX_STAMPS {
+                    return Err(PwError::invalid("stamp.count", format!("Add between 1 and {MAX_STAMPS} stamps.")));
+                }
+                if *digits > 12 || *start > 999_999_999_999 {
+                    return Err(PwError::invalid("stamp.number", "The start number or digit count is too large."));
+                }
+                for s in stamps {
+                    if s.text.trim().is_empty() {
+                        return Err(PwError::invalid("stamp.empty", "A stamp needs some text."));
+                    }
+                    if s.text.chars().count() > MAX_STAMP_CHARS {
+                        return Err(PwError::invalid("stamp.too_long", "Stamp text is too long."));
+                    }
+                    // The built-in Helvetica font covers Latin-1 only; refuse rather than drop glyphs.
+                    if !s.text.chars().all(|c| (' '..='~').contains(&c) || ('\u{a0}'..='\u{ff}').contains(&c)) {
+                        return Err(PwError::invalid(
+                            "stamp.charset",
+                            "Stamps support Latin characters only for now (letters, digits and common symbols).",
+                        ));
+                    }
+                    if !(4.0..=72.0).contains(&s.font_size) || !(0.0..=144.0).contains(&s.margin) {
+                        return Err(PwError::invalid(
+                            "stamp.size",
+                            "Use a text size of 4–72 pt and a margin of 0–144 pt.",
+                        ));
+                    }
+                    if !crate::settings::is_valid_accent(&s.color) {
+                        return Err(PwError::invalid("stamp.color", "Stamp colors must look like #rrggbb."));
+                    }
+                }
+            }
             Operation::OrganizePages { extra_inputs, pages, .. } => {
                 if pages.is_empty() {
                     return Err(PwError::invalid("organize.empty", "A PDF must keep at least one page."));

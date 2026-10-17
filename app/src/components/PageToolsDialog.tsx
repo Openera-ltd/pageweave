@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, FolderOpen, Plus, Trash2 } from "lucide-react";
 import { useApi } from "../api";
 import { basename, dirname, siblingOutput } from "../paths";
-import { toPwError, type AnnotationSpec, type CollisionPolicy, type FieldValue, type JobSnapshot, type OpenedDoc, type Operation, type PwError } from "../types";
+import { toPwError, type AnnotationSpec, type CollisionPolicy, type FieldValue, type StampPosition, type JobSnapshot, type OpenedDoc, type Operation, type PwError } from "../types";
 import { Dialog, useDebounced } from "./ui";
 
-export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save";
+export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp";
 
 const TITLES: Record<PageTool, string> = {
   extract: "Extract pages",
@@ -14,6 +14,7 @@ const TITLES: Record<PageTool, string> = {
   split: "Split document",
   merge: "Combine files",
   save: "Save a copy with your changes",
+  stamp: "Page numbers and stamps",
 };
 
 const SUFFIX: Record<PageTool, string> = {
@@ -23,7 +24,27 @@ const SUFFIX: Record<PageTool, string> = {
   split: "",
   merge: "combined",
   save: "edited",
+  stamp: "numbered",
 };
+
+const POSITIONS: Array<[StampPosition, string]> = [
+  ["bottom_center", "Bottom center"],
+  ["bottom_right", "Bottom right"],
+  ["bottom_left", "Bottom left"],
+  ["top_center", "Top center"],
+  ["top_right", "Top right"],
+  ["top_left", "Top left"],
+];
+
+/** Mirrors pw-core `stamp_text_for` (preview only; the engine expands the real text). */
+export function expandStamp(template: string, n: number, digits: number, total: number): string {
+  return template.replaceAll("{page}", String(n).padStart(digits, "0")).replaceAll("{total}", String(total));
+}
+
+/** Mirrors the engine's character check: printable ASCII and Latin-1. */
+export function stampCharsOk(text: string): boolean {
+  return [...text].every((c) => (c >= " " && c <= "~") || (c >= "\u00a0" && c <= "\u00ff"));
+}
 
 interface Props {
   tool: PageTool;
@@ -68,7 +89,12 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   const suffix = tool === "save" ? (nFields === 0 ? "annotated" : nAnnots === 0 ? "filled" : "edited") : SUFFIX[tool];
   const api = useApi();
   const [pages, setPages] = useState(initialPages ?? (tool === "rotate" ? "" : ""));
-  const [allPages, setAllPages] = useState(tool === "rotate" && !initialPages);
+  const [allPages, setAllPages] = useState((tool === "rotate" || tool === "stamp") && !initialPages);
+  const [stampText, setStampText] = useState("Page {page} of {total}");
+  const [position, setPosition] = useState<StampPosition>("bottom_center");
+  const [fontSize, setFontSize] = useState("10");
+  const [startAt, setStartAt] = useState("1");
+  const [digits, setDigits] = useState("0");
   const [degrees, setDegrees] = useState(90);
   const [output, setOutput] = useState(tool === "split" ? dirname(doc.path) : siblingOutput(doc.path, suffix));
   const [splitMode, setSplitMode] = useState<"every_n" | "ranges">("every_n");
@@ -79,7 +105,10 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   const [error, setError] = useState<PwError | null>(null);
   const [conflict, setConflict] = useState(false);
 
-  const needsRange = tool === "extract" || tool === "delete" || (tool === "rotate" && !allPages);
+  const needsRange = tool === "extract" || tool === "delete" || ((tool === "rotate" || tool === "stamp") && !allPages);
+  const sizeN = Number(fontSize);
+  const startN = Number(startAt);
+  const digitsN = Number(digits);
   const range = useRangeCheck(doc.doc_id, pages, needsRange);
   const job = jobId ? jobs[jobId] : undefined;
   const busy = !!job && !["succeeded", "failed", "cancelled"].includes(job.state);
@@ -111,6 +140,13 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
     if (tool === "split" && splitMode === "ranges" && rangeLines.length === 0) return "Enter one page range per line.";
     if (tool === "merge" && files.length < 2) return "Add at least one more file.";
     if (tool === "save" && nAnnots + nFields === 0) return "There are no changes to save.";
+    if (tool === "stamp") {
+      if (!stampText.trim()) return "Enter the text to stamp.";
+      if (!stampCharsOk(stampText)) return "Stamps support Latin characters only for now.";
+      if (!(sizeN >= 4 && sizeN <= 72)) return "Use a text size from 4 to 72.";
+      if (!Number.isInteger(startN) || startN < 0) return "Start at must be a whole number.";
+      if (!Number.isInteger(digitsN) || digitsN < 0 || digitsN > 12) return "Digits must be 0 to 12.";
+    }
     if (!output.trim()) return tool === "split" ? "Choose an output folder." : "Choose where to save the new file.";
     return null;
   })();
@@ -132,6 +168,16 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         };
       case "merge":
         return { op: "merge", inputs: files, output };
+      case "stamp":
+        return {
+          op: "stamp_text",
+          input: doc.path,
+          pages: allPages ? null : pages,
+          stamps: [{ text: stampText, position, font_size: sizeN, color: "#000000", margin: 28 }],
+          start: startN,
+          digits: digitsN,
+          output,
+        };
       case "save":
         // Only the contract fields: UI bookkeeping (ids) stays in the UI.
         return {
@@ -223,7 +269,43 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         </div>
       )}
 
-      {tool === "rotate" && (
+      {tool === "stamp" && (
+        <>
+          <div className="field">
+            <label htmlFor="stamp-text">Text</label>
+            <input id="stamp-text" className="input" value={stampText} onChange={(e) => setStampText(e.target.value)} aria-describedby="stamp-help" spellCheck={false} />
+            <span id="stamp-help" className="hint">
+              {"{page}"} is the running number, {"{total}"} the number of pages. Example: “{expandStamp(stampText, Number.isInteger(startN) ? startN : 1, Number.isInteger(digitsN) ? Math.min(12, Math.max(0, digitsN)) : 0, doc.info.page_count)}”
+            </span>
+          </div>
+          <div className="row" style={{ gap: "var(--space-4)", alignItems: "flex-start" }}>
+            <div className="field">
+              <label htmlFor="stamp-position">Position</label>
+              <select id="stamp-position" className="select" value={position} onChange={(e) => setPosition(e.target.value as StampPosition)}>
+                {POSITIONS.map(([v, l]) => (
+                  <option key={v} value={v}>
+                    {l}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="stamp-size">Size (pt)</label>
+              <input id="stamp-size" className="input" type="number" min={4} max={72} style={{ width: "7ch" }} value={fontSize} onChange={(e) => setFontSize(e.target.value)} />
+            </div>
+            <div className="field">
+              <label htmlFor="stamp-start">Start at</label>
+              <input id="stamp-start" className="input" type="number" min={0} style={{ width: "9ch" }} value={startAt} onChange={(e) => setStartAt(e.target.value)} />
+            </div>
+            <div className="field">
+              <label htmlFor="stamp-digits">Digits</label>
+              <input id="stamp-digits" className="input" type="number" min={0} max={12} style={{ width: "6ch" }} value={digits} onChange={(e) => setDigits(e.target.value)} title="Zero-pad numbers to this many digits (for Bates numbering)" />
+            </div>
+          </div>
+        </>
+      )}
+
+      {(tool === "rotate" || tool === "stamp") && (
         <div className="field">
           <label className="row">
             <input type="checkbox" checked={allPages} onChange={(e) => setAllPages(e.target.checked)} /> All pages

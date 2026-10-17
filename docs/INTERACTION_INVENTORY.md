@@ -42,9 +42,10 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `pages.split` | Split document… | — | Exercised by tests |
 | `pages.merge` | Combine files… | Ctrl+Shift+M | Exercised by tests |
 | `pages.organize` | Organize pages… | Ctrl+Shift+O | Exercised by tests |
+| `pages.stamp` | Page numbers and stamps… | — | Exercised by tests |
 | `app.settings` | Settings | Ctrl+ | Exercised by tests |
 | `app.shortcuts` | Keyboard shortcuts | — | Exercised by tests |
 | `app.commandPalette` | Command palette | Ctrl+K, Ctrl+Shift+P | Exercised by tests |
 | `app.openLogs` | Show log folder | — | Exercised by tests |
 
-Coverage: 40 of 40 commands exercised by unit or real-app E2E tests.
+Coverage: 41 of 41 commands exercised by unit or real-app E2E tests.

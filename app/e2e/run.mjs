@@ -972,6 +972,34 @@ await test("organize pages: keyboard reorder, rotate, duplicate; saved file veri
   }
 });
 
+await test("page numbers: template preview, validation, saved numbers verified by the CLI", async () => {
+  const out = join(work, "numbered.pdf");
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Page numbers");
+    await s.click('[role="option"][data-command="pages.stamp"]');
+    await s.waitFor("#stamp-text");
+    assert((await s.text("#stamp-help")).includes("“Page 1 of 5”"), "live example of the default template");
+    await s.type("#stamp-text", "Doc {page}");
+    await s.type("#stamp-digits", "3");
+    await s.waitUntil(async () => (await s.text("#stamp-help")).includes("“Doc 001”"), "preview follows the template and digits");
+    await s.type("#stamp-size", "200");
+    await s.waitUntil(async () => (await s.attr('[data-testid="tool-start"]', "title")) === "Use a text size from 4 to 72.", "invalid size blocks Start with a reason");
+    await s.type("#stamp-size", "11");
+    await axeCheck(s, "stamp-dialog");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved numbered.pdf")), "saved notice");
+  });
+  assert(existsSync(out), "numbered file exists");
+  if (CLI) {
+    const pages = JSON.parse(execFileSync(CLI, ["--json", "text", out], { encoding: "utf8" })).result.data.pages.map((p) => p.text.replace(/\s+/g, ""));
+    pages.forEach((t, i) => assert(t.includes(`Doc${String(i + 1).padStart(3, "0")}`), `page ${i + 1} carries its number: ${t.slice(-40)}`));
+  }
+});
+
 /* ------------------------------------------------------------------ */
 const summary = {
   app: APP,

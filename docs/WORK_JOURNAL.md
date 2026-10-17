@@ -99,3 +99,9 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - axe caught two defects in the first version of the organize tiles (visible label not in the accessible name; contrast on the selected tile); fixed before commit.
 - Local totals: E2E 37/37, UI unit 46, audit 40/40.
 - Windows E2E root cause found (`4cebdae` diagnostic): the WebView2 browser process command line contained only wry's flags — the `--remote-debugging-port` from `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` never arrived (app-supplied arguments win on runtime 154), no Edge policies present. Fix per decision D-007; awaiting the Windows CI run to confirm.
+
+## 2026-10-17 — Session 1, checkpoint 20: stamps; engine concurrency bug fixed
+- Page numbers / headers / footers / Bates numbering (`stamp_text`): placed upright in the displayed orientation (verified by rendering a 90° page).
+- **Bug (found via a Windows CI test failure, reproduced locally 4/20):** concurrent PDFium use could misreport errors — PDFium's last error is process-global and read in a separate call, so a corrupt file came back as "password protected". Engine use is now serialized per operation (reentrant lock; D-006 amendment). Regression test fails 7/10 without the lock, 0/10 with it; full engine suite 0/30 failures under 8 threads.
+- Windows E2E with D-007 (`b4ba010`) is running scenarios at the time of writing (no longer failing fast) — read results next.
+- Local totals: E2E 38/38.

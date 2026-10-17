@@ -128,6 +128,8 @@ export interface AnnotationSpec {
   contents?: string | null;
 }
 
+export type StampPosition = "top_left" | "top_center" | "top_right" | "bottom_left" | "bottom_center" | "bottom_right";
+
 export type FieldKind = "text" | "checkbox" | "radio" | "combo" | "list" | "push_button" | "signature" | "unknown";
 
 export interface FormWidget {
@@ -172,6 +174,15 @@ export type Operation =
   | { op: "split"; input: string; split: SplitMode; output_dir: string }
   | { op: "annotate"; input: string; annotations: AnnotationSpec[]; output: string }
   | { op: "apply_edits"; input: string; form_values: FieldValue[]; annotations: AnnotationSpec[]; output: string }
+  | {
+      op: "stamp_text";
+      input: string;
+      pages: string | null;
+      stamps: Array<{ text: string; position: StampPosition; font_size: number; color: string; margin: number }>;
+      start: number;
+      digits: number;
+      output: string;
+    }
   | { op: "organize_pages"; input: string; extra_inputs: string[]; pages: Array<{ source: number; page: number; rotate: number }>; output: string };
 
 export interface RecoveredJob {

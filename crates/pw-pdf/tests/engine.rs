@@ -583,3 +583,109 @@ fn text_and_search_work_on_rotated_pages() {
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].page, 2);
 }
+
+/// Bounding box (x0, y0, x1, y1) of dark pixels inside a region of a rendered page.
+fn ink_box(png: &[u8], region: (u32, u32, u32, u32)) -> Option<(u32, u32, u32, u32)> {
+    let img = image::load_from_memory(png).expect("png").to_luma8();
+    let (rx0, ry0, rx1, ry1) = region;
+    let mut b: Option<(u32, u32, u32, u32)> = None;
+    for y in ry0..ry1.min(img.height()) {
+        for x in rx0..rx1.min(img.width()) {
+            if img.get_pixel(x, y).0[0] < 100 {
+                b = Some(match b {
+                    None => (x, y, x, y),
+                    Some((a, c, d, e)) => (a.min(x), c.min(y), d.max(x), e.max(y)),
+                });
+            }
+        }
+    }
+    b
+}
+
+#[test]
+fn stamps_read_upright_where_asked_even_on_rotated_pages() {
+    use pw_core::ops::{StampPosition, StampSpec};
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("numbered.pdf");
+    let src = fixture("mixed-sizes-rotated.pdf"); // page 3 has /Rotate 90
+    let mut req = OperationRequest::new(Operation::StampText {
+        input: src.clone(),
+        pages: None,
+        stamps: vec![StampSpec {
+            text: "Page {page} of {total}".into(),
+            position: StampPosition::BottomCenter,
+            font_size: 14.0,
+            color: "#000000".into(),
+            margin: 20.0,
+        }],
+        start: 1,
+        digits: 0,
+        output: out.clone(),
+    });
+    req.collision = CollisionPolicy::Fail;
+    execute(&req, None).expect("stamp");
+    let r = run(Operation::ExtractText { input: out.clone(), pages: None }).expect("text");
+    for (i, p) in r.data["pages"].as_array().expect("pages").iter().enumerate() {
+        let t: String = p["text"].as_str().unwrap_or_default().chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(t.contains(&format!("Page{}of3", i + 1)), "page {} text {t:?}", i + 1);
+    }
+    for page in [0u32, 2] {
+        let (png, w, h) = render_page_png(&out, &OpenOptions { password: None }, page, 1.0).expect("render");
+        // Bottom band of the displayed page, central half.
+        let b = ink_box(&png, (w / 4, h - 60, 3 * w / 4, h))
+            .unwrap_or_else(|| panic!("no stamp ink at the bottom of displayed page {}", page + 1));
+        let (bw, bh) = (b.2 - b.0, b.3 - b.1);
+        assert!(bw > 3 * bh, "page {}: stamp should read horizontally, ink box {bw}x{bh}", page + 1);
+        let centre = (b.0 + b.2) / 2;
+        assert!(centre.abs_diff(w / 2) < w / 10, "page {}: centred (ink centre {centre}, page width {w})", page + 1);
+    }
+}
+
+#[test]
+fn stamp_numbers_follow_start_digits_and_page_selection() {
+    use pw_core::ops::{StampPosition, StampSpec};
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("bates.pdf");
+    let mut req = OperationRequest::new(Operation::StampText {
+        input: fixture("five-pages.pdf"),
+        pages: Some("2-3".into()),
+        stamps: vec![StampSpec {
+            text: "ACME{page}".into(),
+            position: StampPosition::BottomRight,
+            font_size: 9.0,
+            color: "#1f2937".into(),
+            margin: 18.0,
+        }],
+        start: 41,
+        digits: 6,
+        output: out.clone(),
+    });
+    req.collision = CollisionPolicy::Fail;
+    execute(&req, None).expect("stamp");
+    let r = run(Operation::ExtractText { input: out, pages: None }).expect("text");
+    let texts: Vec<String> = r.data["pages"]
+        .as_array()
+        .expect("pages")
+        .iter()
+        .map(|p| p["text"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert!(!texts[0].contains("ACME"));
+    assert!(texts[1].contains("ACME000041"), "{}", texts[1]);
+    assert!(texts[2].contains("ACME000042"), "{}", texts[2]);
+    assert!(!texts[3].contains("ACME"));
+    let bad = OperationRequest::new(Operation::StampText {
+        input: fixture("five-pages.pdf"),
+        pages: None,
+        stamps: vec![StampSpec {
+            text: "页 {page}".into(),
+            position: StampPosition::BottomCenter,
+            font_size: 9.0,
+            color: "#000000".into(),
+            margin: 18.0,
+        }],
+        start: 1,
+        digits: 0,
+        output: dir.path().join("x.pdf"),
+    });
+    assert_eq!(execute(&bad, None).expect_err("charset").code, "stamp.charset");
+}

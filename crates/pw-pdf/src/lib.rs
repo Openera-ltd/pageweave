@@ -4,9 +4,9 @@
 //! `thread_safe` feature, so the adapter may be used from worker threads; it must never be called
 //! from a UI thread. PDF JavaScript and XFA are disabled in the pinned build.
 //!
-//! Engine access goes through [`engine`], which holds a shared (read) lock. The form module calls a
-//! few PDFium functions directly (pdfium-render does not expose its form-fill handle); it takes the
-//! exclusive (write) lock so those calls never overlap any other PDFium use.
+//! Engine access goes through [`engine`], which holds one reentrant lock for the whole operation,
+//! so multi-call sequences over PDFium's global state are atomic. The form module calls a few
+//! PDFium functions directly (pdfium-render does not expose its form-fill handle) under the same lock.
 
 mod document;
 mod edit;
@@ -31,23 +31,19 @@ static INIT_LOCK: Mutex<()> = Mutex::new(());
 /// Path of the PDFium library that was bound (used to resolve the form-fill functions).
 static LIB_PATH: OnceLock<PathBuf> = OnceLock::new();
 /// Shared for pdfium-render use, exclusive for direct PDFium calls (see module docs).
-static ENGINE_LOCK: parking_lot::RwLock<()> = parking_lot::RwLock::new(());
+/// Serializes engine use per *operation* (reentrant, so nested use on one thread is fine).
+///
+/// pdfium-render serializes individual PDFium calls, but several operations are multi-call
+/// sequences over process-global PDFium state — e.g. a failed load followed by FPDF_GetLastError.
+/// With calls from different threads interleaving, a corrupt file was reported as "password
+/// protected" when another thread's load failed in between (reproduced in tests). Holding this lock
+/// for a whole operation makes every sequence atomic. PDFium does not run calls in parallel anyway.
+static ENGINE_LOCK: parking_lot::ReentrantMutex<()> = parking_lot::ReentrantMutex::new(());
 
-thread_local! {
-    /// Shared engine guards held by this thread (exclusive access while any is held would deadlock).
-    static SHARED_HELD: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-}
-
-/// Engine access for one operation: holds the shared engine lock while in scope.
+/// Engine access for one operation: holds the engine lock while in scope.
 pub(crate) struct Engine {
-    _shared: parking_lot::RwLockReadGuard<'static, ()>,
+    _guard: parking_lot::ReentrantMutexGuard<'static, ()>,
     pdfium: &'static Pdfium,
-}
-
-impl Drop for Engine {
-    fn drop(&mut self) {
-        SHARED_HELD.with(|c| c.set(c.get().saturating_sub(1)));
-    }
 }
 
 impl std::ops::Deref for Engine {
@@ -57,22 +53,15 @@ impl std::ops::Deref for Engine {
     }
 }
 
-/// Initialize if needed and take shared engine access. Recursive, so nested calls cannot deadlock
-/// against a waiting exclusive user.
+/// Initialize if needed and take the engine lock for the caller's operation.
 pub(crate) fn engine() -> PwResult<Engine> {
     let pdfium = init(None)?;
-    let guard = ENGINE_LOCK.read_recursive();
-    SHARED_HELD.with(|c| c.set(c.get() + 1));
-    Ok(Engine { _shared: guard, pdfium })
+    Ok(Engine { _guard: ENGINE_LOCK.lock(), pdfium })
 }
 
-/// Exclusive engine access for direct PDFium calls.
-pub(crate) fn engine_exclusive() -> PwResult<(parking_lot::RwLockWriteGuard<'static, ()>, &'static Path)> {
+/// Engine lock plus the library path, for the direct PDFium calls of the forms module.
+pub(crate) fn engine_exclusive() -> PwResult<(parking_lot::ReentrantMutexGuard<'static, ()>, &'static Path)> {
     init(None)?;
-    if SHARED_HELD.with(|c| c.get()) > 0 {
-        // Would wait forever for this thread's own shared guard: a programming error, not a hang.
-        return Err(PwError::internal("engine.lock_order", "An internal engine error occurred."));
-    }
     let path = LIB_PATH.get().ok_or_else(|| {
         PwError::new(
             ErrorCategory::EngineFailure,
@@ -80,7 +69,7 @@ pub(crate) fn engine_exclusive() -> PwResult<(parking_lot::RwLockWriteGuard<'sta
             "Form filling is not available in this session.",
         )
     })?;
-    Ok((ENGINE_LOCK.write(), path.as_path()))
+    Ok((ENGINE_LOCK.lock(), path.as_path()))
 }
 
 /// Environment variable that overrides where the PDFium library is looked up (debug builds only).
@@ -183,11 +172,42 @@ pub(crate) fn map_pdfium_error(e: &PdfiumError, during: &str) -> PwError {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn exclusive_access_while_holding_shared_access_is_an_error_not_a_deadlock() {
-        let Ok(shared) = super::engine() else { return }; // engine not installed: nothing to check
-        let r = super::engine_exclusive();
-        assert_eq!(r.err().map(|e| e.code), Some("engine.lock_order".to_string()));
-        drop(shared);
-        assert!(super::engine_exclusive().is_ok(), "available again once shared access is released");
+    fn nested_engine_use_on_one_thread_does_not_deadlock() {
+        let Ok(outer) = super::engine() else { return }; // engine not installed: nothing to check
+        let inner = super::engine_exclusive().expect("nested access on the same thread");
+        drop(inner);
+        drop(outer);
+    }
+
+    /// Regression: concurrent failed loads must each report their own error (PDFium's last error
+    /// is process-global and was read in a separate call).
+    #[test]
+    fn concurrent_failed_opens_report_their_own_errors() {
+        let fixture = |n: &str| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/pdf").join(n);
+        if super::init(None).is_err() {
+            return;
+        }
+        let threads: Vec<_> = (0..8)
+            .map(|t| {
+                let (name, want) = if t % 2 == 0 {
+                    ("encrypted-rc4-user-password.pdf", "pdf.password")
+                } else {
+                    ("corrupt-truncated.pdf", "")
+                };
+                let path = fixture(name);
+                std::thread::spawn(move || {
+                    for _ in 0..40 {
+                        match crate::open_document(&path, &crate::OpenOptions { password: None }) {
+                            Err(e) if want.is_empty() => assert_ne!(e.code, "pdf.password", "{name} misreported"),
+                            Err(e) => assert_eq!(e.code, want, "{name}"),
+                            Ok(_) => assert!(want.is_empty(), "{name} must not open without a password"),
+                        }
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().expect("thread");
+        }
     }
 }
