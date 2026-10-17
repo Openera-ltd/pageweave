@@ -1114,6 +1114,39 @@ await test("protect with password: AES-256 copy needs the password; wrong passwo
   }
 });
 
+await test("crop pages: margins in millimetres, shaded preview, rotated page cropped as displayed, verified", async () => {
+  const src = join(FIX, "mixed-sizes-rotated.pdf");
+  const before = sha(src);
+  const out = join(work, "trimmed.pdf");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Crop pages");
+    await s.click('[role="option"][data-command="pages.crop"]');
+    await s.waitFor("#crop-top");
+    assert((await s.attr('[data-testid="tool-start"]', "title")) === "Enter at least one margin to crop.", "disabled with a reason");
+    await s.type("#crop-top", "25.4");
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=crop-preview] .cut').style.height")) !== "0px", "preview shades the top");
+    await s.type("#crop-left", "500");
+    await s.waitUntil(async () => (await s.attr('[data-testid="tool-start"]', "title")) === "The margins leave almost nothing of the page.", "too much refused");
+    await s.type("#crop-left", "0");
+    await s.type("#output", out);
+    await axeCheck(s, "crop-dialog");
+    writeFileSync(join(ART, "crop-dialog.png"), await s.screenshot());
+    await s.waitUntil(async () => (await s.attr('[data-testid="tool-start"]', "aria-disabled")) === null, "ready");
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved trimmed.pdf")), "saved notice", 30000);
+    assert((await noticeTexts(s)).some((t) => t.includes("hidden, not removed")), "says cropping does not remove content");
+  });
+  assert(sha(src) === before, "source PDF unchanged");
+  if (CLI) {
+    const pages = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data.pages;
+    // 25.4 mm = 72 pt off the displayed top: page 1 (letter) gets shorter; page 3 (/Rotate 90) loses it from its left side.
+    assert(Math.abs(pages[0].height_pt - 720) < 0.1 && Math.abs(pages[0].width_pt - 612) < 0.1, `page 1: ${JSON.stringify(pages[0])}`);
+    assert(Math.abs(pages[2].width_pt - 540) < 0.1 && Math.abs(pages[2].height_pt - 792) < 0.1, `page 3: ${JSON.stringify(pages[2])}`);
+  }
+});
+
 await test("watermark: Pages menu, preview follows angle, chosen pages only, translucent result verified", async () => {
   const src = join(FIX, "five-pages.pdf");
   const before = sha(src);

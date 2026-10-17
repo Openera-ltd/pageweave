@@ -181,4 +181,5 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - Where validation errors are: line recall 1.0; errors are recognition on degraded scans (badscan 0.96% CER, 68% exact lines; faded/noise/jpeg next). Training pairs come from running the real detector on train pages and keeping one-to-one, ≥90%-coverage matches (85% of lines).
 - Watermark (PRD 05): PDFium text object with alpha, centred on the page box, angle as displayed (page /Rotate added), over or behind (insert at index 0). Verified per chosen page by text extraction and a render diff; pages where it cannot be seen (e.g. behind a scan) are reported, not hidden. axe flagged the faint HTML preview text → preview is an SVG with an accessible description.
 - Disk allowance ran out during the gate (target/debug 25 GB + ML crops); freed incremental/release caches. Crop build rerun.
+- Crop pages (PRD 05 page boxes): CropBox from the visible box with margins mapped through /Rotate (displayed top on a /Rotate 90 page is the page's left side); verified exactly per page; warns that cropping hides rather than removes.
 

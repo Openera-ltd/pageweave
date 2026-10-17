@@ -417,3 +417,26 @@ fn watermark_command() {
         .expect("run");
     assert_eq!(bad.status.code(), Some(2));
 }
+
+#[test]
+fn crop_command_with_units() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("c.pdf");
+    let r = bin()
+        .args(["crop", "--top", "1", "--unit", "in", "-o"])
+        .arg(&out)
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert!(String::from_utf8_lossy(&r.stderr).contains("hidden, not removed"));
+    let v = json(&bin().args(["--json", "inspect"]).arg(&out).output().expect("run"));
+    assert_eq!(v["result"]["data"]["pages"][0]["height_pt"], 720.0, "one inch off the top");
+    let bad = bin()
+        .args(["crop", "--top", "1", "--unit", "cm", "-o"])
+        .arg(dir.path().join("b.pdf"))
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert_eq!(bad.status.code(), Some(2));
+}

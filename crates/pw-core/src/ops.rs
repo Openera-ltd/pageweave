@@ -204,6 +204,19 @@ impl Default for SanitizeOptions {
     }
 }
 
+/// Margins to cut from each side of a page, in points, as the page is displayed.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+pub struct Margins {
+    #[serde(default)]
+    pub top: f32,
+    #[serde(default)]
+    pub right: f32,
+    #[serde(default)]
+    pub bottom: f32,
+    #[serde(default)]
+    pub left: f32,
+}
+
 /// Where a watermark goes relative to the page content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -372,6 +385,15 @@ pub enum Operation {
         permissions: ProtectPermissions,
         output: PathBuf,
     },
+    /// Crop pages (all when `pages` is absent) by margins as displayed, in a new file. Content outside
+    /// the new page area is hidden, not removed.
+    CropPages {
+        input: PathBuf,
+        #[serde(default)]
+        pages: Option<String>,
+        margins: Margins,
+        output: PathBuf,
+    },
     /// Add a text watermark to pages (all when `pages` is absent) in a new file.
     Watermark {
         input: PathBuf,
@@ -472,6 +494,7 @@ impl Operation {
             Operation::Unprotect { .. } => "unprotect",
             Operation::SetProperties { .. } => "set_properties",
             Operation::Watermark { .. } => "watermark",
+            Operation::CropPages { .. } => "crop_pages",
             Operation::SanitizeInspect { .. } => "sanitize_inspect",
             Operation::Sanitize { .. } => "sanitize",
             Operation::Redact { .. } => "redact",
@@ -517,6 +540,7 @@ impl Operation {
             | Operation::Unprotect { input, .. }
             | Operation::SetProperties { input, .. }
             | Operation::Watermark { input, .. }
+            | Operation::CropPages { input, .. }
             | Operation::SanitizeInspect { input }
             | Operation::Sanitize { input, .. }
             | Operation::Redact { input, .. }
@@ -559,6 +583,7 @@ impl Operation {
             | Operation::Unprotect { output, .. }
             | Operation::SetProperties { output, .. }
             | Operation::Watermark { output, .. }
+            | Operation::CropPages { output, .. }
             | Operation::Sanitize { output, .. }
             | Operation::StampText { output, .. } => parent(output),
         }
@@ -675,6 +700,15 @@ impl Operation {
             }
             Operation::Redact { areas, .. } | Operation::RedactionPreview { areas, .. } => {
                 validate_redact_areas(areas)?
+            }
+            Operation::CropPages { margins: m, .. } => {
+                let all = [m.top, m.right, m.bottom, m.left];
+                if all.iter().any(|v| !v.is_finite() || *v < 0.0 || *v > 14_400.0) {
+                    return Err(PwError::invalid("crop.margin", "Margins must be between 0 and 14,400 points."));
+                }
+                if all.iter().all(|v| *v == 0.0) {
+                    return Err(PwError::invalid("crop.empty", "Enter at least one margin to crop."));
+                }
             }
             Operation::Watermark { watermark: w, .. } => {
                 if w.text.trim().is_empty() {

@@ -138,6 +138,11 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(w);
             (vec![out(&c, Some(n))], json!({ "page_count": n, "encryption": "AES-256" }))
         }
+        Operation::CropPages { input, pages, margins, output } => {
+            let (c, n, w) = edit::crop_pages(input, &opts, pages.as_deref(), margins, output, policy)?;
+            warnings.extend(w);
+            (vec![out(&c, Some(n))], json!({ "page_count": n }))
+        }
         Operation::Watermark { input, pages, watermark, output } => {
             let (c, n, w) = edit::watermark(input, &opts, pages.as_deref(), watermark, output, policy, &cancelled)?;
             warnings.extend(w);

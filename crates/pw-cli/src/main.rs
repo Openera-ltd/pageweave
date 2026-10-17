@@ -146,6 +146,26 @@ enum Command {
         #[arg(long)]
         no_assemble: bool,
     },
+    /// Crop pages by margins as displayed, in a new file (content outside is hidden, not removed).
+    Crop {
+        file: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Pages (range syntax); all pages when absent.
+        #[arg(long)]
+        pages: Option<String>,
+        #[arg(long, default_value_t = 0.0)]
+        top: f32,
+        #[arg(long, default_value_t = 0.0)]
+        right: f32,
+        #[arg(long, default_value_t = 0.0)]
+        bottom: f32,
+        #[arg(long, default_value_t = 0.0)]
+        left: f32,
+        /// Unit of the margins: pt, mm or in.
+        #[arg(long, default_value = "pt")]
+        unit: String,
+    },
     /// Add a text watermark, centred on each page, in a new file.
     Watermark {
         file: PathBuf,
@@ -259,7 +279,7 @@ fn capabilities() -> serde_json::Value {
     json!({
         "schema_version": pw_core::ops::SCHEMA_VERSION,
         "engine": pw_pdf::engine_version(),
-        "operations": ["inspect", "extract_text", "search", "render", "merge", "extract_pages", "delete_pages", "rotate_pages", "split", "annotate", "form_fields", "fill_form", "apply_edits", "organize_pages", "stamp_text", "export_images", "redaction_preview", "redact", "ocr_pages", "protect", "unprotect", "set_properties", "watermark", "sanitize_inspect", "sanitize"],
+        "operations": ["inspect", "extract_text", "search", "render", "merge", "extract_pages", "delete_pages", "rotate_pages", "split", "annotate", "form_fields", "fill_form", "apply_edits", "organize_pages", "stamp_text", "export_images", "redaction_preview", "redact", "ocr_pages", "protect", "unprotect", "set_properties", "watermark", "crop_pages", "sanitize_inspect", "sanitize"],
         "collision_policies": ["fail", "rename", "replace"],
         "network": "none",
     })
@@ -335,6 +355,20 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
             },
             output: output.clone(),
         },
+        Command::Crop { file, output, pages, top, right, bottom, left, unit } => {
+            let k = match unit.as_str() {
+                "pt" => 1.0,
+                "mm" => 72.0 / 25.4,
+                "in" => 72.0,
+                _ => return Err(PwError::invalid("crop.unit", "Use --unit pt, mm or in.")),
+            };
+            Operation::CropPages {
+                input: file.clone(),
+                pages: pages.clone(),
+                margins: pw_core::ops::Margins { top: top * k, right: right * k, bottom: bottom * k, left: left * k },
+                output: output.clone(),
+            }
+        }
         Command::Watermark { file, output, text, pages, size, color, opacity, angle, behind } => Operation::Watermark {
             input: file.clone(),
             pages: pages.clone(),

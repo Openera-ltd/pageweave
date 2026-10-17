@@ -575,6 +575,98 @@ pub fn split(
     Ok((committed, protection_warnings(src_encrypted, !any_unprotected)))
 }
 
+/// Smallest page side a crop may leave, in points (a quarter inch).
+const MIN_CROPPED_SIDE: f32 = 18.0;
+
+/// Displayed margins (top, right, bottom, left) → margins on the unrotated page's
+/// (top, right, bottom, left) sides. `/Rotate` turns the page clockwise for display.
+pub(crate) fn margins_to_page(rot: u32, m: &pw_core::ops::Margins) -> (f32, f32, f32, f32) {
+    match rot {
+        90 => (m.right, m.bottom, m.left, m.top),
+        180 => (m.bottom, m.left, m.top, m.right),
+        270 => (m.left, m.top, m.right, m.bottom),
+        _ => (m.top, m.right, m.bottom, m.left),
+    }
+}
+
+fn visible_box(page: &PdfPage) -> PdfRect {
+    page.boundaries()
+        .bounding()
+        .map(|b| b.bounds)
+        .unwrap_or_else(|_| PdfRect::new_from_values(0.0, 0.0, page.height().value, page.width().value))
+}
+
+/// Crop pages by margins as displayed. Verified: the chosen pages' visible areas are exactly the
+/// cropped boxes, every other page is unchanged, and the page count is the same.
+pub fn crop_pages(
+    input: &Path,
+    opts: &OpenOptions,
+    pages: Option<&str>,
+    margins: &pw_core::ops::Margins,
+    output: &Path,
+    policy: CollisionPolicy,
+) -> PwResult<EditOutcome> {
+    let pdfium = engine()?;
+    let doc = load(&pdfium, input, opts)?;
+    let total = doc.pages().len().max(0) as u32;
+    let indices = match pages {
+        Some(spec) => parse_page_ranges(spec, total)?,
+        None => (0..total).collect(),
+    };
+    let chosen: std::collections::HashSet<u32> = indices.iter().copied().collect();
+    let err = |e: PdfiumError| map_pdfium_error(&e, "crop");
+    let mut expected: Vec<[f32; 4]> = Vec::with_capacity(total as usize);
+    for i in 0..total {
+        let mut page = doc.pages().get(i as PdfPageIndex).map_err(err)?;
+        let v = visible_box(&page);
+        let (l, b, r, t) = (v.left().value, v.bottom().value, v.right().value, v.top().value);
+        if !chosen.contains(&i) {
+            expected.push([l, b, r, t]);
+            continue;
+        }
+        let (mt, mr, mb, ml) = margins_to_page(rotation_of(&page), margins);
+        let nb = [l + ml, b + mb, r - mr, t - mt];
+        if nb[2] - nb[0] < MIN_CROPPED_SIDE || nb[3] - nb[1] < MIN_CROPPED_SIDE {
+            return Err(PwError::invalid(
+                "crop.too_much",
+                format!("The margins leave almost nothing of page {}; use smaller margins.", i + 1),
+            ));
+        }
+        page.boundaries_mut().set_crop(PdfRect::new_from_values(nb[1], nb[0], nb[3], nb[2])).map_err(err)?;
+        expected.push(nb);
+    }
+    let bytes = save_bytes(&doc)?;
+    let src_encrypted = source_encrypted(&doc);
+    let protected = [input.to_path_buf()];
+    let mut encrypted = false;
+    let c = write_atomic_bytes(output, policy, &protected, &bytes, |staged| {
+        encrypted =
+            verify_output(&pdfium, staged, &Expect { page_count: total, password: opts.password, rotations: None })?;
+        let reopened =
+            pdfium.load_pdf_from_file(staged, if encrypted { opts.password } else { None }).map_err(|_| {
+                PwError::new(ErrorCategory::ValidationFailed, "output.verify", "The output could not be reopened.")
+            })?;
+        for (i, want) in expected.iter().enumerate() {
+            let page = reopened.pages().get(i as PdfPageIndex).map_err(|e| map_pdfium_error(&e, "page"))?;
+            let v = visible_box(&page);
+            let got = [v.left().value, v.bottom().value, v.right().value, v.top().value];
+            if got.iter().zip(want).any(|(g, w)| (g - w).abs() > 0.05) {
+                return Err(PwError::new(
+                    ErrorCategory::ValidationFailed,
+                    "output.verify",
+                    format!("The output failed verification (page {} does not have the expected size).", i + 1),
+                ));
+            }
+        }
+        Ok(())
+    })?;
+    let mut warnings = protection_warnings(src_encrypted, encrypted);
+    warnings.push(
+        "Content outside the cropped area is hidden, not removed; use Redact to remove sensitive content.".into(),
+    );
+    Ok((c, total, warnings))
+}
+
 /// Render a page small (longest side ≤ 300 px, annotations off) for visibility checks.
 fn thumb(page: &PdfPage) -> PwResult<image::RgbaImage> {
     let longest = page.width().value.max(page.height().value).max(1.0);

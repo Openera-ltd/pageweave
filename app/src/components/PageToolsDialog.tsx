@@ -5,7 +5,7 @@ import { basename, dirname, siblingOutput } from "../paths";
 import { toPwError, type AnnotationSpec, type CollisionPolicy, type FieldValue, type StampPosition, type JobSnapshot, type WatermarkLayer, type OpenedDoc, type Operation, type PwError } from "../types";
 import { Dialog, useDebounced } from "./ui";
 
-export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark";
+export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop";
 
 const TITLES: Record<PageTool, string> = {
   extract: "Extract pages",
@@ -18,10 +18,11 @@ const TITLES: Record<PageTool, string> = {
   images: "Export pages as images",
   ocr: "Recognize text (OCR)",
   watermark: "Watermark",
+  crop: "Crop pages",
 };
 
 /** Start-button label (the title's first word does not fit every tool). */
-const START: Partial<Record<PageTool, string>> = { ocr: "Recognize", watermark: "Add watermark" };
+const START: Partial<Record<PageTool, string>> = { ocr: "Recognize", watermark: "Add watermark", crop: "Crop" };
 
 const SUFFIX: Record<PageTool, string> = {
   extract: "extract",
@@ -34,7 +35,17 @@ const SUFFIX: Record<PageTool, string> = {
   images: "",
   ocr: "searchable",
   watermark: "watermarked",
+  crop: "cropped",
 };
+
+export type CropUnit = "mm" | "in" | "pt";
+/** Points per unit. */
+export const UNIT_PT: Record<CropUnit, number> = { mm: 72 / 25.4, in: 72, pt: 1 };
+
+/** Displayed size of a page in points (rotation swaps the sides). */
+export function displayedSize(p: { width_pt: number; height_pt: number; rotation: number }): [number, number] {
+  return p.rotation === 90 || p.rotation === 270 ? [p.height_pt, p.width_pt] : [p.width_pt, p.height_pt];
+}
 
 /** Watermark angles as displayed (degrees counter-clockwise). */
 const ANGLES: Array<[number, string]> = [
@@ -108,7 +119,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   const suffix = tool === "save" ? (nFields === 0 ? "annotated" : nAnnots === 0 ? "filled" : "edited") : SUFFIX[tool];
   const api = useApi();
   const [pages, setPages] = useState(initialPages ?? (tool === "rotate" ? "" : ""));
-  const [allPages, setAllPages] = useState((tool === "rotate" || tool === "stamp" || tool === "images" || tool === "ocr" || tool === "watermark") && !initialPages);
+  const [allPages, setAllPages] = useState((tool === "rotate" || tool === "stamp" || tool === "images" || tool === "ocr" || tool === "watermark" || tool === "crop") && !initialPages);
   const [includeTextPages, setIncludeTextPages] = useState(false);
   const [dpi, setDpi] = useState(150);
   /** Tools that write several files into a folder rather than one new PDF. */
@@ -125,6 +136,8 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   const [wmOpacity, setWmOpacity] = useState(25);
   const [wmAngle, setWmAngle] = useState(45);
   const [wmLayer, setWmLayer] = useState<WatermarkLayer>("over");
+  const [cropUnit, setCropUnit] = useState<CropUnit>("mm");
+  const [crop, setCrop] = useState({ top: "0", right: "0", bottom: "0", left: "0" });
   const [output, setOutput] = useState(tool === "split" || tool === "images" ? dirname(doc.path) : siblingOutput(doc.path, suffix));
   const [splitMode, setSplitMode] = useState<"every_n" | "ranges">("every_n");
   const [everyN, setEveryN] = useState("1");
@@ -134,8 +147,16 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   const [error, setError] = useState<PwError | null>(null);
   const [conflict, setConflict] = useState(false);
 
-  const needsRange = tool === "extract" || tool === "delete" || ((tool === "rotate" || tool === "stamp" || tool === "images" || tool === "ocr" || tool === "watermark") && !allPages);
+  const needsRange = tool === "extract" || tool === "delete" || ((tool === "rotate" || tool === "stamp" || tool === "images" || tool === "ocr" || tool === "watermark" || tool === "crop") && !allPages);
   const wmSizeN = Number(wmSize);
+  const cropPt = {
+    top: Number(crop.top) * UNIT_PT[cropUnit],
+    right: Number(crop.right) * UNIT_PT[cropUnit],
+    bottom: Number(crop.bottom) * UNIT_PT[cropUnit],
+    left: Number(crop.left) * UNIT_PT[cropUnit],
+  };
+  const firstPage = doc.info.pages[0];
+  const [pw, ph] = firstPage ? displayedSize(firstPage) : [612, 792];
   const sizeN = Number(fontSize);
   const startN = Number(startAt);
   const digitsN = Number(digits);
@@ -177,6 +198,12 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
       if (!Number.isInteger(startN) || startN < 0) return "Start at must be a whole number.";
       if (!Number.isInteger(digitsN) || digitsN < 0 || digitsN > 12) return "Digits must be 0 to 12.";
     }
+    if (tool === "crop") {
+      const v = Object.values(cropPt);
+      if (v.some((x) => !Number.isFinite(x) || x < 0)) return "Margins must be zero or more.";
+      if (v.every((x) => x === 0)) return "Enter at least one margin to crop.";
+      if (cropPt.left + cropPt.right > pw - 18 || cropPt.top + cropPt.bottom > ph - 18) return "The margins leave almost nothing of the page.";
+    }
     if (tool === "watermark") {
       if (!wmText.trim()) return "Enter the watermark text.";
       if (!stampCharsOk(wmText)) return "Watermarks support Latin characters only for now.";
@@ -217,6 +244,8 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
           digits: digitsN,
           output,
         };
+      case "crop":
+        return { op: "crop_pages", input: doc.path, pages: allPages ? null : pages, margins: cropPt, output };
       case "watermark":
         return {
           op: "watermark",
@@ -416,6 +445,47 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         </>
       )}
 
+      {tool === "crop" && (
+        <div className="row" style={{ gap: "var(--space-4)", alignItems: "flex-start" }}>
+          <div className="grow" style={{ display: "grid", gap: "var(--space-3)" }}>
+            <div className="crop-grid">
+              {(["top", "left", "right", "bottom"] as const).map((side) => (
+                <div className="field" key={side} style={{ gridArea: side }}>
+                  <label htmlFor={`crop-${side}`}>{side[0]!.toUpperCase() + side.slice(1)}</label>
+                  <input id={`crop-${side}`} className="input" type="number" min={0} step="any" style={{ width: "9ch" }} value={crop[side]} onChange={(e) => setCrop((c) => ({ ...c, [side]: e.target.value }))} />
+                </div>
+              ))}
+            </div>
+            <div className="field">
+              <label htmlFor="crop-unit">Unit</label>
+              <select id="crop-unit" className="select" style={{ width: "16ch" }} value={cropUnit} onChange={(e) => setCropUnit(e.target.value as CropUnit)}>
+                <option value="mm">Millimetres</option>
+                <option value="in">Inches</option>
+                <option value="pt">Points</option>
+              </select>
+            </div>
+            <span className="hint">Hidden content stays in the file; use Redact to remove it.</span>
+          </div>
+          {firstPage && (
+            <div className="crop-preview" role="img" aria-label="Preview of page 1 with the cropped margins shaded" data-testid="crop-preview" style={{ width: 120, height: (120 * ph) / pw }}>
+              <img src={api.pageUrl(doc.doc_id, 0, Math.max(50, Math.round((120 / pw) * 1000 * (window.devicePixelRatio || 1))))} alt="" draggable={false} />
+              {(() => {
+                const k = 120 / pw;
+                const c = (v: number) => Math.max(0, Number.isFinite(v) ? v * k : 0);
+                return (
+                  <>
+                    <div className="cut" style={{ left: 0, top: 0, right: 0, height: c(cropPt.top) }} />
+                    <div className="cut" style={{ left: 0, bottom: 0, right: 0, height: c(cropPt.bottom) }} />
+                    <div className="cut" style={{ left: 0, top: c(cropPt.top), bottom: c(cropPt.bottom), width: c(cropPt.left) }} />
+                    <div className="cut" style={{ right: 0, top: c(cropPt.top), bottom: c(cropPt.bottom), width: c(cropPt.right) }} />
+                  </>
+                );
+              })()}
+            </div>
+          )}
+        </div>
+      )}
+
       {tool === "images" && (
         <div className="field">
           <label htmlFor="export-dpi">Resolution</label>
@@ -435,7 +505,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         </p>
       )}
 
-      {(tool === "rotate" || tool === "stamp" || tool === "images" || tool === "ocr" || tool === "watermark") && (
+      {(tool === "rotate" || tool === "stamp" || tool === "images" || tool === "ocr" || tool === "watermark" || tool === "crop") && (
         <div className="field">
           <label className="row">
             <input type="checkbox" checked={allPages} onChange={(e) => setAllPages(e.target.checked)} /> All pages

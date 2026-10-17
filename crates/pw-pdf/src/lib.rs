@@ -24,7 +24,9 @@ pub use document::{
     open_document, page_text_segments, render_page_png, search, BookmarkInfo, DocumentInfo, OpenOptions, PageInfo,
     PageText, SearchHit, SearchRect, TextSegment,
 };
-pub use edit::{annotate, delete_pages, extract_pages, merge, organize_pages, rotate_pages, split, watermark};
+pub use edit::{
+    annotate, crop_pages, delete_pages, extract_pages, merge, organize_pages, rotate_pages, split, watermark,
+};
 pub use exec::execute;
 pub use forms::{apply_edits, fill_form, form_fields, FieldKind, FormField, FormInfo, FormWidget};
 pub use ocr::{ocr_pages, OcrSummary};
