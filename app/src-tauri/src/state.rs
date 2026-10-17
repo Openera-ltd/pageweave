@@ -334,6 +334,15 @@ mod tests {
     }
 
     #[test]
+    fn webview2_args_follow_the_standard_variable_and_keep_defaults() {
+        assert_eq!(crate::webview2_browser_args(None), None);
+        assert_eq!(crate::webview2_browser_args(Some("  ")), None);
+        let a = crate::webview2_browser_args(Some("--remote-debugging-port=9222")).expect("args");
+        assert!(a.starts_with("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection"));
+        assert!(a.ends_with(" --remote-debugging-port=9222"));
+    }
+
+    #[test]
     fn preview_opens_stay_out_of_recent_files() {
         let (s, _d) = state();
         s.open_with(fixture("single-page.pdf"), None, false).expect("open");

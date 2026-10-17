@@ -66,3 +66,10 @@ These were made by Claude Code under the owner's standing instruction to "start 
 - **Options considered:** vendor-patch pdfium-render (24 MB copy to change one visibility; rejected); write `/V` and our own appearance streams (re-implements text layout/fonts — rejected, CLAUDE.md §4.5); `NeedAppearances` (ignored by many viewers, deprecated in PDF 2.0 — rejected); resolve the needed functions from the already-loaded PDFium library (accepted).
 - **Decision:** `unsafe_code` is `deny` workspace-wide (was `forbid`); only `crates/pw-pdf/src/forms.rs` opts in, enforced by the test `unsafe_is_confined_to_the_forms_module`. Every direct call runs under an exclusive engine lock that all other engine access shares (`pw_pdf::engine`), so direct calls never overlap pdfium-render's. Signatures follow the pinned chromium/7881 headers; documents are loaded from memory and torn down in PDFium's required order by a drop guard.
 - **Consequences:** Upgrading PDFium requires re-checking these signatures. Form work briefly blocks other engine use (milliseconds for typical forms).
+
+### D-007 — Honour `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` on Windows
+- **Status:** Accepted
+- **Date:** 2026-10-17
+- **Context:** Edge WebDriver attaches to WebView2 apps by setting the standard `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` variable (remote-debugging port). wry always passes its own `AdditionalBrowserArguments`, and on the WebView2 runtime in use (154.0.4258.62) those take precedence, so the variable never reached the browser process (verified on the CI runner by the browser process command line). Windows UI automation was therefore impossible.
+- **Decision:** The main window is created in `setup` from its config (`create: false`). When the variable is set, its value is appended to wry's default flags; when unset nothing changes. This restores documented platform behaviour for every WebView2 app rather than adding a PageWeave-specific switch, so the shipping binary is what gets tested.
+- **Security note:** whoever can set environment variables for the user's processes can already run code as that user; no new privilege is exposed. The value is never logged.

@@ -242,6 +242,19 @@ fn quit_app(state: State<'_, AppState>, window: tauri::Window) -> CmdResult<()> 
     window.destroy().map_err(|_| PwError::internal("window.close", "The window could not be closed."))
 }
 
+/// wry's WebView2 defaults (see wry `create_environment`): kept whenever arguments are supplied.
+const WRY_DEFAULT_WEBVIEW2_ARGS: &str =
+    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required";
+
+/// WebView2 browser arguments for the main window. wry always passes its own arguments, and on
+/// current WebView2 runtimes those take precedence over the standard `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`
+/// variable, so the variable (used by Edge WebDriver and other tooling) silently does nothing.
+/// When it is set, append it to wry's defaults; when unset, return None and change nothing.
+pub fn webview2_browser_args(env_value: Option<&str>) -> Option<String> {
+    let extra = env_value.map(str::trim).filter(|v| !v.is_empty())?;
+    Some(format!("{WRY_DEFAULT_WEBVIEW2_ARGS} {extra}"))
+}
+
 /// Whether a window close request must wait for the user (unsaved edits exist).
 pub fn close_needs_confirmation(state: &AppState) -> bool {
     state.unsaved() > 0
@@ -283,6 +296,25 @@ pub fn run() {
                 fields! {"version" => env!("CARGO_PKG_VERSION")},
             );
             app.manage(state);
+            // The main window is created here (config has `create: false`) so WebView2 arguments
+            // can be supplied; everything else comes from tauri.conf.json.
+            let config = app
+                .config()
+                .app
+                .windows
+                .iter()
+                .find(|w| w.label == "main")
+                .cloned()
+                .ok_or("main window missing from tauri.conf.json")?;
+            #[allow(unused_mut)]
+            let mut builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?;
+            #[cfg(windows)]
+            if let Some(args) =
+                webview2_browser_args(std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").ok().as_deref())
+            {
+                builder = builder.additional_browser_args(&args);
+            }
+            builder.build()?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
