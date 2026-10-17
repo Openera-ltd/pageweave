@@ -53,6 +53,8 @@ export interface Api {
   sanitizeInspect(docId: number): Promise<SanitizeFindings>;
   /** Files embedded in the document (read-only). */
   listAttachments(docId: number): Promise<AttachmentInfo[]>;
+  /** JPEG and PNG images. */
+  pickImageFiles(): Promise<string[]>;
   /** Any files (no type filter), e.g. to attach. */
   pickAnyFiles(): Promise<string[]>;
   /** A save location for a file of any type. */
@@ -108,6 +110,11 @@ export const tauriApi: Api = {
   redactionPreview: (docId, areas) => invoke("redaction_preview", { docId, areas }),
   sanitizeInspect: (docId) => invoke("sanitize_inspect", { docId }),
   listAttachments: (docId) => invoke("list_attachments", { docId }),
+  pickImageFiles: async () => {
+    const r = await openDialog({ multiple: true, directory: false, filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png"] }] });
+    if (r === null) return [];
+    return Array.isArray(r) ? r : [r];
+  },
   pickAnyFiles: async () => {
     const r = await openDialog({ multiple: true, directory: false });
     if (r === null) return [];

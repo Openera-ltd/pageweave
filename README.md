@@ -21,6 +21,7 @@ Implemented and tested:
 | Forms | Fill AcroForm text, multiline, checkbox, radio, combo and list fields directly on the page; values are entered through PDFium's form filler so the saved copy's appearances show them; Ctrl+S saves all changes (fields and annotations) into one verified copy, then the tab switches to it | engine tests verify values, button states and regenerated appearance streams with an independent parser and by rendering; E2E fills every kind in the real app and checks the saved file with the CLI |
 | OCR | Recognise text on scanned pages and save a searchable copy (invisible text layer over the words; pages look identical); pages that already have text are left alone | Benchmark against Tesseract on a synthetic, rights-clean corpus (`docs/benchmarks/OCR_BASELINE.md`); engine tests check word recall, placement and search; E2E runs it in the real app; the Windows package runs it in CI |
 | Password protection | Encrypted copy (AES-256) with an open password and optional permissions; protected originals can be re-protected with a new password | engine tests check refusal without the password, content, and the encryption dictionary with an independent parser; E2E protects and reopens in the real app |
+| Images to PDF | JPEG and PNG files to a PDF, one per page (A4, Letter or image size); JPEGs embedded unchanged, phone photos turned upright; drop images on the window to start | JPEG bytes compared inside the PDF; orientation and transparency checked in renders |
 | Edit bookmarks | Add from a page's menu, rename, re-point, nest, reorder and delete bookmarks; saved into a new file | the saved outline is read back by PDFium and compared item by item; E2E in the real app |
 | Attachments | See embedded files in the sidebar, save one out exactly as stored (never opened), attach files into a new copy | contents compared byte-for-byte after saving and attaching; E2E in the real app |
 | Crop pages | Trim margins (mm, in or pt) as displayed on all or chosen pages; content outside is hidden, not removed (said each time) | crop boxes read back by an independent parser, rotated pages included; E2E in the real app |
@@ -79,6 +80,7 @@ pageweave --json --on-conflict rename merge a.pdf b.pdf -o combined.pdf
 pageweave --password-stdin inspect protected.pdf < password.txt
 pageweave --password-stdin unprotect -o open.pdf protected.pdf < password.txt
 pageweave properties --title "Q3 report" --author "" -o report-q3.pdf report.pdf
+pageweave images-to-pdf scan1.jpg scan2.jpg --page-size a4 -o scans.pdf
 pageweave attachments report.pdf                       # list; --save 0 -o file / --add a.csv -o copy.pdf
 pageweave crop --top 10 --bottom 10 --unit mm -o report-trimmed.pdf report.pdf
 pageweave watermark --text DRAFT --opacity 20 --angle 45 -o report-draft.pdf report.pdf

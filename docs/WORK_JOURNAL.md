@@ -186,4 +186,5 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - Kaggle: the GPU queue held the probe re-run ~2 h; a CPU probe (supersede option added) ran at once and verified the dataset mount (720/720 image hashes). Training run pushed (T4, 3 GPU-h ceiling) — queued.
 - Edit bookmarks (PRD 05): outline rebuilt with lopdf (/Fit destinations), verified by PDFium read-back; editing logic in a pure module (subtree-aware indent/outdent/move/delete).
 - Organize: blank pages (PageRef.blank) sized and turned like the page they follow; verified by engine and component tests (no separate E2E: the organize E2E covers the dialog's keyboard flow and save path).
+- Images to PDF (PRD 06): JPEG passthrough (inline DCT; bytes verified identical), PNG decode, EXIF orientation via page /Rotate, own JPEG/PNG header parsers before PDFium; fixtures from tools/fixtures/gen_images.py (Pillow, committed).
 

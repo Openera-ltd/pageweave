@@ -1114,6 +1114,26 @@ await test("protect with password: AES-256 copy needs the password; wrong passwo
   }
 });
 
+await test("images to PDF: opens from the start screen; explains what is missing; accessible", async () => {
+  await withApp([], async (s) => {
+    await s.click('[data-command="file.imagesToPdf"]');
+    await s.waitFor('[data-testid="images-start"]');
+    assert((await s.attr('[data-testid="images-start"]', "title")) === "Add images first.", "disabled with a reason");
+    assert((await s.text('[role="dialog"] h2')) === "Create PDF from images", "dialog title");
+    await axeCheck(s, "images-to-pdf-dialog");
+    writeFileSync(join(ART, "images-to-pdf-dialog.png"), await s.screenshot());
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[role=dialog]')")) === null, "closed");
+  });
+  if (CLI) {
+    // The conversion itself, through the same engine (the native file picker cannot be automated).
+    const out = join(work, "from-images.pdf");
+    execFileSync(CLI, ["images-to-pdf", join(FIX, "../images/photo-exif-rotate.jpg"), join(FIX, "../images/alpha.png"), "-o", out]);
+    const v = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data;
+    assert(v.page_count === 2 && v.pages[0].rotation === 90, `converted: ${JSON.stringify(v.pages.map((p) => p.rotation))}`);
+  }
+});
+
 await test("bookmarks: add from the page menu, rename, nest, reorder, delete; saved outline read back exactly", async () => {
   const src = join(FIX, "five-pages.pdf");
   const before = sha(src);

@@ -138,6 +138,17 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(w);
             (vec![out(&c, Some(n))], json!({ "page_count": n, "encryption": "AES-256" }))
         }
+        Operation::ImagesToPdf { inputs, page_size, margin, output } => {
+            let page_progress = |done: u64, total: u64| {
+                if let Some(c) = ctx {
+                    c.set_progress(done, total, "images");
+                }
+            };
+            let (c, n, w) =
+                crate::images::images_to_pdf(inputs, *page_size, *margin, output, policy, &cancelled, &page_progress)?;
+            warnings.extend(w);
+            (vec![out(&c, Some(n))], json!({ "page_count": n }))
+        }
         Operation::SetBookmarks { input, bookmarks, output } => {
             let page_progress = |done: u64, total: u64| {
                 if let Some(c) = ctx {

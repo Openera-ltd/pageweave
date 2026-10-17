@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CaseSensitive, ChevronDown, ChevronUp, FileText, FolderOpen, Trash2, WholeWord, X } from "lucide-react";
+import { CaseSensitive, ChevronDown, ChevronUp, FileText, FolderOpen, Images, Trash2, WholeWord, X } from "lucide-react";
 import { COMMANDS, type CommandHandlers, type CommandId } from "../commands";
 import { basename, dirname } from "../paths";
 import type { JobSnapshot, OpenedDoc, PwError } from "../types";
@@ -11,6 +11,7 @@ export function Home({
   recent,
   dropActive,
   onOpen,
+  onImagesToPdf,
   onOpenRecent,
   onRemoveRecent,
   openShortcut,
@@ -18,6 +19,7 @@ export function Home({
   recent: string[];
   dropActive: boolean;
   onOpen: () => void;
+  onImagesToPdf: () => void;
   onOpenRecent: (path: string) => void;
   onRemoveRecent: (path: string) => void;
   openShortcut?: string;
@@ -28,10 +30,13 @@ export function Home({
         <h1>PageWeave</h1>
         <p>Open a PDF to view, search and reorganize its pages. Your files stay on this computer.</p>
         <div className={`drop ${dropActive ? "active" : ""}`} aria-hidden="true">
-          {dropActive ? "Release to open" : "Drop PDF files here"}
+          {dropActive ? "Release to open" : "Drop PDF files or images here"}
         </div>
         <button type="button" className="btn primary" data-command="file.open" onClick={onOpen} title={openShortcut ? `Open PDF (${openShortcut})` : "Open PDF"}>
           <FolderOpen /> Open PDF…
+        </button>{" "}
+        <button type="button" className="btn outline" data-command="file.imagesToPdf" onClick={onImagesToPdf}>
+          <Images /> Create PDF from images…
         </button>
         {recent.length > 0 && (
           <>

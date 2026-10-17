@@ -31,6 +31,20 @@ pub const MAX_ORGANIZE_PAGES: usize = 100_000;
 pub const MAX_STAMPS: usize = 6;
 pub const MAX_STAMP_CHARS: usize = 200;
 pub const MAX_REDACT_AREAS: usize = 10_000;
+/// Page size for images turned into PDF pages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ImagePageSize {
+    #[default]
+    A4,
+    Letter,
+    /// The image's own size at its recorded resolution (96 dpi when none is recorded).
+    Image,
+}
+
+/// Most images per new PDF.
+pub const MAX_IMAGES_TO_PDF: usize = 2_000;
+
 /// Most bookmarks in one outline, longest title, deepest nesting.
 pub const MAX_BOOKMARKS: usize = 10_000;
 pub const MAX_BOOKMARK_TITLE: usize = 500;
@@ -407,6 +421,16 @@ pub enum Operation {
         permissions: ProtectPermissions,
         output: PathBuf,
     },
+    /// Make a new PDF from JPEG and PNG images, one image per page in the given order.
+    ImagesToPdf {
+        inputs: Vec<PathBuf>,
+        #[serde(default)]
+        page_size: ImagePageSize,
+        /// Space around each image, in points (0–144).
+        #[serde(default)]
+        margin: f32,
+        output: PathBuf,
+    },
     /// Replace the document's bookmarks (outline) in a new file. An empty list removes them.
     SetBookmarks {
         input: PathBuf,
@@ -541,6 +565,7 @@ impl Operation {
             Operation::Watermark { .. } => "watermark",
             Operation::CropPages { .. } => "crop_pages",
             Operation::SetBookmarks { .. } => "set_bookmarks",
+            Operation::ImagesToPdf { .. } => "images_to_pdf",
             Operation::ListAttachments { .. } => "list_attachments",
             Operation::ExtractAttachment { .. } => "extract_attachment",
             Operation::AddAttachments { .. } => "add_attachments",
@@ -567,7 +592,7 @@ impl Operation {
     /// All input paths, used to protect sources from being overwritten.
     pub fn inputs(&self) -> Vec<PathBuf> {
         match self {
-            Operation::Merge { inputs, .. } => inputs.clone(),
+            Operation::Merge { inputs, .. } | Operation::ImagesToPdf { inputs, .. } => inputs.clone(),
             // Files being attached are inputs too: never overwritten by the output.
             Operation::AddAttachments { input, files, .. } => {
                 std::iter::once(input.clone()).chain(files.iter().cloned()).collect()
@@ -644,6 +669,7 @@ impl Operation {
             | Operation::CropPages { output, .. }
             | Operation::ExtractAttachment { output, .. }
             | Operation::SetBookmarks { output, .. }
+            | Operation::ImagesToPdf { output, .. }
             | Operation::AddAttachments { output, .. }
             | Operation::Sanitize { output, .. }
             | Operation::StampText { output, .. } => parent(output),
@@ -761,6 +787,20 @@ impl Operation {
             }
             Operation::Redact { areas, .. } | Operation::RedactionPreview { areas, .. } => {
                 validate_redact_areas(areas)?
+            }
+            Operation::ImagesToPdf { inputs, margin, .. } => {
+                if inputs.is_empty() {
+                    return Err(PwError::invalid("images.none", "Add at least one image."));
+                }
+                if inputs.len() > MAX_IMAGES_TO_PDF {
+                    return Err(PwError::invalid(
+                        "images.too_many",
+                        format!("Use at most {MAX_IMAGES_TO_PDF} images at once."),
+                    ));
+                }
+                if !margin.is_finite() || !(0.0..=144.0).contains(margin) {
+                    return Err(PwError::invalid("images.margin", "Use a margin of 0–144 pt."));
+                }
             }
             Operation::SetBookmarks { bookmarks, .. } => {
                 if bookmarks.len() > MAX_BOOKMARKS {

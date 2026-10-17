@@ -146,6 +146,18 @@ enum Command {
         #[arg(long)]
         no_assemble: bool,
     },
+    /// Make a PDF from JPEG and PNG images, one per page, in the order given.
+    ImagesToPdf {
+        images: Vec<PathBuf>,
+        #[arg(short, long)]
+        output: PathBuf,
+        /// a4, letter, or image (the image's own size at its recorded resolution).
+        #[arg(long, default_value = "a4")]
+        page_size: String,
+        /// Space around each image, in points.
+        #[arg(long, default_value_t = 0.0)]
+        margin: f32,
+    },
     /// List embedded files, save one (--save INDEX -o FILE), or attach files (--add FILE … -o OUT).
     Attachments {
         file: PathBuf,
@@ -291,7 +303,7 @@ fn capabilities() -> serde_json::Value {
     json!({
         "schema_version": pw_core::ops::SCHEMA_VERSION,
         "engine": pw_pdf::engine_version(),
-        "operations": ["inspect", "extract_text", "search", "render", "merge", "extract_pages", "delete_pages", "rotate_pages", "split", "annotate", "form_fields", "fill_form", "apply_edits", "organize_pages", "stamp_text", "export_images", "redaction_preview", "redact", "ocr_pages", "protect", "unprotect", "set_properties", "watermark", "crop_pages", "list_attachments", "extract_attachment", "add_attachments", "sanitize_inspect", "sanitize"],
+        "operations": ["inspect", "extract_text", "search", "render", "merge", "extract_pages", "delete_pages", "rotate_pages", "split", "annotate", "form_fields", "fill_form", "apply_edits", "organize_pages", "stamp_text", "export_images", "redaction_preview", "redact", "ocr_pages", "protect", "unprotect", "set_properties", "images_to_pdf", "watermark", "crop_pages", "list_attachments", "extract_attachment", "add_attachments", "sanitize_inspect", "sanitize"],
         "collision_policies": ["fail", "rename", "replace"],
         "network": "none",
     })
@@ -365,6 +377,17 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
                 fill_forms: !no_fill_forms,
                 assemble: !no_assemble,
             },
+            output: output.clone(),
+        },
+        Command::ImagesToPdf { images, output, page_size, margin } => Operation::ImagesToPdf {
+            inputs: images.clone(),
+            page_size: match page_size.as_str() {
+                "a4" => pw_core::ops::ImagePageSize::A4,
+                "letter" => pw_core::ops::ImagePageSize::Letter,
+                "image" => pw_core::ops::ImagePageSize::Image,
+                _ => return Err(PwError::invalid("images.page_size", "Use --page-size a4, letter or image.")),
+            },
+            margin: *margin,
             output: output.clone(),
         },
         Command::Attachments { file, save, add, output } => match (save, add.is_empty(), output) {

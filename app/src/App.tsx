@@ -53,6 +53,7 @@ import { UnprotectDialog } from "./components/UnprotectDialog";
 import { EditPropertiesDialog } from "./components/EditPropertiesDialog";
 import { SaveAttachmentDialog } from "./components/SaveAttachmentDialog";
 import { EditBookmarksDialog } from "./components/EditBookmarksDialog";
+import { ImagesToPdfDialog, isImagePath } from "./components/ImagesToPdfDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { NoteDialog, UnsavedDialog } from "./components/AnnotationDialogs";
 import { CommandPalette, Home, Notices, PasswordDialog, PropertiesDialog, SearchBar, StatusBar, type Notice, type NoticeAction, type SearchState } from "./components/Panels";
@@ -79,6 +80,7 @@ type DialogState =
   | { kind: "editProperties" }
   | { kind: "saveAttachment"; attachment: AttachmentInfo }
   | { kind: "bookmarks"; addOnOpen: boolean; page: number }
+  | { kind: "images"; files: string[] }
   | { kind: "unsaved"; reason: "tab"; docId: number }
   | { kind: "unsaved"; reason: "quit" }
   | null;
@@ -104,6 +106,7 @@ const OPERATION_TITLES: Partial<Record<Operation["op"], string>> = {
   set_properties: "Edit document properties",
   extract_attachment: "Save attached file",
   set_bookmarks: "Edit bookmarks",
+  images_to_pdf: "Create PDF from images",
   add_attachments: "Attach files",
   watermark: "Add watermark",
   crop_pages: "Crop pages",
@@ -409,7 +412,10 @@ export function App() {
         else if (e.type === "leave") setDropActive(false);
         else if (e.type === "drop") {
           setDropActive(false);
-          for (const p of e.paths) await openPath(p);
+          // Dropped images go to "Create PDF from images"; everything else is opened.
+          const images = e.paths.filter(isImagePath);
+          for (const p of e.paths.filter((p) => !isImagePath(p))) await openPath(p);
+          if (images.length) setDialog((d) => (d ? d : { kind: "images", files: images }));
         }
       })
       .then((u) => (off = u))
@@ -684,6 +690,7 @@ export function App() {
     "file.properties": { run: () => setDialog({ kind: "properties" }), available: all(needDoc, noDialog) },
     "file.protect": { run: () => setDialog({ kind: "protect" }), available: all(needDoc, noDialog) },
     "file.sanitize": { run: () => setDialog({ kind: "sanitize" }), available: all(needDoc, noDialog) },
+    "file.imagesToPdf": { run: () => setDialog({ kind: "images", files: [] }), available: noDialog },
     "file.editBookmarks": { run: () => setDialog({ kind: "bookmarks", addOnOpen: false, page: view.page }), available: all(needDoc, noDialog) },
     "file.attachFiles": { run: () => active && attachFiles(active), available: all(needDoc, noDialog) },
     "file.editProperties": { run: () => setDialog({ kind: "editProperties" }), available: all(needDoc, () => (dialog && dialog.kind !== "properties" ? "Close the open dialog first." : true)) },
@@ -1195,6 +1202,7 @@ export function App() {
             recent={settings?.recent_files ?? []}
             dropActive={dropActive}
             onOpen={openDialog}
+            onImagesToPdf={() => setDialog({ kind: "images", files: [] })}
             onOpenRecent={(p) => openPath(p)}
             onRemoveRecent={removeRecent}
             openShortcut={bindings["file.open"]?.[0]}
@@ -1269,6 +1277,7 @@ export function App() {
         />
       )}
       {dialog?.kind === "protect" && active && <ProtectDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
+      {dialog?.kind === "images" && <ImagesToPdfDialog initialFiles={dialog.files} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "bookmarks" && active && <EditBookmarksDialog doc={active} currentPage={dialog.page} addOnOpen={dialog.addOnOpen} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "saveAttachment" && active && <SaveAttachmentDialog doc={active} attachment={dialog.attachment} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "editProperties" && active && <EditPropertiesDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}

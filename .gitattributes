@@ -5,3 +5,5 @@ resources/ocr/*.txt -text
 *.ttf binary
 *.otf binary
 *.onnx binary
+*.jpg binary
+*.png binary

@@ -197,6 +197,7 @@ export type Operation =
   | { op: "ocr_pages"; input: string; pages: string | null; skip_text_pages: boolean; dpi: number; output: string }
   | { op: "protect"; input: string; permissions: ProtectPermissions; output: string }
   | { op: "unprotect"; input: string; output: string }
+  | { op: "images_to_pdf"; inputs: string[]; page_size: ImagePageSize; margin: number; output: string }
   | { op: "set_bookmarks"; input: string; bookmarks: Array<{ title: string; page: number; depth: number }>; output: string }
   | { op: "extract_attachment"; input: string; index: number; output: string }
   | { op: "add_attachments"; input: string; files: string[]; output: string }
@@ -204,6 +205,8 @@ export type Operation =
   | { op: "watermark"; input: string; pages: string | null; watermark: WatermarkSpec; output: string }
   | { op: "set_properties"; input: string; title?: string; author?: string; subject?: string; keywords?: string; output: string }
   | { op: "sanitize"; input: string; options: SanitizeOptions; output: string };
+
+export type ImagePageSize = "a4" | "letter" | "image";
 
 /** A file embedded in the document (engine `list_attachments`). */
 export interface AttachmentInfo {

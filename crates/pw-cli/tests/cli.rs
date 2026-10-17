@@ -470,3 +470,30 @@ fn attachments_list_save_and_add() {
     let r = bin().args(["attachments", "--save", "0"]).arg(fixture("hidden-info.pdf")).output().expect("run");
     assert_eq!(r.status.code(), Some(2), "needs -o");
 }
+
+#[test]
+fn images_to_pdf_command() {
+    let img = |n: &str| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/images").join(n);
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("i.pdf");
+    let r = bin()
+        .args(["images-to-pdf"])
+        .arg(img("gray-300dpi.jpg"))
+        .arg(img("alpha.png"))
+        .args(["--page-size", "letter", "-o"])
+        .arg(&out)
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let v = json(&bin().args(["--json", "inspect"]).arg(&out).output().expect("run"));
+    assert_eq!(v["result"]["data"]["page_count"], 2);
+    assert_eq!(v["result"]["data"]["pages"][0]["width_pt"], 612.0);
+    let bad = bin()
+        .args(["images-to-pdf"])
+        .arg(img("truncated.jpg"))
+        .arg("-o")
+        .arg(dir.path().join("b.pdf"))
+        .output()
+        .expect("run");
+    assert_eq!(bad.status.code(), Some(4), "damaged input exit code: {}", String::from_utf8_lossy(&bad.stderr));
+}

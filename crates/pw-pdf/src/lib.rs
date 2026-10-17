@@ -14,6 +14,7 @@ mod document;
 mod edit;
 mod exec;
 mod forms;
+mod images;
 mod ocr;
 mod outline;
 mod properties;
@@ -32,6 +33,7 @@ pub use edit::{
 };
 pub use exec::execute;
 pub use forms::{apply_edits, fill_form, form_fields, FieldKind, FormField, FormInfo, FormWidget};
+pub use images::images_to_pdf;
 pub use ocr::{ocr_pages, OcrSummary};
 pub use outline::set_bookmarks;
 pub use properties::{set_properties, PropertyChanges};
