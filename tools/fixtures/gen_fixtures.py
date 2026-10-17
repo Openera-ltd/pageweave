@@ -239,6 +239,64 @@ def build_redaction_document() -> bytes:
     return w.render(catalog, info)
 
 
+def build_redaction_hard_document() -> bytes:
+    """Real-world-shaped redaction cases. Page 1: Flate-compressed content; a secret split across a
+    TJ kerning array (PWKE + RNSECRET); horizontally scaled text (Tz); text turned 30 degrees by its
+    text matrix; an inline image (BI/ID/EI) inside an area; a scaled, rotated image crossing an area
+    edge. Page 2: a form XObject nested in a form XObject, holding PWNEST. The file then gets an
+    incremental update that replaces page 1's content; the PREVIOUS revision still holds
+    OLDREV-SECRET in its bytes (the classic leak a fresh rewrite must not carry over)."""
+    import zlib
+
+    w = PdfWriter()
+    catalog, pages_obj, p1, p2 = w.reserve(), w.reserve(), w.reserve(), w.reserve()
+    font = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    img = w.stream(bytes((i * 5 + 77) % 256 for i in range(16 * 16)),
+                   "/Type /XObject /Subtype /Image /Width 16 /Height 16 /ColorSpace /DeviceGray /BitsPerComponent 8 ")
+
+    def flate(data: bytes) -> int:
+        z = zlib.compress(data, 9)
+        return w.add(b"<< /Length %d /Filter /FlateDecode >>\nstream\n" % len(z) + z + b"\nendstream")
+
+    # Revision 1 of page 1: the old content (will be superseded by the incremental update).
+    old = flate(b"BT /F1 12 Tf 72 700 Td (OLDREV-SECRET old text) Tj ET")
+    inline = bytes((i * 13 + 3) % 256 for i in range(8 * 8))
+    c1 = (
+        b"BT /F1 12 Tf 72 700 Td [(Code: PWKE) -40 (RNSECRET) 120 ( end)] TJ ET\n"
+        b"BT /F1 12 Tf 160 Tz 72 650 Td (Wide PWWIDE text) Tj 100 Tz ET\n"
+        b"BT /F1 12 Tf 0.866 0.5 -0.5 0.866 300 500 Tm (Tilted PWTILT words) Tj ET\n"
+        b"q 40 0 0 40 72 400 cm BI /W 8 /H 8 /CS /G /BPC 8 ID " + inline + b" EI Q\n"
+        b"q 0 60 -60 0 400 300 cm /Im1 Do Q\n"
+        b"BT /F1 12 Tf 72 200 Td (Public line stays) Tj ET"
+    )
+    new = flate(c1)
+    res = f"/Resources << /Font << /F1 {font} 0 R >> /XObject << /Im1 {img} 0 R >> >>"
+    w.set(p1, f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] {res} /Contents {old} 0 R >>")
+
+    inner_ops = b"BT /F1 12 Tf 0 0 Td (Nested PWNEST value) Tj ET"
+    inner = w.add(b"<< /Type /XObject /Subtype /Form /BBox [0 0 300 20] /Resources << /Font << /F1 %d 0 R >> >> /Length %d >>\nstream\n" % (font, len(inner_ops)) + inner_ops + b"\nendstream")
+    outer_ops = b"q 1 0 0 1 10 10 cm /Fi Do Q"
+    outer = w.add(b"<< /Type /XObject /Subtype /Form /BBox [0 0 400 60] /Resources << /XObject << /Fi %d 0 R >> >> /Length %d >>\nstream\n" % (inner, len(outer_ops)) + outer_ops + b"\nendstream")
+    c2 = flate(b"BT /F1 12 Tf 72 700 Td (Page two visible) Tj ET q 1 0 0 1 72 500 cm /Fo Do Q")
+    w.set(p2, f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] "
+              f"/Resources << /Font << /F1 {font} 0 R >> /XObject << /Fo {outer} 0 R >> >> /Contents {c2} 0 R >>")
+    w.set(pages_obj, f"<< /Type /Pages /Kids [{p1} 0 R {p2} 0 R] /Count 2 >>")
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R >>")
+    base = w.render(catalog)
+
+    # Incremental update: page 1 now points at the new content; the old stream stays in the file.
+    page1 = f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] {res} /Contents {new} 0 R >>".encode()
+    prev_xref = int(base.rsplit(b"startxref\n", 1)[1].split(b"\n")[0])
+    body = bytearray(base)
+    off = len(body)
+    body += b"%d 0 obj\n" % p1 + page1 + b"\nendobj\n"
+    xref = len(body)
+    body += b"xref\n0 1\n0000000000 65535 f \n%d 1\n%010d 00000 n \n" % (p1, off)
+    body += (b"trailer\n<< /Size %d /Root %d 0 R /Prev %d /ID [<70616765776561766566697874757265> <70616765776561766566697874757265>] >>\nstartxref\n%d\n%%%%EOF\n"
+             % (len(w.objects) + 1, catalog, prev_xref, xref))
+    return bytes(body)
+
+
 def numbered_pages(n: int, size=LETTER) -> list[dict]:
     return [{"lines": [f"PageWeave fixture page {i}", f"Marker token PWMARK{i:03d}",
                        "The quick brown fox jumps over the lazy dog."], "size": size}
@@ -271,6 +329,7 @@ def main() -> int:
 
     files["form-fields.pdf"] = build_form_document()
     files["redaction.pdf"] = build_redaction_document()
+    files["redaction-hard.pdf"] = build_redaction_hard_document()
 
     good = files["five-pages.pdf"]
     files["corrupt-truncated.pdf"] = good[: len(good) // 2]

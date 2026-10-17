@@ -259,3 +259,45 @@ fn page_info_reports_the_displayed_box_origin() {
     assert_eq!((info.pages[3].origin_x, info.pages[3].origin_y), (100.0, 100.0));
     assert_eq!((info.pages[3].width_pt, info.pages[3].height_pt), (612.0, 792.0));
 }
+
+#[test]
+fn real_world_shaped_content_is_removed_including_old_revisions() {
+    let src = fixture("redaction-hard.pdf");
+    // The input really holds the secrets (compressed, and one only in an earlier revision).
+    let raw_in = everything(&src);
+    for s in [&b"PWKE"[..], b"RNSECRET", b"PWWIDE", b"PWTILT", b"PWNEST", b"OLDREV-SECRET"] {
+        assert!(contains(&raw_in, s), "fixture holds {}", String::from_utf8_lossy(s));
+    }
+    let inline: Vec<u8> = (0..64u32).map(|i| ((i * 13 + 3) % 256) as u8).collect();
+    let im1: Vec<u8> = (0..256u32).map(|i| ((i * 5 + 77) % 256) as u8).collect();
+    assert!(contains(&raw_in, &inline) && contains(&raw_in, &im1));
+
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("hard.pdf");
+    let areas = vec![
+        rect_of(&src, "PWKERNSECRET", 0.5),  // split across a TJ kerning array
+        rect_of(&src, "PWWIDE", 0.5),        // horizontally scaled (Tz 160)
+        rect_of(&src, "PWTILT", 0.5),        // turned 30 degrees by the text matrix
+        area(0, 66.0, 394.0, 118.0, 446.0),  // the inline image, wholly inside
+        area(0, 335.0, 295.0, 372.0, 365.0), // left half of the turned image
+        rect_of(&src, "PWNEST", 0.5),        // text in a form inside a form
+    ];
+    assert_eq!(areas[5].page, 1);
+    let r = execute(&OperationRequest::new(Operation::Redact { input: src.clone(), areas, output: out.clone() }), None)
+        .expect("redact");
+    let warnings = r.warnings.join("\n");
+    assert!(warnings.contains("Page 2 was replaced by an image"), "nested form crossing an area: {warnings}");
+
+    let raw = everything(&out);
+    for gone in [&b"PWKE"[..], b"RNSECRET", b"PWWIDE", b"PWTILT", b"PWNEST", b"OLDREV-SECRET"] {
+        assert!(!contains(&raw, gone), "{} found in the output", String::from_utf8_lossy(gone));
+    }
+    assert!(!contains(&raw, &inline), "inline image data gone");
+    assert!(!contains(&raw, &im1), "original data of the partly covered image gone");
+    let t1 = page_text(&out, 0);
+    for keep in ["Code:", "end", "Public line stays"] {
+        assert!(t1.contains(keep), "kept {keep:?}: {t1:?}");
+    }
+    let doc = lopdf::Document::load(&out).expect("lopdf");
+    assert!(doc.trailer.get(b"Prev").is_err(), "single revision");
+}
