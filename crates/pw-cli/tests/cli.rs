@@ -316,3 +316,60 @@ fn unicode_and_space_paths() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(out_path.is_file());
 }
+
+/// Run with `stdin_text` piped in; returns the output.
+fn run_with_stdin(args: &[&str], paths: &[&Path], stdin_text: &str) -> Output {
+    let mut cmd = bin();
+    cmd.args(args);
+    for p in paths {
+        cmd.arg(p);
+    }
+    let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().expect("spawn");
+    child.stdin.take().expect("stdin").write_all(stdin_text.as_bytes()).expect("write");
+    child.wait_with_output().expect("wait")
+}
+
+#[test]
+fn unprotect_honours_owner_restrictions() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let locked = dir.path().join("locked.pdf");
+    let r = run_with_stdin(
+        &["protect", "--no-modify", "--owner-password-stdin", "-o"],
+        &[&locked, &fixture("five-pages.pdf")],
+        "reader\nowner\n",
+    );
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let open = dir.path().join("open.pdf");
+    let r = run_with_stdin(&["--password-stdin", "unprotect", "-o"], &[&open, &locked], "reader\n");
+    assert_eq!(r.status.code(), Some(6), "permission exit code: {}", String::from_utf8_lossy(&r.stderr));
+    assert!(String::from_utf8_lossy(&r.stderr).contains("restricted"));
+    assert!(!open.exists());
+    let r = run_with_stdin(&["--password-stdin", "unprotect", "-o"], &[&open, &locked], "owner\n");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let v = json(&bin().args(["--json", "inspect"]).arg(&open).output().expect("run"));
+    assert_eq!(v["result"]["data"]["encrypted"], false);
+}
+
+#[test]
+fn sanitize_inspects_and_cleans() {
+    let v =
+        json(&bin().args(["--json", "sanitize", "--inspect"]).arg(fixture("hidden-info.pdf")).output().expect("run"));
+    assert_eq!(v["result"]["data"]["scripts"], 7);
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("clean.pdf");
+    let r = bin()
+        .args(["sanitize", "--keep-comments", "-o"])
+        .arg(&out)
+        .arg(fixture("hidden-info.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let after = json(&bin().args(["--json", "sanitize", "--inspect"]).arg(&out).output().expect("run"));
+    let d = &after["result"]["data"];
+    assert_eq!(d["scripts"], 0);
+    assert_eq!(d["comments"], 2, "kept on request (the hidden square went with its layer)");
+    assert_eq!(d["earlier_versions"], false);
+    // Without -o and without --inspect: an argument error (exit 1), nothing written.
+    let r = bin().arg("sanitize").arg(fixture("hidden-info.pdf")).output().expect("run");
+    assert_eq!(r.status.code(), Some(1));
+}

@@ -62,9 +62,9 @@ fn fail(what: &str) -> PwError {
 }
 
 /// Unprotected lopdf document of the source, and whether the source was already protected.
-/// Protected sources are decrypted by PDFium (its pages copied into a fresh document; lopdf's own
-/// decryption produced a malformed file from an RC4 source in testing). Unprotected sources that
-/// lopdf cannot parse are normalised by PDFium first.
+/// Protected sources are decrypted by PDFium, which keeps bookmarks, properties and forms (lopdf's
+/// own decryption produced a malformed file from an RC4 source in testing); an owner's restrictions
+/// are honoured. Unprotected sources that lopdf cannot parse are normalised by PDFium first.
 fn source_document(input: &Path, opts: &OpenOptions) -> PwResult<(lopdf::Document, bool)> {
     let bytes = std::fs::read(input).map_err(|e| PwError::from_io(&e, "file"))?;
     let parsed = lopdf::Document::load_mem(&bytes);
@@ -75,21 +75,8 @@ fn source_document(input: &Path, opts: &OpenOptions) -> PwResult<(lopdf::Documen
     }
     let pdfium = engine()?;
     let src = load(&pdfium, input, opts)?;
-    let protected =
-        !matches!(src.permissions().security_handler_revision(), Ok(PdfSecurityHandlerRevision::Unprotected));
-    let plain = if protected {
-        let mut fresh = pdfium.create_new_pdf().map_err(|e| map_pdfium_error(&e, "create"))?;
-        let n = src.pages().len();
-        if n > 0 {
-            fresh
-                .pages_mut()
-                .copy_page_range_from_document(&src, 0..=(n - 1), 0)
-                .map_err(|e| map_pdfium_error(&e, "copy"))?;
-        }
-        save_bytes(&fresh)?
-    } else {
-        save_bytes(&src)?
-    };
+    let protected = crate::unprotect::is_protected(&src);
+    let plain = if protected { crate::forms::save_without_security(input, opts.password)? } else { save_bytes(&src)? };
     let doc = lopdf::Document::load_mem(&plain).map_err(|_| {
         PwError::new(ErrorCategory::Corrupt, "protect.parse", "This file could not be prepared for protection.")
     })?;
@@ -194,10 +181,7 @@ pub fn protect(
     let mut warnings =
         vec!["Keep the password safe: it cannot be recovered, and the copy cannot be opened without it.".to_string()];
     if was_protected {
-        warnings.push(
-            "The original password no longer opens the copy. Bookmarks and document properties were not carried over from the protected original."
-                .into(),
-        );
+        warnings.push("The original password no longer opens the copy.".into());
     }
     if *permissions != ProtectPermissions::default() {
         warnings.push(

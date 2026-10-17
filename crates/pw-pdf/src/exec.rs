@@ -138,6 +138,11 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(w);
             (vec![out(&c, Some(n))], json!({ "page_count": n, "encryption": "AES-256" }))
         }
+        Operation::Unprotect { input, output } => {
+            let (c, n, w) = crate::unprotect::unprotect(input, &opts, output, policy)?;
+            warnings.extend(w);
+            (vec![out(&c, Some(n))], json!({ "page_count": n }))
+        }
         Operation::OcrPages { input, pages, skip_text_pages, dpi, output } => {
             let page_progress = |done: u64, total: u64| {
                 if let Some(c) = ctx {

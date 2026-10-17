@@ -146,6 +146,13 @@ enum Command {
         #[arg(long)]
         no_assemble: bool,
     },
+    /// Save a copy without password protection (give the current password with --password-stdin).
+    /// A file whose owner restricted it needs its permissions password.
+    Unprotect {
+        file: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
     /// Recognise text on scanned pages and add it as an invisible, searchable layer in a new file.
     Ocr {
         file: PathBuf,
@@ -211,7 +218,7 @@ fn capabilities() -> serde_json::Value {
     json!({
         "schema_version": pw_core::ops::SCHEMA_VERSION,
         "engine": pw_pdf::engine_version(),
-        "operations": ["inspect", "extract_text", "search", "render", "merge", "extract_pages", "delete_pages", "rotate_pages", "split", "annotate", "form_fields", "fill_form", "apply_edits", "organize_pages", "stamp_text", "export_images", "redaction_preview", "redact", "ocr_pages", "protect", "sanitize_inspect", "sanitize"],
+        "operations": ["inspect", "extract_text", "search", "render", "merge", "extract_pages", "delete_pages", "rotate_pages", "split", "annotate", "form_fields", "fill_form", "apply_edits", "organize_pages", "stamp_text", "export_images", "redaction_preview", "redact", "ocr_pages", "protect", "unprotect", "sanitize_inspect", "sanitize"],
         "collision_policies": ["fail", "rename", "replace"],
         "network": "none",
     })
@@ -287,6 +294,7 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
             },
             output: output.clone(),
         },
+        Command::Unprotect { file, output } => Operation::Unprotect { input: file.clone(), output: output.clone() },
         Command::Ocr { file, pages, all_pages, dpi, output } => Operation::OcrPages {
             input: file.clone(),
             pages: pages.clone(),

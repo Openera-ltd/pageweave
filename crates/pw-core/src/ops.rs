@@ -327,6 +327,12 @@ pub enum Operation {
         permissions: ProtectPermissions,
         output: PathBuf,
     },
+    /// Save a copy without password protection. The file must be opened with a password that
+    /// grants full rights: lifting an owner's restrictions needs the permissions password.
+    Unprotect {
+        input: PathBuf,
+        output: PathBuf,
+    },
     /// Recognise text on page images and add it as an invisible, searchable text layer in a new
     /// file; the pages look exactly as before.
     OcrPages {
@@ -397,6 +403,7 @@ impl Operation {
             Operation::RedactionPreview { .. } => "redaction_preview",
             Operation::OcrPages { .. } => "ocr_pages",
             Operation::Protect { .. } => "protect",
+            Operation::Unprotect { .. } => "unprotect",
             Operation::SanitizeInspect { .. } => "sanitize_inspect",
             Operation::Sanitize { .. } => "sanitize",
             Operation::Redact { .. } => "redact",
@@ -439,6 +446,7 @@ impl Operation {
             | Operation::RedactionPreview { input, .. }
             | Operation::OcrPages { input, .. }
             | Operation::Protect { input, .. }
+            | Operation::Unprotect { input, .. }
             | Operation::SanitizeInspect { input }
             | Operation::Sanitize { input, .. }
             | Operation::Redact { input, .. }
@@ -478,6 +486,7 @@ impl Operation {
             | Operation::Redact { output, .. }
             | Operation::OcrPages { output, .. }
             | Operation::Protect { output, .. }
+            | Operation::Unprotect { output, .. }
             | Operation::Sanitize { output, .. }
             | Operation::StampText { output, .. } => parent(output),
         }

@@ -165,3 +165,11 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - E2E flake fixed before commit: polling helper threw while the dialog mounted (palette closes first) → null-safe query. Screenshot showed fieldset min-content overflow → fixed (`min-width: 0`, truncation with tooltip).
 - Full-suite E2E found a real UX bug: notices (toasts) were layered above modal dialogs, so two XFA notices covered and intercepted the dialog's Remove button. Notices now sit beneath the modal layer (rule added to INTERACTION_CONTRACT). Linux E2E 44/44 after the fix.
 - Next: "Remove password" (PDFium save with FPDF_REMOVE_SECURITY needs raw bindings; pdfium-render hardcodes flags 0) so protected files can be cleaned; Type0/CID redaction fixture.
+
+## 2026-10-17 — Session 1, checkpoint 28: remove password; owner restrictions honoured
+- "Remove password" (PRD 05): PDFium `FPDF_SaveAsCopy` with `FPDF_REMOVE_SECURITY` (pdfium-render hardcodes flags 0, so it goes through the existing direct-call module). Keeps bookmarks, properties and forms. Verified: opens without a password, same pages/text, lopdf finds no /Encrypt.
+- Re-protecting a protected file now uses the same decryption, so bookmarks/properties are kept (previous limitation removed).
+- D-010: changing protection requires full rights (no restrictions, or opened with the permissions password). Open question recorded: page operations on restricted files.
+- Sanitize's refusal of protected files now points to Remove password.
+- E2E: withApp waits for a tab, so a protected file is launched alongside an unprotected one.
+

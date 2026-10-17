@@ -1114,6 +1114,65 @@ await test("protect with password: AES-256 copy needs the password; wrong passwo
   }
 });
 
+await test("remove password: copy opens without a password; unavailable with a reason on unprotected files; owner restrictions honoured", async () => {
+  const src = join(FIX, "encrypted-rc4-user-password.pdf");
+  const before = sha(src);
+  const out = join(work, "unlocked.pdf");
+  const restricted = join(work, "restricted.pdf");
+  if (CLI) {
+    const r = spawnSync(CLI, ["protect", "--no-modify", "--owner-password-stdin", "-o", restricted, join(FIX, "five-pages.pdf")], { input: "reader\nowner\n" });
+    assert(r.status === 0, "restricted test file made by the CLI");
+  }
+  const openPalette = async (s, text) => {
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', text);
+    await s.waitFor('[role="option"][data-command="file.unprotect"]');
+  };
+  // withApp waits for a tab, so an unprotected file opens alongside the protected one.
+  await withApp([join(FIX, "single-page.pdf"), src], async (s) => {
+    await s.waitFor("#pdf-password");
+    await s.type("#pdf-password", "pw-user-test");
+    await s.keys(["Enter"]);
+    await pageLoaded(s, 0);
+    await openPalette(s, "Remove password");
+    await s.click('[role="option"][data-command="file.unprotect"]');
+    await s.waitFor("#unprotect-output");
+    assert((await s.exec("return document.querySelector('#unprotect-output').value")).endsWith("encrypted-rc4-user-password-unprotected.pdf"), "default output name");
+    await s.type("#unprotect-output", out);
+    await axeCheck(s, "unprotect-dialog");
+    await s.click('[data-testid="unprotect-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved unlocked.pdf")), "saved notice", 30000);
+    // The copy opens straight away: no password prompt.
+    await s.exec("[...document.querySelectorAll('.notice button')].find(b => b.textContent === 'Open').click(); return 1");
+    await s.waitUntil(async () => (await s.exec("return [...document.querySelectorAll('.tab-label .name')].map(n => n.textContent)")).includes("unlocked.pdf"), "copy opened");
+    await pageLoaded(s, 0);
+    assert((await s.exec("return document.querySelector('#pdf-password')")) === null, "no password asked");
+    // On the unprotected copy the command is unavailable and says why.
+    await openPalette(s, "Remove password");
+    const reason = await s.exec("const o = document.querySelector('[data-command=\"file.unprotect\"]'); return o.getAttribute('aria-disabled') + '|' + o.textContent");
+    assert(reason.startsWith("true|") && reason.includes("not password protected"), `disabled with a reason: ${reason}`);
+    await s.keys(["Escape"]);
+  });
+  assert(sha(src) === before, "source PDF unchanged");
+  if (CLI) {
+    // A file with owner restrictions, opened with its open password: refused, nothing written.
+    const v = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data;
+    assert(v.encrypted === false && v.page_count === 5, `independent check: ${JSON.stringify(v).slice(0, 200)}`);
+    await withApp([join(FIX, "single-page.pdf"), restricted], async (s) => {
+      await s.waitFor("#pdf-password");
+      await s.type("#pdf-password", "reader");
+      await s.keys(["Enter"]);
+      await pageLoaded(s, 0);
+      await openPalette(s, "Remove password");
+      await s.click('[role="option"][data-command="file.unprotect"]');
+      await s.waitFor("#unprotect-output");
+      await s.click('[data-testid="unprotect-start"]');
+      await s.waitUntil(async () => ((await s.exec("return document.querySelector('[role=dialog] .banner.error')?.textContent ?? ''")) || "").includes("restricted"), "restriction explained", 30000);
+      assert(!existsSync(join(work, "restricted-unprotected.pdf")), "nothing written");
+    });
+  }
+});
+
 await test("remove hidden information: findings listed, verified copy has none, kept content stays; protected files refused with a reason", async () => {
   const src = join(FIX, "hidden-info.pdf");
   const before = sha(src);

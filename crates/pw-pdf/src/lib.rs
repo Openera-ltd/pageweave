@@ -17,6 +17,7 @@ mod ocr;
 mod protect;
 mod redact;
 mod sanitize;
+mod unprotect;
 
 pub use document::{
     open_document, page_text_segments, render_page_png, search, BookmarkInfo, DocumentInfo, OpenOptions, PageInfo,
@@ -29,6 +30,7 @@ pub use ocr::{ocr_pages, OcrSummary};
 pub use protect::protect;
 pub use redact::{redact, redaction_preview, AreaPreview};
 pub use sanitize::{sanitize, sanitize_inspect, SanitizeFindings};
+pub use unprotect::unprotect;
 
 use pdfium_render::prelude::*;
 use pw_core::{ErrorCategory, PwError, PwResult};

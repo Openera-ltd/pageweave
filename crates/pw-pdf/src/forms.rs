@@ -132,6 +132,7 @@ api! {
     FPDF_LoadPage: fn(FPDF_DOCUMENT, c_int) -> FPDF_PAGE;
     FPDF_ClosePage: fn(FPDF_PAGE);
     FPDF_SaveAsCopy: fn(FPDF_DOCUMENT, *mut FPDF_FILEWRITE, FPDF_DWORD) -> FPDF_BOOL;
+    FPDF_GetDocPermissions: fn(FPDF_DOCUMENT) -> c_ulong;
     FPDF_GetFormType: fn(FPDF_DOCUMENT) -> c_int;
     FPDFDOC_InitFormFillEnvironment: fn(FPDF_DOCUMENT, *mut FPDF_FORMFILLINFO) -> FPDF_FORMHANDLE;
     FPDFDOC_ExitFormFillEnvironment: fn(FPDF_FORMHANDLE);
@@ -169,6 +170,98 @@ fn api(path: &Path) -> PwResult<&'static Api> {
     })
 }
 
+/// Why the last FPDF_LoadMemDocument64 failed.
+fn open_error(api: &Api) -> PwError {
+    // SAFETY: plain getter.
+    match unsafe { (api.FPDF_GetLastError)() } {
+        ERR_PASSWORD => {
+            PwError::new(ErrorCategory::PasswordRequired, "pdf.password", "This document is password protected.")
+        }
+        ERR_SECURITY => PwError::new(
+            ErrorCategory::UnsupportedFormat,
+            "pdf.security_handler",
+            "This document uses an unsupported security handler.",
+        ),
+        _ => PwError::new(ErrorCategory::Corrupt, "pdf.format", "The file is damaged or is not a valid PDF."),
+    }
+}
+
+/// PDFium writer collecting the saved file in memory.
+#[repr(C)]
+struct Writer {
+    base: FPDF_FILEWRITE,
+    out: Vec<u8>,
+}
+
+unsafe extern "C" fn write_block(this: *mut FPDF_FILEWRITE, data: *const c_void, size: c_ulong) -> c_int {
+    // SAFETY: `this` is the `base` field of a live Writer (repr(C), first field).
+    let w = unsafe { &mut *(this as *mut Writer) };
+    if size > 0 {
+        let chunk = unsafe { std::slice::from_raw_parts(data as *const u8, size as usize) };
+        w.out.extend_from_slice(chunk);
+    }
+    1
+}
+
+impl Writer {
+    fn new() -> Writer {
+        Writer { base: FPDF_FILEWRITE { version: 1, WriteBlock: Some(write_block) }, out: Vec::new() }
+    }
+}
+
+/// Permission bits that carry a meaning (print, modify, copy, annotate, fill forms, accessibility,
+/// assemble, high-quality print). PDFium reports all bits when the owner password was given.
+const PERMISSION_BITS: c_ulong = 0xF3C;
+/// fpdf_save.h: save without the document's encryption.
+const FPDF_REMOVE_SECURITY: FPDF_DWORD = 3;
+
+/// The document saved by PDFium without its encryption: everything else (bookmarks, properties,
+/// forms, attachments) is kept. Refused when the file restricts what its users may do and was
+/// opened without its permissions (owner) password — removing the protection would lift
+/// restrictions its owner set.
+pub(crate) fn save_without_security(path: &Path, password: Option<&str>) -> PwResult<Vec<u8>> {
+    let (_guard, lib) = engine_exclusive()?;
+    let api = api(lib)?;
+    preflight(path)?;
+    let bytes = std::fs::read(path).map_err(|e| PwError::from_io(&e, "file"))?;
+    let pw = password
+        .map(CString::new)
+        .transpose()
+        .map_err(|_| PwError::invalid("pdf.password_nul", "The password is not valid."))?;
+    // SAFETY: `bytes` outlives the document, which is closed below before they are dropped.
+    let doc = unsafe {
+        (api.FPDF_LoadMemDocument64)(
+            bytes.as_ptr().cast(),
+            bytes.len(),
+            pw.as_ref().map_or(std::ptr::null(), |p| p.as_ptr()),
+        )
+    };
+    if doc.is_null() {
+        return Err(open_error(api));
+    }
+    // SAFETY: valid document handle.
+    let perms = unsafe { (api.FPDF_GetDocPermissions)(doc) };
+    let result = if perms & PERMISSION_BITS != PERMISSION_BITS {
+        Err(PwError::new(
+            ErrorCategory::Permission,
+            "pdf.owner_restricted",
+            "The owner of this file restricted what can be done with it, so its protection cannot be changed.",
+        )
+        .with_action("Open the file with its permissions password, or ask its owner for an unrestricted copy."))
+    } else {
+        let mut w = Writer::new();
+        // SAFETY: valid document; `w` outlives the call.
+        if unsafe { (api.FPDF_SaveAsCopy)(doc, &mut w.base, FPDF_REMOVE_SECURITY) } == 0 {
+            Err(fail("pdf.save", "The file could not be saved without its protection."))
+        } else {
+            Ok(w.out)
+        }
+    };
+    // SAFETY: the handle is not used afterwards.
+    unsafe { (api.FPDF_CloseDocument)(doc) };
+    result
+}
+
 fn fail(code: &str, msg: impl Into<String>) -> PwError {
     PwError::new(ErrorCategory::EngineFailure, code, msg)
 }
@@ -201,20 +294,7 @@ impl<'a> FormDoc<'a> {
             )
         };
         if doc.is_null() {
-            // SAFETY: plain getter.
-            return Err(match unsafe { (api.FPDF_GetLastError)() } {
-                ERR_PASSWORD => PwError::new(
-                    ErrorCategory::PasswordRequired,
-                    "pdf.password",
-                    "This document is password protected.",
-                ),
-                ERR_SECURITY => PwError::new(
-                    ErrorCategory::UnsupportedFormat,
-                    "pdf.security_handler",
-                    "This document uses an unsupported security handler.",
-                ),
-                _ => PwError::new(ErrorCategory::Corrupt, "pdf.format", "The file is damaged or is not a valid PDF."),
-            });
+            return Err(open_error(api));
         }
         // SAFETY: an all-None callback table is valid (PDFium checks each callback before use); it is
         // boxed so its address stays fixed until FPDFDOC_ExitFormFillEnvironment.
@@ -432,21 +512,7 @@ impl<'a> FormDoc<'a> {
     }
 
     fn save(&self) -> PwResult<Vec<u8>> {
-        #[repr(C)]
-        struct Writer {
-            base: FPDF_FILEWRITE,
-            out: Vec<u8>,
-        }
-        unsafe extern "C" fn write_block(this: *mut FPDF_FILEWRITE, data: *const c_void, size: c_ulong) -> c_int {
-            // SAFETY: `this` is the `base` field of a live Writer (repr(C), first field).
-            let w = unsafe { &mut *(this as *mut Writer) };
-            if size > 0 {
-                let chunk = unsafe { std::slice::from_raw_parts(data as *const u8, size as usize) };
-                w.out.extend_from_slice(chunk);
-            }
-            1
-        }
-        let mut w = Writer { base: FPDF_FILEWRITE { version: 1, WriteBlock: Some(write_block) }, out: Vec::new() };
+        let mut w = Writer::new();
         // Leave the form environment's focus so every pending edit is committed to the document.
         unsafe { (self.api.FORM_ForceToKillFocus)(self.form) };
         // SAFETY: valid document; `w` outlives the call. Flags 0 = full (non-incremental) save.

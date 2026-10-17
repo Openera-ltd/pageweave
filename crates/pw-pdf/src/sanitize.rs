@@ -144,8 +144,9 @@ fn protected() -> PwError {
     PwError::new(
         ErrorCategory::UnsupportedOperation,
         "sanitize.protected",
-        "Password-protected files cannot be cleaned yet. Use a copy without a password.",
+        "Password-protected files cannot be cleaned.",
     )
+    .with_action("Remove the password first (Remove password…), then clean that copy.")
 }
 
 fn unreadable() -> PwError {

@@ -191,6 +191,7 @@ export type Operation =
   | { op: "redact"; input: string; areas: RedactArea[]; output: string }
   | { op: "ocr_pages"; input: string; pages: string | null; skip_text_pages: boolean; dpi: number; output: string }
   | { op: "protect"; input: string; permissions: ProtectPermissions; output: string }
+  | { op: "unprotect"; input: string; output: string }
   | { op: "sanitize"; input: string; options: SanitizeOptions; output: string };
 
 /** What a sanitized copy leaves out (pw-core `SanitizeOptions`). */

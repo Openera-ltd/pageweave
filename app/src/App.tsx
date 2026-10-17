@@ -49,6 +49,7 @@ import { OrganizeDialog } from "./components/OrganizeDialog";
 import { RedactDialog } from "./components/RedactDialog";
 import { ProtectDialog } from "./components/ProtectDialog";
 import { SanitizeDialog } from "./components/SanitizeDialog";
+import { UnprotectDialog } from "./components/UnprotectDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { NoteDialog, UnsavedDialog } from "./components/AnnotationDialogs";
 import { CommandPalette, Home, Notices, PasswordDialog, PropertiesDialog, SearchBar, StatusBar, type Notice, type NoticeAction, type SearchState } from "./components/Panels";
@@ -71,6 +72,7 @@ type DialogState =
   | { kind: "redact"; areas: RedactArea[] }
   | { kind: "protect" }
   | { kind: "sanitize" }
+  | { kind: "unprotect" }
   | { kind: "unsaved"; reason: "tab"; docId: number }
   | { kind: "unsaved"; reason: "quit" }
   | null;
@@ -92,6 +94,7 @@ const OPERATION_TITLES: Partial<Record<Operation["op"], string>> = {
   ocr_pages: "Recognize text",
   protect: "Protect with password",
   sanitize: "Remove hidden information",
+  unprotect: "Remove password",
 };
 
 function operationTarget(op: Operation): string {
@@ -668,6 +671,10 @@ export function App() {
     "file.properties": { run: () => setDialog({ kind: "properties" }), available: all(needDoc, noDialog) },
     "file.protect": { run: () => setDialog({ kind: "protect" }), available: all(needDoc, noDialog) },
     "file.sanitize": { run: () => setDialog({ kind: "sanitize" }), available: all(needDoc, noDialog) },
+    "file.unprotect": {
+      run: () => setDialog({ kind: "unprotect" }),
+      available: all(needDoc, noDialog, () => (active?.info.encrypted ? true : "This file is not password protected.")),
+    },
     "tab.next": {
       run: () => {
         const i = tabs.findIndex((t) => t.doc_id === activeId);
@@ -874,6 +881,10 @@ export function App() {
           setActiveId(doc.doc_id);
           setDialog({ kind: "protect" });
         }, dialog ? "Close the open dialog first." : true),
+        item("file.unprotect", "Remove password…", () => {
+          setActiveId(doc.doc_id);
+          setDialog({ kind: "unprotect" });
+        }, dialog ? "Close the open dialog first." : doc.info.encrypted ? true : "This file is not password protected."),
         item("file.sanitize", "Remove hidden information…", () => {
           setActiveId(doc.doc_id);
           setDialog({ kind: "sanitize" });
@@ -1212,6 +1223,7 @@ export function App() {
         />
       )}
       {dialog?.kind === "protect" && active && <ProtectDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
+      {dialog?.kind === "unprotect" && active && <UnprotectDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "sanitize" && active && <SanitizeDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "organize" && active && <OrganizeDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "note" && active && (
