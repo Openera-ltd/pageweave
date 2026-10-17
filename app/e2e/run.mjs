@@ -54,6 +54,8 @@ let launchFailuresInARow = 0;
 class LaunchFailed extends Error {}
 
 async function withApp(args, fn) {
+  // Edge WebDriver passes app arguments as --switches; the app accepts files as --open=<path>.
+  if (process.platform === "win32") args = args.map((a) => `--open=${a}`);
   const t0 = Date.now();
   let s;
   try {

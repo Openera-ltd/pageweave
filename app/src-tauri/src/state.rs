@@ -259,13 +259,22 @@ impl AppState {
     }
 }
 
-/// File arguments from the command line: options (leading `-`) are ignored; at most 32 files.
+/// File arguments from the command line: plain paths and `--open=<path>`; other options (leading
+/// `-`) are ignored; only existing files; at most 32. `--open=` exists because some launchers
+/// (Edge WebDriver) pass every argument as a `--switch`.
 pub fn launch_args(args: impl Iterator<Item = std::ffi::OsString>) -> Vec<String> {
-    args.map(PathBuf::from)
-        .filter(|p| !p.to_string_lossy().starts_with('-') && p.is_file())
-        .take(32)
-        .map(|p| p.to_string_lossy().into_owned())
-        .collect()
+    args.filter_map(|a| {
+        let s = a.to_string_lossy().into_owned();
+        match s.strip_prefix("--open=") {
+            Some(path) => Some(PathBuf::from(path)),
+            None if s.starts_with('-') => None,
+            None => Some(PathBuf::from(a)),
+        }
+    })
+    .filter(|p| p.is_file())
+    .take(32)
+    .map(|p| p.to_string_lossy().into_owned())
+    .collect()
 }
 
 fn display_name(p: &Path) -> String {
@@ -303,6 +312,17 @@ mod tests {
         let args = vec!["--flag".into(), f.clone().into_os_string(), "/no/such/file.pdf".into()];
         let files = launch_args(args.into_iter());
         assert_eq!(files, vec![f.to_string_lossy().into_owned()]);
+        let g = fixture("five-pages.pdf");
+        let switched = vec![
+            format!("--open={}", g.display()).into(),
+            "--open=/no/such.pdf".into(),
+            format!("--{}", g.display()).into(),
+        ];
+        assert_eq!(
+            launch_args(switched.into_iter()),
+            vec![g.to_string_lossy().into_owned()],
+            "--open= accepted, bare switches ignored"
+        );
         s.set_launch_files(files);
         assert_eq!(s.take_launch_files().len(), 1);
         assert!(s.take_launch_files().is_empty());
