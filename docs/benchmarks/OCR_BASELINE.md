@@ -90,3 +90,10 @@ used. Scored by the same scorer via `crates/pw-ocr/examples/ocr_dir.rs` + `bench
 Per condition on blind the two agree within ±0.02 percentage points. The first Rust version was
 worse on bad scans (validation WER 10.5% vs 8.7%); the cause was bilinear crop sampling, fixed by
 OpenCV-style bicubic sampling. Same 4-thread container; Windows timing still to be measured.
+
+## Script-confusion filter: not added
+
+The error analysis saw German ß read as Greek β on blind pages (held-out italic font). On the
+validation split the Rust engine produced no non-Latin letters at all, so a Latin homoglyph filter
+has no measurable benefit on the split used for tuning; adding it because of blind observations
+would be tuning on the sealed set. Revisit with a validation set that shows the confusion.
