@@ -259,13 +259,28 @@ impl AppState {
     }
 }
 
-/// File arguments from the command line: plain paths and `--open=<path>`; other options (leading
-/// `-`) are ignored; only existing files; at most 32. `--open=` exists because some launchers
-/// (Edge WebDriver) pass every argument as a `--switch`.
+/// The path of an `--open=<path>` or `--open-<n>=<path>` argument.
+fn open_switch(arg: &str) -> Option<&str> {
+    let rest = arg.strip_prefix("--open")?;
+    if let Some(path) = rest.strip_prefix('=') {
+        return Some(path);
+    }
+    let numbered = rest.strip_prefix('-')?;
+    let digits = numbered.len() - numbered.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+    if digits == 0 {
+        return None;
+    }
+    numbered[digits..].strip_prefix('=')
+}
+
+/// File arguments from the command line: plain paths, `--open=<path>` and `--open-<n>=<path>`;
+/// other options (leading `-`) are ignored; only existing files; at most 32. The switch forms exist
+/// because some launchers (Edge WebDriver) pass every argument as a `--switch` and keep only one
+/// value per switch name, hence the numbered form for several files.
 pub fn launch_args(args: impl Iterator<Item = std::ffi::OsString>) -> Vec<String> {
     args.filter_map(|a| {
         let s = a.to_string_lossy().into_owned();
-        match s.strip_prefix("--open=") {
+        match open_switch(&s) {
             Some(path) => Some(PathBuf::from(path)),
             None if s.starts_with('-') => None,
             None => Some(PathBuf::from(a)),
@@ -322,6 +337,17 @@ mod tests {
             launch_args(switched.into_iter()),
             vec![g.to_string_lossy().into_owned()],
             "--open= accepted, bare switches ignored"
+        );
+        let numbered = vec![
+            format!("--open-1={}", g.display()).into(),
+            format!("--open-2={}", f.display()).into(),
+            format!("--open-x={}", f.display()).into(),
+            format!("--opener={}", f.display()).into(),
+        ];
+        assert_eq!(
+            launch_args(numbered.into_iter()),
+            vec![g.to_string_lossy().into_owned(), f.to_string_lossy().into_owned()],
+            "numbered switches keep their order; malformed ones are ignored"
         );
         s.set_launch_files(files);
         assert_eq!(s.take_launch_files().len(), 1);

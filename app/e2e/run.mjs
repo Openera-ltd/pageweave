@@ -53,20 +53,26 @@ const launchRetries = [];
 let launchFailuresInARow = 0;
 class LaunchFailed extends Error {}
 
+/**
+ * App arguments as the driver must pass them. Edge WebDriver turns every argument into a --switch
+ * and keeps one value per switch name, so on Windows files go as --open-1=<path>, --open-2=<path>, …
+ */
+function appArgs(args) {
+  return process.platform === "win32" ? args.map((a, i) => `--open-${i + 1}=${a}`) : args;
+}
+
 async function withApp(args, fn) {
-  // Edge WebDriver passes app arguments as --switches; the app accepts files as --open=<path>.
-  if (process.platform === "win32") args = args.map((a) => `--open=${a}`);
   const t0 = Date.now();
   let s;
   try {
-    s = await Session.create(DRIVER, APP, args);
+    s = await Session.create(DRIVER, APP, appArgs(args));
   } catch (e) {
     // Seen on CI: GTK occasionally fails to connect to the virtual display at process start, and the
     // driver then waits out its timeout. Retry the launch once and record it; a second failure is real.
     launchRetries.push({ test: currentTest, error: String(e?.message ?? e).slice(0, 300) });
     console.log(`  note: app launch failed (${String(e?.message ?? e).slice(0, 160)}); retrying the launch once`);
     try {
-      s = await Session.create(DRIVER, APP, args);
+      s = await Session.create(DRIVER, APP, appArgs(args));
     } catch (e2) {
       launchFailuresInARow++;
       throw new LaunchFailed(`the app could not be started under WebDriver twice: ${String(e2?.message ?? e2).slice(0, 200)}`);
@@ -352,7 +358,7 @@ await test("custom shortcut: conflicting binding is blocked, unique binding work
 });
 
 await test("password-protected PDF: dialog, wrong password, then correct password", async () => {
-  const s = await Session.create(DRIVER, APP, [join(FIX, "encrypted-rc4-user-password.pdf")]);
+  const s = await Session.create(DRIVER, APP, appArgs([join(FIX, "encrypted-rc4-user-password.pdf")]));
   try {
     await s.waitFor("#pdf-password", { timeout: 20000 });
     await s.type("#pdf-password", "wrong-password");
@@ -373,7 +379,7 @@ await test("password-protected PDF: dialog, wrong password, then correct passwor
 await test("unsupported file shows a specific error and app stays usable", async () => {
   const fake = join(work, "fake.pdf");
   copyFileSync(join(FIX, "not-a-pdf.pdf"), fake);
-  const s = await Session.create(DRIVER, APP, [fake, join(FIX, "single-page.pdf")]);
+  const s = await Session.create(DRIVER, APP, appArgs([fake, join(FIX, "single-page.pdf")]));
   try {
     await s.waitFor('.tab-label', { timeout: 20000 });
     await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Couldn’t open fake.pdf") && t.includes("not a PDF")), "error notice");

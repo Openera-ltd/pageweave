@@ -67,3 +67,10 @@ until it finishes. Measured hold times (release CLI, same Linux container, synth
 
 Follow-up: if real documents push hold times past ~0.5 s in normal use, split long operations into
 steps that release the lock between pages so rendering can interleave.
+
+## 2026-10-17 — Windows startup (CI runner, release build, real-app E2E)
+
+GitHub-hosted `windows-latest`, WebView2 154.0.4258.62, Edge WebDriver; release build of `5554072`;
+5 launches with `five-pages.pdf`: UI ready 1468 ms p50, first page 1584 ms p50. Hosted runners are
+shared VMs, so this is an upper-bound reference, not a hardware claim. Installed-app smoke test on
+the same runner type: UI ready 3.3–5.4 s on a cold first launch (WebView2 first start).
