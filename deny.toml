@@ -12,6 +12,14 @@ ignore = [
     # Tauri's Linux GTK stack (glib-macros); absent from the Windows build. Revisit when Tauri's
     # Linux dependencies move off it. Reviewed 2026-10-16.
     { id = "RUSTSEC-2024-0370", reason = "unmaintained compile-time macro via Tauri Linux GTK deps; not in Windows build" },
+    # zbus_names / zvariant / zvariant_derive are unmaintained as standalone crates (merged into
+    # zbus 6); not vulnerable. Reached only through tauri-plugin-opener 2.x's Linux D-Bus support
+    # (`cargo tree --target x86_64-pc-windows-msvc -i zvariant` prints nothing); no stable
+    # tauri-plugin-opener uses zbus 6 yet (only 3.0.0-alpha). Advisories published 2026-10-17.
+    # Revisit when tauri-plugin-opener 3 is stable. Reviewed 2026-10-17.
+    { id = "RUSTSEC-2026-0370", reason = "unmaintained (merged into zbus 6) via tauri-plugin-opener Linux D-Bus; not in Windows build; no stable upgrade" },
+    { id = "RUSTSEC-2026-0371", reason = "unmaintained (merged into zbus 6) via tauri-plugin-opener Linux D-Bus; not in Windows build; no stable upgrade" },
+    { id = "RUSTSEC-2026-0372", reason = "unmaintained (merged into zbus 6) via tauri-plugin-opener Linux D-Bus; not in Windows build; no stable upgrade" },
 ]
 
 [licenses]

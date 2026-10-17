@@ -172,4 +172,5 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - D-010: changing protection requires full rights (no restrictions, or opened with the permissions password). Open question recorded: page operations on restricted files.
 - Sanitize's refusal of protected files now points to Remove password.
 - E2E: withApp waits for a tab, so a protected file is launched alongside an unprotected one.
+- CI `2bf5632`: Windows E2E failed in the new remove-password scenario (Ctrl+K pressed while the protected file was still opening; the first tab already showed a page) → waits for both tabs now. cargo-deny failed on advisories published today (RUSTSEC-2026-0370/0371/0372: zvariant, zbus_names, zvariant_derive unmaintained, merged into zbus 6) reached only via tauri-plugin-opener's Linux D-Bus support; not in the Windows build; no stable upgrade (only opener 3.0.0-alpha). Narrow, documented ignores added to deny.toml with a revisit condition.
 

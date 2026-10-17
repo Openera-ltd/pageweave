@@ -1133,6 +1133,8 @@ await test("remove password: copy opens without a password; unavailable with a r
     await s.waitFor("#pdf-password");
     await s.type("#pdf-password", "pw-user-test");
     await s.keys(["Enter"]);
+    // Wait for the protected file's tab (the first tab may already show a page; found on Windows CI).
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label .name').length")) === 2, "both open");
     await pageLoaded(s, 0);
     await openPalette(s, "Remove password");
     await s.click('[role="option"][data-command="file.unprotect"]');
@@ -1162,6 +1164,7 @@ await test("remove password: copy opens without a password; unavailable with a r
       await s.waitFor("#pdf-password");
       await s.type("#pdf-password", "reader");
       await s.keys(["Enter"]);
+      await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label .name').length")) === 2, "both open");
       await pageLoaded(s, 0);
       await openPalette(s, "Remove password");
       await s.click('[role="option"][data-command="file.unprotect"]');
