@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Bookmark, Download, LayoutGrid, Paperclip, Plus } from "lucide-react";
 import { useApi } from "../api";
 import { toPwError, type AttachmentInfo, type OpenedDoc, type PwError } from "../types";
-import { formatBytes } from "./Panels";
+import { formatBytes } from "../format";
 import { Thumbnails } from "./Thumbnails";
 
 export type SidebarView = "pages" | "bookmarks" | "attachments";

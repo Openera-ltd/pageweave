@@ -201,6 +201,7 @@ export type Operation =
   | { op: "set_bookmarks"; input: string; bookmarks: Array<{ title: string; page: number; depth: number }>; output: string }
   | { op: "extract_attachment"; input: string; index: number; output: string }
   | { op: "add_attachments"; input: string; files: string[]; output: string }
+  | { op: "optimize"; input: string; output: string }
   | { op: "export_text"; input: string; pages: string | null; output: string }
   | { op: "crop_pages"; input: string; pages: string | null; margins: { top: number; right: number; bottom: number; left: number }; output: string }
   | { op: "watermark"; input: string; pages: string | null; watermark: WatermarkSpec; output: string }
@@ -309,6 +310,8 @@ export interface OperationResult {
   outputs: OutputInfo[];
   warnings: string[];
   duration_ms: number;
+  /** Operation-specific details (for example sizes before and after `optimize`). */
+  data?: Record<string, unknown>;
 }
 
 export type JobState = "queued" | "running" | "cancelling" | "cancelled" | "succeeded" | "failed";

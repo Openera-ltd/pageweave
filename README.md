@@ -85,6 +85,7 @@ pageweave images-to-pdf scan1.jpg scan2.jpg --page-size a4 -o scans.pdf
 pageweave attachments report.pdf                       # list; --save 0 -o file / --add a.csv -o copy.pdf
 pageweave crop --top 10 --bottom 10 --unit mm -o report-trimmed.pdf report.pdf
 pageweave watermark --text DRAFT --opacity 20 --angle 45 -o report-draft.pdf report.pdf
+pageweave optimize -o report-smaller.pdf report.pdf    # lossless; images unchanged
 pageweave sanitize --inspect report.pdf
 pageweave sanitize --remove-web-links -o report-clean.pdf report.pdf
 ```

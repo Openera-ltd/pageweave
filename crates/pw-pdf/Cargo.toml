@@ -20,6 +20,7 @@ parking_lot.workspace = true
 # Cleaning pass and whole-file checks of redacted output (independent of PDFium).
 lopdf.workspace = true
 getrandom.workspace = true
+flate2.workspace = true
 time.workspace = true
 
 [dev-dependencies]

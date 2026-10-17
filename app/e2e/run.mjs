@@ -5,7 +5,7 @@
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1102,6 +1102,44 @@ await test("export as text: chosen pages saved as UTF-8 text with page sections;
     await s.exec("[...document.querySelectorAll('[role=dialog] .btn.danger')].find(b => b.textContent.includes('Replace')).click()");
     await s.waitUntil(async () => readFileSync(out, "utf8").includes("PWMARK001"), "replaced with all pages");
   });
+});
+
+await test("reduce file size: tab menu and palette; smaller verified copy with the same text; sizes reported; second pass refused", async () => {
+  const src = join(FIX, "uncompressed-report.pdf");
+  const before = sha(src);
+  const out = join(work, "report-smaller.pdf");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Reduce file size");
+    await s.click('[role="option"][data-command="file.reduceSize"]');
+    await s.waitFor("#output");
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("uncompressed-report-smaller.pdf"), "default name");
+    assert((await s.exec("return document.querySelector('#pages')")) === null, "whole document, no page range");
+    await s.type("#output", out);
+    await axeCheck(s, "reduce-size-dialog");
+    writeFileSync(join(ART, "reduce-size-dialog.png"), await s.screenshot());
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved report-smaller.pdf") && /% smaller/.test(t)), "saved notice with sizes");
+  });
+  assert(sha(src) === before, "source untouched");
+  assert(statSync(out).size * 3 < statSync(src).size, "at least two thirds smaller");
+  if (CLI) {
+    const t = JSON.parse(execFileSync(CLI, ["--json", "text", "--pages", "4", out], { encoding: "utf8" }));
+    assert(JSON.stringify(t.result.data.pages[0].text).includes("PWREPORT4L40"), "last line of the last page is in the copy");
+  }
+  // Second pass on the result, from the tab menu: nothing left to gain is explained, nothing written.
+  const again = join(work, "report-again.pdf");
+  await withApp([out], async (s) => {
+    await pageLoaded(s, 0);
+    await s.contextClick(".tab-label[aria-current=page]");
+    await s.click('[role="menuitem"][data-command="file.reduceSize"]');
+    await s.waitFor("#output");
+    await s.type("#output", again);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => ((await s.exec("return document.querySelector('[role=dialog] [role=alert]')?.textContent ?? null")) ?? "").includes("already compact"), "explained");
+  });
+  assert(!existsSync(again), "nothing written");
 });
 
 await test("protect with password: AES-256 copy needs the password; wrong password refused; content intact", async () => {

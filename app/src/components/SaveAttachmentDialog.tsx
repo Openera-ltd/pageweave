@@ -3,7 +3,7 @@ import { FolderOpen } from "lucide-react";
 import { useApi } from "../api";
 import { dirname, join } from "../paths";
 import { toPwError, type AttachmentInfo, type CollisionPolicy, type JobSnapshot, type OpenedDoc, type PwError } from "../types";
-import { formatBytes } from "./Panels";
+import { formatBytes } from "../format";
 import { Dialog } from "./ui";
 
 interface Props {

@@ -192,6 +192,12 @@ enum Command {
         #[arg(long, default_value = "pt")]
         unit: String,
     },
+    /// Save a smaller copy with the same content (lossless; images unchanged), verified page by page.
+    Optimize {
+        file: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
     /// Add a text watermark, centred on each page, in a new file.
     Watermark {
         file: PathBuf,
@@ -407,6 +413,7 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
             }
             _ => return Err(PwError::invalid("attach.output", "Give -o with --save or --add.")),
         },
+        Command::Optimize { file, output } => Operation::Optimize { input: file.clone(), output: output.clone() },
         Command::Crop { file, output, pages, top, right, bottom, left, unit } => {
             let k = match unit.as_str() {
                 "pt" => 1.0,

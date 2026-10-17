@@ -38,6 +38,7 @@ import { missingRequired, setEdit, toFieldValues, fieldLabel, type FormEdits } f
 import { COMMAND_BY_ID, COMMANDS, commandForShortcut, effectiveBindings, type CommandHandlers, type CommandId } from "./commands";
 import { clampZoom, fitWidthZoom, nextZoom, pageOrigin, screenRectToPdf, ZOOM_PRESETS, CSS_PX_PER_PT, displaySizePt } from "./geometry";
 import { basename, siblingOutput } from "./paths";
+import { sizeChange } from "./format";
 import { eventToShortcut, isTextEntry } from "./shortcuts";
 import { applyAppearance } from "./theme";
 import { toPwError, type AppInfo, type AttachmentInfo, type CollisionPolicy, type FormField, type FormInfo, type FormValue, type JobSnapshot, type OpenedDoc, type Operation, type PwError, type RecoveredJob, type RedactArea, type SearchHit, type SearchRect, type Settings } from "./types";
@@ -690,6 +691,7 @@ export function App() {
     "file.properties": { run: () => setDialog({ kind: "properties" }), available: all(needDoc, noDialog) },
     "file.protect": { run: () => setDialog({ kind: "protect" }), available: all(needDoc, noDialog) },
     "file.sanitize": { run: () => setDialog({ kind: "sanitize" }), available: all(needDoc, noDialog) },
+    "file.reduceSize": { run: () => openTool("optimize"), available: all(needDoc, noDialog) },
     "file.imagesToPdf": { run: () => setDialog({ kind: "images", files: [] }), available: noDialog },
     "file.editBookmarks": { run: () => setDialog({ kind: "bookmarks", addOnOpen: false, page: view.page }), available: all(needDoc, noDialog) },
     "file.attachFiles": { run: () => active && attachFiles(active), available: all(needDoc, noDialog) },
@@ -916,6 +918,10 @@ export function App() {
           setActiveId(doc.doc_id);
           setDialog({ kind: "sanitize" });
         }, dialog ? "Close the open dialog first." : true),
+        item("file.reduceSize", "Reduce file size…", () => {
+          setActiveId(doc.doc_id);
+          setDialog({ kind: "tool", tool: "optimize" });
+        }, dialog ? "Close the open dialog first." : true),
       ],
     });
 
@@ -934,7 +940,11 @@ export function App() {
     // Only PDFs open in PageWeave (an exported image or a saved attachment does not).
     if (out && r.outputs.length === 1 && out.path.toLowerCase().endsWith(".pdf")) actions.push({ label: "Open", run: () => openPath(out.path) });
     if (out) actions.push({ label: "Show in folder", run: () => api.revealInFolder(out.path).catch((e) => notifyError("Couldn’t show the file", e)) });
-    notify({ kind: "success", title, detail: out?.pages != null && r.outputs.length === 1 ? `${out.pages} pages` : undefined, actions, persistent: false });
+    const before = r.data?.bytes_before;
+    const after = r.data?.bytes_after;
+    const detail =
+      typeof before === "number" && typeof after === "number" ? sizeChange(before, after) : out?.pages != null && r.outputs.length === 1 ? `${out.pages} pages` : undefined;
+    notify({ kind: "success", title, detail, actions, persistent: false });
     for (const w of r.warnings) notify({ kind: "warning", title: "Please note", detail: w, persistent: true });
   };
 

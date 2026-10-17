@@ -5,7 +5,7 @@ import { basename, dirname, join, siblingOutput, stem } from "../paths";
 import { toPwError, type AnnotationSpec, type CollisionPolicy, type FieldValue, type StampPosition, type JobSnapshot, type WatermarkLayer, type OpenedDoc, type Operation, type PwError } from "../types";
 import { Dialog, useDebounced } from "./ui";
 
-export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop" | "text";
+export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop" | "text" | "optimize";
 
 const TITLES: Record<PageTool, string> = {
   extract: "Extract pages",
@@ -20,10 +20,11 @@ const TITLES: Record<PageTool, string> = {
   watermark: "Watermark",
   crop: "Crop pages",
   text: "Export as text",
+  optimize: "Reduce file size",
 };
 
 /** Start-button label (the title's first word does not fit every tool). */
-const START: Partial<Record<PageTool, string>> = { ocr: "Recognize", watermark: "Add watermark", crop: "Crop", text: "Export" };
+const START: Partial<Record<PageTool, string>> = { ocr: "Recognize", watermark: "Add watermark", crop: "Crop", text: "Export", optimize: "Reduce size" };
 
 const SUFFIX: Record<PageTool, string> = {
   extract: "extract",
@@ -38,6 +39,7 @@ const SUFFIX: Record<PageTool, string> = {
   watermark: "watermarked",
   crop: "cropped",
   text: "",
+  optimize: "smaller",
 };
 
 /** Tools that offer "All pages" (on by default unless pages were preselected). */
@@ -251,6 +253,8 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
           digits: digitsN,
           output,
         };
+      case "optimize":
+        return { op: "optimize", input: doc.path, output };
       case "text":
         return { op: "export_text", input: doc.path, pages: allPages ? null : pages, output };
       case "crop":
@@ -509,6 +513,12 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
             ))}
           </select>
         </div>
+      )}
+
+      {tool === "optimize" && (
+        <p className="hint" style={{ marginTop: 0 }}>
+          Saves a smaller copy that looks and reads exactly the same: data is packed more tightly and repeated parts are stored once. Images are not changed.
+        </p>
       )}
 
       {tool === "ocr" && (

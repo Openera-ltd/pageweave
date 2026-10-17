@@ -16,6 +16,7 @@ export type CommandId =
   | "file.imagesToPdf"
   | "file.unprotect"
   | "file.sanitize"
+  | "file.reduceSize"
   | "edit.copy"
   | "edit.undo"
   | "edit.redo"
@@ -86,6 +87,7 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "file.editProperties", label: "Edit document properties…", category: "File", shortcuts: [] },
   { id: "file.unprotect", label: "Remove password…", category: "File", shortcuts: [] },
   { id: "file.sanitize", label: "Remove hidden information…", category: "File", shortcuts: [] },
+  { id: "file.reduceSize", label: "Reduce file size…", category: "File", shortcuts: [] },
   // Ctrl+C is handled natively by the text layer; this command backs the context-menu entry.
   { id: "edit.copy", label: "Copy selected text", category: "Edit", shortcuts: [] },
   { id: "edit.undo", label: "Undo annotation or mark", category: "Edit", shortcuts: ["Ctrl+Z"] },

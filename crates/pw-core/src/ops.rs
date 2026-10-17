@@ -523,6 +523,12 @@ pub enum Operation {
         options: SanitizeOptions,
         output: PathBuf,
     },
+    /// A smaller copy with the same content: lossless recompression, shared duplicates, unused
+    /// objects and earlier versions dropped; verified to look and read the same.
+    Optimize {
+        input: PathBuf,
+        output: PathBuf,
+    },
     /// What redacting `areas` would remove (read-only; shown before applying).
     RedactionPreview {
         input: PathBuf,
@@ -573,6 +579,7 @@ pub const OPERATION_IDS: &[&str] = &[
     "set_bookmarks",
     "images_to_pdf",
     "export_text",
+    "optimize",
     "list_attachments",
     "extract_attachment",
     "add_attachments",
@@ -610,6 +617,7 @@ impl Operation {
             Operation::SetBookmarks { .. } => "set_bookmarks",
             Operation::ImagesToPdf { .. } => "images_to_pdf",
             Operation::ExportText { .. } => "export_text",
+            Operation::Optimize { .. } => "optimize",
             Operation::ListAttachments { .. } => "list_attachments",
             Operation::ExtractAttachment { .. } => "extract_attachment",
             Operation::AddAttachments { .. } => "add_attachments",
@@ -667,6 +675,7 @@ impl Operation {
             | Operation::ListAttachments { input }
             | Operation::SetBookmarks { input, .. }
             | Operation::ExportText { input, .. }
+            | Operation::Optimize { input, .. }
             | Operation::ExtractAttachment { input, .. }
             | Operation::SanitizeInspect { input }
             | Operation::Sanitize { input, .. }
@@ -716,6 +725,7 @@ impl Operation {
             | Operation::SetBookmarks { output, .. }
             | Operation::ImagesToPdf { output, .. }
             | Operation::ExportText { output, .. }
+            | Operation::Optimize { output, .. }
             | Operation::AddAttachments { output, .. }
             | Operation::Sanitize { output, .. }
             | Operation::StampText { output, .. } => parent(output),

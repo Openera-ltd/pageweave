@@ -441,6 +441,27 @@ def numbered_pages(n: int, size=LETTER) -> list[dict]:
             for i in range(1, n + 1)]
 
 
+def build_uncompressed_report() -> bytes:
+    """Four text-heavy pages stored without compression, each page with its own (identical) font
+    object: what a naive generator writes, so "Reduce file size" has real work to do."""
+    w = PdfWriter()
+    catalog = w.reserve()
+    pages_obj = w.reserve()
+    kids = []
+    for p in range(1, 5):
+        font = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+        lines = [f"Report page {p}, line {i}: quarterly figures were reviewed and approved. PWREPORT{p}L{i}"
+                 for i in range(1, 41)]
+        content = w.stream(text_page_content(lines, size=10, y=750, leading=17))
+        kids.append(w.add(
+            f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] "
+            f"/Resources << /Font << /F1 {font} 0 R >> >> /Contents {content} 0 R >>"))
+    w.set(pages_obj, "<< /Type /Pages /Kids [%s] /Count %d >>" % (" ".join(f"{k} 0 R" for k in kids), len(kids)))
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R >>")
+    info = w.add("<< /Title (Uncompressed report) >>")
+    return w.render(catalog, info)
+
+
 def main() -> int:
     if len(sys.argv) == 4 and sys.argv[1] == "--big":
         # Large document for benchmarks (not committed): gen_fixtures.py --big PAGES OUT.pdf
@@ -470,6 +491,7 @@ def main() -> int:
     files["redaction-hard.pdf"] = build_redaction_hard_document()
     files["hidden-info.pdf"] = build_hidden_info_document()
     files["signature-structure.pdf"] = build_signature_structure_document()
+    files["uncompressed-report.pdf"] = build_uncompressed_report()
 
     good = files["five-pages.pdf"]
     files["corrupt-truncated.pdf"] = good[: len(good) // 2]

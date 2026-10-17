@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { formatBytes } from "../format";
 import { CaseSensitive, ChevronDown, ChevronUp, FileText, FolderOpen, Images, Trash2, WholeWord, X } from "lucide-react";
 import { COMMANDS, type CommandHandlers, type CommandId } from "../commands";
 import { basename, dirname } from "../paths";
@@ -515,9 +516,3 @@ export function PropertiesDialog({ doc, onClose, onEdit }: { doc: OpenedDoc; onC
   );
 }
 
-export function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
-  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
-}

@@ -160,6 +160,26 @@ fn capabilities_lists_operations() {
 }
 
 #[test]
+fn optimize_reports_sizes_and_refuses_a_second_pass() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("small.pdf");
+    let src = fixture("uncompressed-report.pdf");
+    let r = bin().args(["--json", "optimize", "-o"]).arg(&out).arg(&src).output().expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let v = json(&r);
+    let before = v["result"]["data"]["bytes_before"].as_u64().expect("before");
+    let after = v["result"]["data"]["bytes_after"].as_u64().expect("after");
+    assert_eq!(before, std::fs::metadata(&src).expect("meta").len());
+    assert_eq!(after, std::fs::metadata(&out).expect("meta").len());
+    assert!(after * 3 < before, "{before} -> {after}");
+    let again =
+        bin().args(["--json", "optimize", "-o"]).arg(dir.path().join("again.pdf")).arg(&out).output().expect("run");
+    assert!(!again.status.success());
+    assert_eq!(json(&again)["error"]["code"], "optimize.not_smaller");
+    assert!(!dir.path().join("again.pdf").exists());
+}
+
+#[test]
 fn text_saves_a_file_with_output_and_prints_without() {
     let dir = tempfile::tempdir().expect("tmp");
     let out = dir.path().join("five.txt");

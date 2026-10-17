@@ -133,7 +133,7 @@ export function Menu({ items, x, y, label, onClose }: MenuProps) {
           <div key={`sep-${i}`} role="separator" />
         ) : (
           <button
-            key={it.id}
+            key={`${it.id}-${i}`}
             type="button"
             role="menuitem"
             data-command={it.id}
