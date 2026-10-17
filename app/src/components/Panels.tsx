@@ -297,7 +297,7 @@ function NoticeView({ notice, onDismiss }: { notice: Notice; onDismiss: (id: num
         {notice.actions && notice.actions.length > 0 && (
           <div className="actions">
             {notice.actions.map((a) => (
-              <button key={a.label} type="button" className="btn outline" onClick={() => { a.run(); onDismiss(notice.id); }}>
+              <button key={a.label} type="button" className="btn outline" data-action={a.label} onClick={() => { a.run(); onDismiss(notice.id); }}>
                 {a.label}
               </button>
             ))}

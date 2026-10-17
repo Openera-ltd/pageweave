@@ -94,6 +94,11 @@ fn next_free_name(desired: &Path, protected: &[PathBuf]) -> PwResult<PathBuf> {
     Err(PwError::new(ErrorCategory::OutputConflict, "output.no_free_name", "Could not find a free output name."))
 }
 
+/// Name prefix of staged (not yet committed) output files written by process `pid`.
+pub fn staged_prefix(pid: u32) -> String {
+    format!(".pw-staged-{pid}-")
+}
+
 /// Outcome of a committed write.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommittedOutput {
@@ -116,7 +121,10 @@ pub fn write_atomic(
     let target = plan_output(desired, policy, protected)?;
     let dir = target.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
     let mut builder = tempfile::Builder::new();
-    builder.prefix(".pw-staged-").suffix(".tmp");
+    // The owning process id is part of the name so restart recovery can tell which leftovers belong
+    // to a process that is gone (see `journal`).
+    let prefix = staged_prefix(std::process::id());
+    builder.prefix(&prefix).suffix(".tmp");
     // Temp files default to 0600; a saved document should get normal permissions (0666 & !umask).
     #[cfg(unix)]
     {

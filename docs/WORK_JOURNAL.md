@@ -78,3 +78,11 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - Harness findings: WebKitWebDriver loses Shift for capitals in element send-keys after pointer actions — `type()` now falls back to explicit Shift key actions and still verifies the field. `tools/check.sh` silently passed a failing strict audit because `set -e` ignores failures left of `&&`; fixed (each check is its own command).
 - Totals: Rust 83, UI unit 32, E2E 33, audit 39/39.
 - Next: CI result for this push (incl. first `windows-e2e` run); persisted job state/recovery; startup/first-page timing.
+
+## 2026-10-17 — Session 1, checkpoints 14–15: startup baseline, restart recovery
+- `477469c` (local, pushed with this checkpoint): host-recorded startup marks; release build on the Linux container: UI ready 822 ms p50, first page 1043 ms p50 (`docs/PERFORMANCE_BASELINE.md`). E2E retries a failed app *launch* once (CI run #10 lost one launch to GTK failing to reach Xvfb) and reports every retry.
+- Restart recovery (`pw_core::journal`): entries for running file-writing jobs, staged files tagged with the owning pid, per-instance locks so a second live instance is never "recovered"; startup notice with Run again. MSRV raised to Rust 1.89 for std file locks.
+- Bug found and fixed before commit: the annotate-save completion cleared the active document's pending annotations for *any* annotate job (a recovered Run again would have wiped unrelated unsaved work); now scoped to the save dialog.
+- Test-harness fix: `axeCheck` could sample a just-mounted notice mid-fade (contrast 3.66 at 50% opacity); it now waits two frames and requires two settled checks, and reports axe's measured colours.
+- CI run #11 (`91a7c48`): Linux (incl. E2E 33/33), Windows tests + installer smoke, gitleaks, cargo-deny green; first Windows E2E still running at the time of writing (>8 min vs ~90 s locally) — read its log next.
+- Local totals: Rust 90, UI unit 32, E2E 35/35, audit 39/39.

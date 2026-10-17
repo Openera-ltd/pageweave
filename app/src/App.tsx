@@ -32,7 +32,7 @@ import { clampZoom, fitWidthZoom, nextZoom, screenRectToPdf, ZOOM_PRESETS, CSS_P
 import { basename } from "./paths";
 import { eventToShortcut, isTextEntry } from "./shortcuts";
 import { applyAppearance } from "./theme";
-import { toPwError, type AnnotationKind, type AppInfo, type JobSnapshot, type OpenedDoc, type PwError, type SearchHit, type SearchRect, type Settings } from "./types";
+import { toPwError, type AnnotationKind, type AppInfo, type JobSnapshot, type OpenedDoc, type Operation, type PwError, type RecoveredJob, type SearchHit, type SearchRect, type Settings } from "./types";
 import { CommandButton, Menu, type MenuItemOrSeparator } from "./components/ui";
 import { Viewer, type ScrollRequest } from "./components/Viewer";
 import { Sidebar, type SidebarView } from "./components/Sidebar";
@@ -63,6 +63,21 @@ type DialogState =
 type AfterSave = { kind: "close"; docId: number } | { kind: "quit" } | null;
 
 const NO_PENDING: PendingAnnotation[] = [];
+
+const OPERATION_TITLES: Partial<Record<Operation["op"], string>> = {
+  extract_pages: "Extract pages",
+  delete_pages: "Delete pages",
+  rotate_pages: "Rotate pages",
+  split: "Split document",
+  merge: "Combine files",
+  annotate: "Save annotated copy",
+};
+
+function operationTarget(op: Operation): string {
+  if ("output" in op) return basename(op.output);
+  if ("output_dir" in op) return basename(op.output_dir);
+  return "";
+}
 /** Mirrors pw-core MAX_ANNOTATIONS_PER_REQUEST. */
 const MAX_PENDING = 10_000;
 
@@ -100,6 +115,8 @@ export function App() {
   const [goToNonce, setGoToNonce] = useState(0);
   const [annots, setAnnots] = useState<Record<number, AnnotationHistory>>({});
   const annGroup = useRef(1);
+  /** Jobs started outside a dialog (e.g. "Run again"): their outcome is reported by a notice. */
+  const [watched, setWatched] = useState<string[]>([]);
   const afterSave = useRef<AfterSave>(null);
   const noticeId = useRef(1);
   const searchToken = useRef(0);
@@ -139,6 +156,32 @@ export function App() {
     api.appInfo().then(setInfo).catch((e) => notifyError("PageWeave could not start correctly", e));
     api.getSettings().then(setSettings).catch((e) => notifyError("Settings could not be loaded", e));
   }, [api, notifyError]);
+
+  // Tasks cut off when PageWeave last closed: say so, say what was cleaned up, offer to run again.
+  useEffect(() => {
+    api
+      .recoveredJobs()
+      .then((list: RecoveredJob[]) => {
+        for (const r of list) {
+          const what = `${OPERATION_TITLES[r.operation.op] ?? r.label}${operationTarget(r.operation) ? ` → ${operationTarget(r.operation)}` : ""}`;
+          const cleanup =
+            r.leftover_partial_files.length > 0
+              ? ` A partial file could not be removed: ${r.leftover_partial_files.map(basename).join(", ")}.`
+              : r.removed_partial_files > 0
+                ? " Its unfinished file was removed."
+                : "";
+          notify({
+            kind: "warning",
+            title: "A task was interrupted",
+            detail: `${what} did not finish when PageWeave last closed. No output was saved.${cleanup}`,
+            actions: [{ label: "Run again", run: () => runAgain(r) }],
+            persistent: true,
+          });
+        }
+      })
+      .catch((e) => notifyError("Couldn’t check for interrupted tasks", e));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api]);
 
   useEffect(() => {
     if (!info) return;
@@ -645,16 +688,6 @@ export function App() {
   const onJobFinished = (job: JobSnapshot) => {
     const r = job.result;
     if (!r) return;
-    if (r.operation === "annotate" && active) {
-      const docId = active.doc_id;
-      setAnnots(({ [docId]: _saved, ...rest }) => rest);
-      const next = afterSave.current;
-      afterSave.current = null;
-      if (next?.kind === "close") closeTabNow(next.docId);
-      if (next?.kind === "quit" && dirtyTabs.every((t) => t.doc_id === docId)) {
-        api.quitApp().catch((e) => notifyError("PageWeave could not close", e));
-      }
-    }
     const out = r.outputs[0];
     const title = r.outputs.length > 1 ? `Saved ${r.outputs.length} files` : out ? `Saved ${basename(out.path)}` : "Done";
     const actions: NoticeAction[] = [];
@@ -662,6 +695,38 @@ export function App() {
     if (out) actions.push({ label: "Show in folder", run: () => api.revealInFolder(out.path).catch((e) => notifyError("Couldn’t show the file", e)) });
     notify({ kind: "success", title, detail: out?.pages != null && r.outputs.length === 1 ? `${out.pages} pages` : undefined, actions, persistent: false });
     for (const w of r.warnings) notify({ kind: "warning", title: "Please note", detail: w, persistent: true });
+  };
+
+  const runAgain = async (r: RecoveredJob) => {
+    try {
+      const id = await api.startOperation({ schema_version: 1, operation: r.operation, collision: r.collision });
+      setWatched((w) => [...w, id]);
+    } catch (e) {
+      notifyError(`Couldn’t run ${OPERATION_TITLES[r.operation.op]?.toLowerCase() ?? "the task"} again`, e);
+    }
+  };
+
+  useEffect(() => {
+    for (const id of watched) {
+      const j = jobs[id];
+      if (!j || !["succeeded", "failed", "cancelled"].includes(j.state)) continue;
+      setWatched((w) => w.filter((x) => x !== id));
+      if (j.state === "succeeded") onJobFinished(j);
+      else if (j.state === "failed") notifyError("The task failed again", j.error);
+      else notify({ kind: "info", title: "Task cancelled", persistent: false });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobs, watched]);
+
+  /** The save dialog's annotated copy is committed: drop the saved annotations, then continue a pending close/quit. */
+  const afterAnnotationsSaved = (docId: number) => {
+    setAnnots(({ [docId]: _saved, ...rest }) => rest);
+    const next = afterSave.current;
+    afterSave.current = null;
+    if (next?.kind === "close") closeTabNow(next.docId);
+    if (next?.kind === "quit" && dirtyTabs.every((t) => t.doc_id === docId)) {
+      api.quitApp().catch((e) => notifyError("PageWeave could not close", e));
+    }
   };
 
   /* ---------- Render ---------- */
@@ -859,7 +924,10 @@ export function App() {
             afterSave.current = null;
             setDialog(null);
           }}
-          onFinished={onJobFinished}
+          onFinished={(job) => {
+            if (dialog.tool === "annotate") afterAnnotationsSaved(active.doc_id);
+            onJobFinished(job);
+          }}
         />
       )}
       {dialog?.kind === "settings" && (

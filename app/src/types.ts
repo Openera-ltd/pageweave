@@ -134,6 +134,14 @@ export type Operation =
   | { op: "split"; input: string; split: SplitMode; output_dir: string }
   | { op: "annotate"; input: string; annotations: AnnotationSpec[]; output: string };
 
+export interface RecoveredJob {
+  label: string;
+  operation: Operation;
+  collision: CollisionPolicy;
+  removed_partial_files: number;
+  leftover_partial_files: string[];
+}
+
 export interface OperationRequest {
   schema_version: number;
   operation: Operation;

@@ -561,10 +561,14 @@ await test("text layer is aligned on a 90°-rotated page", async () => {
 const AXE = (await import("node:fs")).readFileSync(new URL("../node_modules/axe-core/axe.min.js", import.meta.url), "utf8");
 async function axeCheck(s, name) {
   // Measure the settled UI: colours sampled mid-fade (dialogs animate opacity) are not what users see.
-  await s.waitUntil(() => s.exec("return document.getAnimations().every(a => a.playState !== 'running')"), "animations settled");
+  // Two consecutive checks, each after two animation frames, so an animation that has not started
+  // yet (pending) on a just-mounted element is not missed.
+  const settled = () =>
+    s.execAsync("const done = arguments[arguments.length - 1]; requestAnimationFrame(() => requestAnimationFrame(() => done(document.getAnimations().every(a => !a.pending && a.playState !== 'running'))))");
+  await s.waitUntil(async () => (await settled()) && (await settled()), "animations settled");
   await s.exec(`${AXE}; return typeof axe`);
   const res = await s.execAsync(
-    "const done = arguments[arguments.length - 1]; axe.run(document, { resultTypes: ['violations'] }).then(r => done(r.violations.map(v => ({ id: v.id, impact: v.impact, help: v.help, nodes: v.nodes.length, sample: v.nodes[0]?.target?.join(' ') })))).catch(e => done([{ id: 'axe-error', impact: 'critical', help: String(e) }]));",
+    "const done = arguments[arguments.length - 1]; axe.run(document, { resultTypes: ['violations'] }).then(r => done(r.violations.map(v => ({ id: v.id, impact: v.impact, help: v.help, nodes: v.nodes.length, sample: v.nodes[0]?.target?.join(' '), detail: v.nodes[0]?.any?.[0]?.message })))).catch(e => done([{ id: 'axe-error', impact: 'critical', help: String(e) }]));",
   );
   writeFileSync(join(ART, `axe-${name}.json`), JSON.stringify(res, null, 2));
   const blocking = res.filter((v) => v.impact === "serious" || v.impact === "critical");
@@ -735,7 +739,7 @@ await test("unsaved annotations: closing the tab asks (Save focused); Cancel kee
     await s.click('[role="option"][data-command="annotate.discard"]');
     await s.waitUntil(async () => (await annotCount(s)) === 0, "discarded");
     await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.startsWith("Discarded 1 annotation")), "discard notice");
-    await s.exec("[...document.querySelectorAll('.notice button')].find(b => b.textContent === 'Undo').click(); return 1");
+    await s.click('.notice button[data-action="Undo"]');
     await s.waitUntil(async () => (await annotCount(s, "highlight")) === 1, "discard undone");
 
     await s.click('[data-testid="viewer"]');
@@ -833,6 +837,38 @@ await test("startup timing: UI ready and first page logged by the host (baseline
   writeFileSync(join(ART, "perf-startup.json"), JSON.stringify({ platform: process.platform, ...summary }, null, 2));
   console.log(`  startup: ui_ready p50 ${summary.ui_ready.p50} ms, first_page p50 ${summary.first_page.p50} ms (first launch ${summary.first_page.first} ms)`);
   assert(summary.first_page.max < 20000, "first page appears (hang guard, not a budget)");
+});
+
+await test("interrupted task: reported at next start with its partial file removed; Run again saves the output", async () => {
+  // Plant exactly what a crash mid-job leaves behind: a journal entry from a process that no longer
+  // exists and its staged (uncommitted) output file. The app's real startup recovery must handle it.
+  const ident = JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8")).identifier;
+  const base = process.platform === "win32" ? process.env.LOCALAPPDATA : process.env.XDG_DATA_HOME;
+  if (!base) throw new Skip("the app data folder is not isolated for this run (XDG_DATA_HOME unset)");
+  const jobsDir = join(base, ident, "jobs");
+  mkdirSync(jobsDir, { recursive: true });
+  const outDir = mkdtempSync(join(work, "interrupted-"));
+  const out = join(outDir, "cut-short.pdf");
+  const deadPid = 4294967000;
+  const staged = join(outDir, `.pw-staged-${deadPid}-e2e.tmp`);
+  writeFileSync(staged, "partial output");
+  const entry = join(jobsDir, "job-e2e-interrupted.json");
+  writeFileSync(entry, JSON.stringify({
+    job_id: "e2e-interrupted", label: "extract_pages", pid: deadPid, started_unix_ms: Date.now() - 5000,
+    operation: { op: "extract_pages", input: join(FIX, "five-pages.pdf"), pages: "2-3", output: out }, collision: "fail",
+  }));
+  await withApp([], async (s) => {
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("A task was interrupted") && t.includes("Extract pages → cut-short.pdf") && t.includes("unfinished file was removed")), "interrupted-task notice");
+    assert(!existsSync(staged), "partial file removed");
+    assert(!existsSync(entry), "journal entry consumed (reported once)");
+    assert(!existsSync(out), "nothing was committed by the interrupted run");
+    await axeCheck(s, "interrupted-notice");
+    await s.click('.notice button[data-action="Run again"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved cut-short.pdf")), "run again succeeded");
+  });
+  assert(existsSync(out), "output saved by Run again");
+  const n = pdfPages(out);
+  assert(n === null || n === 2, `re-run output has 2 pages (got ${n})`);
 });
 
 /* ------------------------------------------------------------------ */

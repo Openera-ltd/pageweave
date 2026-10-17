@@ -1,6 +1,7 @@
 //! Application state shared by commands and the page protocol.
 
 use pw_core::job::JobManager;
+use pw_core::journal::{Journal, RecoveredJob};
 use pw_core::log::{Level, LogConfig, Logger};
 use pw_core::settings::{LoadOutcome, Settings, SettingsStore};
 use pw_core::{fields, PwError, PwResult};
@@ -41,6 +42,8 @@ pub struct AppState {
     pub engine_dir: Option<PathBuf>,
     pub settings_outcome: LoadOutcome,
     pub log_dir: PathBuf,
+    /// Durable record of running file-writing jobs; None if its folder could not be used (logged).
+    pub journal: Option<Arc<Journal>>,
 }
 
 struct Inner {
@@ -54,6 +57,8 @@ struct Inner {
     unsaved: AtomicU32,
     /// Startup milestones already recorded (each is logged once per run).
     marks: Mutex<HashSet<String>>,
+    /// Jobs found interrupted at startup, handed to the UI once.
+    recovered: Mutex<Vec<RecoveredJob>>,
 }
 
 impl AppState {
@@ -69,6 +74,29 @@ impl AppState {
             min_level: Level::Info,
             build: env!("CARGO_PKG_VERSION").into(),
         });
+        let (journal, recovered) = match Journal::open(&data_dir.join("jobs")) {
+            Ok(j) => {
+                let rec = j.recover();
+                for r in &rec {
+                    logger.log(
+                        Level::Warn,
+                        "job",
+                        "recovered_interrupted",
+                        None,
+                        fields! {
+                            "operation" => r.operation.id(),
+                            "removed_partial_files" => r.removed_partial_files,
+                            "leftover_partial_files" => r.leftover_partial_files.len(),
+                        },
+                    );
+                }
+                (Some(j), rec)
+            }
+            Err(e) => {
+                logger.log(Level::Error, "job", "journal_unavailable", None, fields! {"error_code" => e.code});
+                (None, Vec::new())
+            }
+        };
         // Bounded pool: leave headroom for the UI and rendering threads.
         let workers = std::thread::available_parallelism().map(|n| n.get().saturating_sub(1)).unwrap_or(2).clamp(1, 4);
         AppState {
@@ -80,17 +108,24 @@ impl AppState {
                 store,
                 unsaved: AtomicU32::new(0),
                 marks: Mutex::new(HashSet::new()),
+                recovered: Mutex::new(recovered),
             }),
             jobs: Arc::new(JobManager::new(workers)),
             logger: Arc::new(logger),
             engine_dir,
             settings_outcome: outcome,
             log_dir,
+            journal,
         }
     }
 
     pub fn set_unsaved(&self, count: u32) {
         self.inner.unsaved.store(count, Ordering::SeqCst);
+    }
+
+    /// Interrupted jobs found at startup (returned once).
+    pub fn take_recovered(&self) -> Vec<RecoveredJob> {
+        std::mem::take(&mut *self.inner.recovered.lock().unwrap_or_else(|p| p.into_inner()))
     }
 
     /// Record a startup milestone once. Returns false if it was already recorded.
@@ -256,6 +291,32 @@ mod tests {
         assert!(crate::close_needs_confirmation(&s.clone()), "clones share the count");
         s.set_unsaved(0);
         assert!(!crate::close_needs_confirmation(&s));
+    }
+
+    #[test]
+    fn interrupted_jobs_are_recovered_at_startup_and_reported_once() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let out = dir.path().join("out");
+        std::fs::create_dir_all(&out).expect("mkdir");
+        let dead_pid = u32::MAX - 3;
+        let staged = out.join(format!("{}zz.tmp", pw_core::output::staged_prefix(dead_pid)));
+        std::fs::write(&staged, b"partial").expect("w");
+        let jobs = dir.path().join("data/jobs");
+        std::fs::create_dir_all(&jobs).expect("mkdir");
+        let entry = serde_json::json!({
+            "job_id": "j", "label": "extract_pages", "pid": dead_pid, "started_unix_ms": 1,
+            "operation": {"op": "extract_pages", "input": "in.pdf", "pages": "1", "output": out.join("o.pdf")},
+            "collision": "fail"
+        });
+        std::fs::write(jobs.join("job-j.json"), entry.to_string()).expect("w");
+        let s = AppState::new(&dir.path().join("cfg"), &dir.path().join("data"), None);
+        let rec = s.take_recovered();
+        assert_eq!(rec.len(), 1);
+        assert_eq!(rec[0].removed_partial_files, 1);
+        assert!(!staged.exists());
+        assert!(s.take_recovered().is_empty());
+        let log = std::fs::read_to_string(dir.path().join("data/logs/pageweave.jsonl")).expect("log");
+        assert!(log.contains("recovered_interrupted") && !log.contains("o.pdf"), "logged without paths");
     }
 
     #[test]

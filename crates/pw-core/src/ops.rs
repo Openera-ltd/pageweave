@@ -7,7 +7,7 @@
 use crate::error::{PwError, PwResult};
 use crate::output::CollisionPolicy;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub const SCHEMA_VERSION: u32 = 1;
 pub const MAX_MERGE_INPUTS: usize = 500;
@@ -149,6 +149,28 @@ impl Operation {
             | Operation::RotatePages { input, .. }
             | Operation::Split { input, .. }
             | Operation::Annotate { input, .. } => vec![input.clone()],
+        }
+    }
+
+    /// Folder the operation writes into (where its staged files live), if it writes files.
+    pub fn output_dir(&self) -> Option<PathBuf> {
+        let parent = |p: &PathBuf| {
+            Some(
+                p.parent()
+                    .filter(|d| !d.as_os_str().is_empty())
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| PathBuf::from(".")),
+            )
+        };
+        match self {
+            Operation::Inspect { .. } | Operation::ExtractText { .. } | Operation::Search { .. } => None,
+            Operation::Split { output_dir, .. } => Some(output_dir.clone()),
+            Operation::Render { output, .. }
+            | Operation::Merge { output, .. }
+            | Operation::ExtractPages { output, .. }
+            | Operation::DeletePages { output, .. }
+            | Operation::RotatePages { output, .. }
+            | Operation::Annotate { output, .. } => parent(output),
         }
     }
 

@@ -131,8 +131,26 @@ fn start_operation(
     let label = request.operation.id().to_string();
     let key = serde_json::to_string(&request.operation).unwrap_or_default();
     let logger = state.logger.clone();
+    let journal = state.journal.clone();
     let (id, _new) = state.jobs.submit_unique(&label, &key, move |ctx| {
         let started = std::time::Instant::now();
+        // Kept until the job ends in any way; left behind only if the process dies mid-job.
+        let _journal = match (&journal, request.operation.writes_output()) {
+            (Some(j), true) => match j.begin(&ctx.id().to_string(), request.operation.id(), &request) {
+                Ok(g) => Some(g),
+                Err(e) => {
+                    logger.log(
+                        pw_core::log::Level::Warn,
+                        "job",
+                        "journal_write_failed",
+                        Some(&ctx.id().to_string()),
+                        fields! {"error_code" => e.code},
+                    );
+                    None
+                }
+            },
+            _ => None,
+        };
         let result = pw_pdf::execute(&request, Some(ctx));
         logger.log(
             pw_core::log::Level::Info,
@@ -159,6 +177,12 @@ fn cancel_job(state: State<'_, AppState>, job_id: pw_core::job::JobId) -> bool {
 #[tauri::command]
 fn list_jobs(state: State<'_, AppState>) -> Vec<JobSnapshot> {
     state.jobs.list()
+}
+
+/// Jobs that were interrupted when PageWeave last closed (consumed once).
+#[tauri::command]
+fn recovered_jobs(state: State<'_, AppState>) -> Vec<pw_core::journal::RecoveredJob> {
+    state.take_recovered()
 }
 
 /// PDF paths passed on the command line (file association / "Open with"), consumed once.
@@ -266,6 +290,7 @@ pub fn run() {
             set_unsaved_changes,
             quit_app,
             mark_timing,
+            recovered_jobs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PageWeave");

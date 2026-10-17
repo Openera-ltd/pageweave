@@ -13,6 +13,7 @@ import type {
   OpenedDoc,
   OperationRequest,
   PageText,
+  RecoveredJob,
   SearchHit,
   Settings,
 } from "./types";
@@ -51,6 +52,8 @@ export interface Api {
   quitApp(): Promise<void>;
   /** Report a startup milestone; the host logs time since start once per run. */
   markTiming(name: "ui_ready" | "first_page"): Promise<number | null>;
+  /** Jobs interrupted when the app last closed (returned once). */
+  recoveredJobs(): Promise<RecoveredJob[]>;
 }
 
 export const tauriApi: Api = {
@@ -88,6 +91,7 @@ export const tauriApi: Api = {
   onCloseRequested: (cb) => listen("close-requested", () => cb()),
   quitApp: () => invoke("quit_app"),
   markTiming: (name) => invoke("mark_timing", { name }),
+  recoveredJobs: () => invoke("recovered_jobs"),
   copyText: async (text) => {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(text);
