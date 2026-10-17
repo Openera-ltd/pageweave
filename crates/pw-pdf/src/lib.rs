@@ -3,10 +3,15 @@
 //! PDFium is loaded once per process and shared. All calls are serialized by pdfium-render's
 //! `thread_safe` feature, so the adapter may be used from worker threads; it must never be called
 //! from a UI thread. PDF JavaScript and XFA are disabled in the pinned build.
+//!
+//! Engine access goes through [`engine`], which holds a shared (read) lock. The form module calls a
+//! few PDFium functions directly (pdfium-render does not expose its form-fill handle); it takes the
+//! exclusive (write) lock so those calls never overlap any other PDFium use.
 
 mod document;
 mod edit;
 mod exec;
+mod forms;
 
 pub use document::{
     open_document, page_text_segments, render_page_png, search, BookmarkInfo, DocumentInfo, OpenOptions, PageInfo,
@@ -14,6 +19,7 @@ pub use document::{
 };
 pub use edit::{annotate, delete_pages, extract_pages, merge, rotate_pages, split};
 pub use exec::execute;
+pub use forms::{fill_form, form_fields, FieldKind, FormField, FormInfo, FormWidget};
 
 use pdfium_render::prelude::*;
 use pw_core::{ErrorCategory, PwError, PwResult};
@@ -22,6 +28,43 @@ use std::sync::{Mutex, OnceLock};
 
 static PDFIUM: OnceLock<Pdfium> = OnceLock::new();
 static INIT_LOCK: Mutex<()> = Mutex::new(());
+/// Path of the PDFium library that was bound (used to resolve the form-fill functions).
+static LIB_PATH: OnceLock<PathBuf> = OnceLock::new();
+/// Shared for pdfium-render use, exclusive for direct PDFium calls (see module docs).
+static ENGINE_LOCK: parking_lot::RwLock<()> = parking_lot::RwLock::new(());
+
+/// Engine access for one operation: holds the shared engine lock while in scope.
+pub(crate) struct Engine {
+    _shared: parking_lot::RwLockReadGuard<'static, ()>,
+    pdfium: &'static Pdfium,
+}
+
+impl std::ops::Deref for Engine {
+    type Target = Pdfium;
+    fn deref(&self) -> &Pdfium {
+        self.pdfium
+    }
+}
+
+/// Initialize if needed and take shared engine access. Recursive, so nested calls cannot deadlock
+/// against a waiting exclusive user.
+pub(crate) fn engine() -> PwResult<Engine> {
+    let pdfium = init(None)?;
+    Ok(Engine { _shared: ENGINE_LOCK.read_recursive(), pdfium })
+}
+
+/// Exclusive engine access for direct PDFium calls.
+pub(crate) fn engine_exclusive() -> PwResult<(parking_lot::RwLockWriteGuard<'static, ()>, &'static Path)> {
+    init(None)?;
+    let path = LIB_PATH.get().ok_or_else(|| {
+        PwError::new(
+            ErrorCategory::EngineFailure,
+            "pdfium.forms_unavailable",
+            "Form filling is not available in this session.",
+        )
+    })?;
+    Ok((ENGINE_LOCK.write(), path.as_path()))
+}
 
 /// Environment variable that overrides where the PDFium library is looked up (debug builds only).
 pub const PDFIUM_DIR_ENV: &str = "PAGEWEAVE_PDFIUM_DIR";
@@ -71,7 +114,10 @@ pub fn init(explicit_dir: Option<&Path>) -> PwResult<&'static Pdfium> {
             continue;
         }
         let pdfium = match Pdfium::bind_to_library(&candidate) {
-            Ok(bindings) => Pdfium::new(bindings),
+            Ok(bindings) => {
+                let _ = LIB_PATH.set(candidate.clone());
+                Pdfium::new(bindings)
+            }
             Err(PdfiumError::PdfiumLibraryBindingsAlreadyInitialized) => Pdfium::default(),
             Err(_) => continue,
         };

@@ -41,6 +41,8 @@ enum Conflict {
 enum Command {
     /// Show page count, sizes, metadata, bookmarks and security status.
     Inspect { file: PathBuf },
+    /// List form fields (names, kinds, values, options) as JSON.
+    Fields { file: PathBuf },
     /// Print the text of all or selected pages.
     Text {
         file: PathBuf,
@@ -121,7 +123,7 @@ fn capabilities() -> serde_json::Value {
     json!({
         "schema_version": pw_core::ops::SCHEMA_VERSION,
         "engine": pw_pdf::engine_version(),
-        "operations": ["inspect", "extract_text", "search", "render", "merge", "extract_pages", "delete_pages", "rotate_pages", "split", "annotate"],
+        "operations": ["inspect", "extract_text", "search", "render", "merge", "extract_pages", "delete_pages", "rotate_pages", "split", "annotate", "form_fields", "fill_form"],
         "collision_policies": ["fail", "rename", "replace"],
         "network": "none",
     })
@@ -143,6 +145,7 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
             return Ok(Some(req));
         }
         Command::Inspect { file } => Operation::Inspect { input: file.clone() },
+        Command::Fields { file } => Operation::FormFields { input: file.clone() },
         Command::Text { file, pages } => Operation::ExtractText { input: file.clone(), pages: pages.clone() },
         Command::Search { file, query, match_case, whole_word } => Operation::Search {
             input: file.clone(),
@@ -199,6 +202,49 @@ fn print_human(r: &OperationResult) {
             println!("Encrypted:  {}", if d["encrypted"].as_bool() == Some(true) { "yes" } else { "no" });
             println!("Bookmarks:  {}", d["bookmarks"].as_array().map(|b| b.len()).unwrap_or(0));
             println!("Size:       {} bytes", d["file_bytes"]);
+        }
+        "form_fields" => {
+            let fields = r.data["fields"].as_array().cloned().unwrap_or_default();
+            if fields.is_empty() {
+                println!("No form fields.");
+            }
+            for f in fields {
+                let mut line =
+                    format!("{}  ({})", f["name"].as_str().unwrap_or("?"), f["kind"].as_str().unwrap_or("?"));
+                match f["kind"].as_str() {
+                    Some("checkbox") => {
+                        let on = f["widgets"].as_array().is_some_and(|w| w.iter().any(|w| w["checked"] == true));
+                        line += if on { " = checked" } else { " = unchecked" };
+                    }
+                    Some("radio") => {
+                        let opts: Vec<String> = f["widgets"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .map(|w| {
+                                let v = w["export_value"].as_str().unwrap_or("?");
+                                if w["checked"] == true {
+                                    format!("[{v}]")
+                                } else {
+                                    v.to_string()
+                                }
+                            })
+                            .collect();
+                        line += &format!(" options: {}", opts.join(" "));
+                    }
+                    _ => {
+                        line += &format!(" = {:?}", f["value"].as_str().unwrap_or(""));
+                        if let Some(o) = f["options"].as_array().filter(|o| !o.is_empty()) {
+                            let o: Vec<&str> = o.iter().filter_map(|x| x.as_str()).collect();
+                            line += &format!(" options: {}", o.join(" | "));
+                        }
+                    }
+                }
+                if f["read_only"] == true {
+                    line += " (read-only)";
+                }
+                println!("{line}");
+            }
         }
         "extract_text" => {
             for p in r.data["pages"].as_array().into_iter().flatten() {

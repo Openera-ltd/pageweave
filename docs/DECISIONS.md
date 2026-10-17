@@ -58,3 +58,11 @@ These were made by Claude Code under the owner's standing instruction to "start 
 - **Status:** Accepted
 - **Date:** 2026-10-16
 - **Decision:** Kaggle/GitHub/Cloudflare credentials are injected at runtime only (environment secrets or per-command), never written to the repository, configs, logs or the journal (PRD 16). `.gitignore` excludes credential/env files; CI runs a secret scan.
+
+### D-006 — One audited FFI module for PDFium form filling
+- **Status:** Accepted
+- **Date:** 2026-10-17
+- **Context:** Filling AcroForms correctly needs PDFium's form filler (focus/replace selection, clicks, list selection) so widget appearance streams are regenerated; writing `/V` alone leaves stale appearances that most viewers keep showing. pdfium-render 0.9.4 (latest) keeps its raw bindings and form handle crate-private, and also hard-codes `/Yes` as every checkbox's on-state.
+- **Options considered:** vendor-patch pdfium-render (24 MB copy to change one visibility; rejected); write `/V` and our own appearance streams (re-implements text layout/fonts — rejected, CLAUDE.md §4.5); `NeedAppearances` (ignored by many viewers, deprecated in PDF 2.0 — rejected); resolve the needed functions from the already-loaded PDFium library (accepted).
+- **Decision:** `unsafe_code` is `deny` workspace-wide (was `forbid`); only `crates/pw-pdf/src/forms.rs` opts in, enforced by the test `unsafe_is_confined_to_the_forms_module`. Every direct call runs under an exclusive engine lock that all other engine access shares (`pw_pdf::engine`), so direct calls never overlap pdfium-render's. Signatures follow the pinned chromium/7881 headers; documents are loaded from memory and torn down in PDFium's required order by a drop guard.
+- **Consequences:** Upgrading PDFium requires re-checking these signatures. Form work briefly blocks other engine use (milliseconds for typical forms).

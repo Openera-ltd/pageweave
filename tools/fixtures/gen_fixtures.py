@@ -104,6 +104,73 @@ def build_document(pages: list[dict], title: str | None = None, outline: bool = 
     return w.render(catalog, info)
 
 
+def build_form_document() -> bytes:
+    """One page with an AcroForm: text, multiline text, checkbox (on-state named /On, not /Yes),
+    a two-button radio group and a combo box, each with appearance streams."""
+    w = PdfWriter()
+    catalog, pages_obj, page = w.reserve(), w.reserve(), w.reserve()
+    font = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    labels = text_page_content(["Form fixture PWFORM", "", "Full name", "", "Subscribe", "",
+                                "Plan: basic / pro", "", "Country", "", "Comments"], size=12, x=40, y=740, leading=20)
+    content = w.stream(labels)
+
+    def xobj(width: float, height: float, ops: str) -> int:
+        data = ops.encode("latin-1")
+        return w.add(b"<< /Type /XObject /Subtype /Form /BBox [0 0 %g %g] /Resources << /Font << /Helv %d 0 R >> >> /Length %d >>\nstream\n"
+                     % (width, height, font, len(data)) + data + b"\nendstream")
+
+    box = lambda width, height: f"0.4 0.4 0.4 RG 1 w 0.5 0.5 {width - 1} {height - 1} re S"
+    cross = "0 0 0 RG 1.5 w 3 3 m 11 11 l S 3 11 m 11 3 l S"
+    dot = "0 0 0 rg 4 4 6 6 re f"
+    annots = []
+    fields = []
+
+    # Text field
+    name_ap = xobj(250, 20, box(250, 20))
+    name = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Tx /T (full_name) /TU (Full name) /Rect [150 666 400 686] "
+                 f"/F 4 /P {page} 0 R /DA (/Helv 12 Tf 0 g) /V () /AP << /N {name_ap} 0 R >> /MK << /BC [0.4 0.4 0.4] >> >>")
+    annots.append(name); fields.append(name)
+
+    # Checkbox, on-state "On"
+    cb_on, cb_off = xobj(14, 14, box(14, 14) + " " + cross), xobj(14, 14, box(14, 14))
+    cb = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Btn /T (subscribe) /TU (Subscribe) /Rect [150 628 164 642] "
+               f"/F 4 /P {page} 0 R /V /Off /AS /Off /AP << /N << /On {cb_on} 0 R /Off {cb_off} 0 R >> >> /MK << /CA (8) >> >>")
+    annots.append(cb); fields.append(cb)
+
+    # Radio group "plan": basic / pro
+    plan = w.reserve()
+    kids = []
+    for i, opt in enumerate(["basic", "pro"]):
+        on, off = xobj(14, 14, box(14, 14) + " " + dot), xobj(14, 14, box(14, 14))
+        x = 150 + i * 60
+        kid = w.add(f"<< /Type /Annot /Subtype /Widget /Parent {plan} 0 R /Rect [{x} 588 {x + 14} 602] /F 4 /P {page} 0 R "
+                    f"/AS /Off /AP << /N << /{opt} {on} 0 R /Off {off} 0 R >> >> /MK << /CA (l) >> >>")
+        kids.append(kid); annots.append(kid)
+    w.set(plan, f"<< /FT /Btn /Ff 49152 /T (plan) /TU (Plan) /V /Off /Kids [{' '.join(f'{k} 0 R' for k in kids)}] >>")
+    fields.append(plan)
+
+    # Combo box
+    combo_ap = xobj(150, 20, box(150, 20) + " /Tx BMC BT /Helv 12 Tf 0 g 4 5 Td (Canada) Tj ET EMC")
+    combo = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Ch /Ff 131072 /T (country) /TU (Country) /Rect [150 546 300 566] "
+                  f"/F 4 /P {page} 0 R /Opt [(Canada) (Germany) (Japan)] /V (Canada) /DA (/Helv 12 Tf 0 g) "
+                  f"/AP << /N {combo_ap} 0 R >> >>")
+    annots.append(combo); fields.append(combo)
+
+    # Multiline text
+    notes_ap = xobj(300, 60, box(300, 60))
+    notes = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Tx /Ff 4096 /T (comments) /TU (Comments) /Rect [150 466 450 526] "
+                  f"/F 4 /P {page} 0 R /DA (/Helv 10 Tf 0 g) /V () /AP << /N {notes_ap} 0 R >> >>")
+    annots.append(notes); fields.append(notes)
+
+    w.set(page, f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 {font} 0 R >> >> "
+                f"/Contents {content} 0 R /Annots [{' '.join(f'{a} 0 R' for a in annots)}] >>")
+    w.set(pages_obj, f"<< /Type /Pages /Kids [{page} 0 R] /Count 1 >>")
+    acro = f"<< /Fields [{' '.join(f'{f} 0 R' for f in fields)}] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv {font} 0 R >> >> >>"
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R /AcroForm {acro} >>")
+    info = w.add("<< /Title (Form fixture) /Author (PageWeave fixtures) /Producer (gen_fixtures.py) >>")
+    return w.render(catalog, info)
+
+
 def numbered_pages(n: int, size=LETTER) -> list[dict]:
     return [{"lines": [f"PageWeave fixture page {i}", f"Marker token PWMARK{i:03d}",
                        "The quick brown fox jumps over the lazy dog."], "size": size}
@@ -133,6 +200,8 @@ def main() -> int:
               {"lines": ["No match here"]},
               {"lines": ["Gamma and alpha again"]}]
     files["search-terms.pdf"] = build_document(search, title="Search terms")
+
+    files["form-fields.pdf"] = build_form_document()
 
     good = files["five-pages.pdf"]
     files["corrupt-truncated.pdf"] = good[: len(good) // 2]

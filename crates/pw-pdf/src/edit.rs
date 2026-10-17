@@ -2,7 +2,7 @@
 //! document, saves it to memory, re-opens the staged output to verify it, and commits atomically.
 
 use crate::document::{load, OpenOptions};
-use crate::{init, map_pdfium_error};
+use crate::{engine, map_pdfium_error};
 use pdfium_render::prelude::*;
 use pw_core::output::{write_atomic_bytes, CollisionPolicy, CommittedOutput};
 use pw_core::range::parse_page_ranges;
@@ -110,7 +110,7 @@ pub type EditOutcome = (CommittedOutput, u32, Vec<String>);
 /// Result of a split: each committed part with its page count, plus warnings.
 pub type SplitOutcome = (Vec<(CommittedOutput, u32)>, Vec<String>);
 
-fn protection_warnings(src_encrypted: bool, out_encrypted: bool) -> Vec<String> {
+pub(crate) fn protection_warnings(src_encrypted: bool, out_encrypted: bool) -> Vec<String> {
     if src_encrypted && !out_encrypted {
         vec![PROTECTION_REMOVED.to_string()]
     } else {
@@ -125,15 +125,15 @@ pub fn extract_pages(
     output: &Path,
     policy: CollisionPolicy,
 ) -> PwResult<EditOutcome> {
-    let pdfium = init(None)?;
-    let src = load(pdfium, input, opts)?;
+    let pdfium = engine()?;
+    let src = load(&pdfium, input, opts)?;
     let count = src.pages().len().max(0) as u32;
     let indices = parse_page_ranges(pages, count)?;
-    let out = copy_pages(pdfium, &src, &indices)?;
+    let out = copy_pages(&pdfium, &src, &indices)?;
     let bytes = save_bytes(&out)?;
     let n = indices.len() as u32;
     let expect = Expect { page_count: n, password: opts.password, rotations: None };
-    let (c, enc) = commit(pdfium, &bytes, output, policy, &[input.to_path_buf()], &expect)?;
+    let (c, enc) = commit(&pdfium, &bytes, output, policy, &[input.to_path_buf()], &expect)?;
     Ok((c, n, protection_warnings(source_encrypted(&src), enc)))
 }
 
@@ -144,8 +144,8 @@ pub fn delete_pages(
     output: &Path,
     policy: CollisionPolicy,
 ) -> PwResult<EditOutcome> {
-    let pdfium = init(None)?;
-    let src = load(pdfium, input, opts)?;
+    let pdfium = engine()?;
+    let src = load(&pdfium, input, opts)?;
     let count = src.pages().len().max(0) as u32;
     let mut remove = parse_page_ranges(pages, count)?;
     remove.sort_unstable();
@@ -153,11 +153,11 @@ pub fn delete_pages(
         return Err(PwError::invalid("delete.all_pages", "A PDF must keep at least one page."));
     }
     let keep: Vec<u32> = (0..count).filter(|i| remove.binary_search(i).is_err()).collect();
-    let out = copy_pages(pdfium, &src, &keep)?;
+    let out = copy_pages(&pdfium, &src, &keep)?;
     let bytes = save_bytes(&out)?;
     let n = keep.len() as u32;
     let expect = Expect { page_count: n, password: opts.password, rotations: None };
-    let (c, enc) = commit(pdfium, &bytes, output, policy, &[input.to_path_buf()], &expect)?;
+    let (c, enc) = commit(&pdfium, &bytes, output, policy, &[input.to_path_buf()], &expect)?;
     Ok((c, n, protection_warnings(source_encrypted(&src), enc)))
 }
 
@@ -184,8 +184,8 @@ pub fn rotate_pages(
         return Err(PwError::invalid("rotate.degrees", "Rotate by 90, 180 or 270 degrees."));
     }
     let delta = degrees.rem_euclid(360) as u32;
-    let pdfium = init(None)?;
-    let doc = load(pdfium, input, opts)?;
+    let pdfium = engine()?;
+    let doc = load(&pdfium, input, opts)?;
     let count = doc.pages().len().max(0) as u32;
     let selected: Vec<u32> = match pages {
         Some(spec) => parse_page_ranges(spec, count)?,
@@ -210,7 +210,7 @@ pub fn rotate_pages(
     }
     let bytes = save_bytes(&doc)?;
     let expect = Expect { page_count: count, password: opts.password, rotations: Some(rotations) };
-    let (c, enc) = commit(pdfium, &bytes, output, policy, &[input.to_path_buf()], &expect)?;
+    let (c, enc) = commit(&pdfium, &bytes, output, policy, &[input.to_path_buf()], &expect)?;
     Ok((c, count, protection_warnings(source_encrypted(&doc), enc)))
 }
 
@@ -227,7 +227,7 @@ pub fn merge(
     if inputs.len() < 2 {
         return Err(PwError::invalid("merge.too_few", "Choose at least two files to combine."));
     }
-    let pdfium = init(None)?;
+    let pdfium = engine()?;
     let mut out = pdfium.create_new_pdf().map_err(|e| map_pdfium_error(&e, "create"))?;
     let mut warnings = Vec::new();
     let mut had_bookmarks = false;
@@ -236,7 +236,7 @@ pub fn merge(
         if cancelled() {
             return Err(PwError::cancelled());
         }
-        let src = load(pdfium, input, opts)
+        let src = load(&pdfium, input, opts)
             .map_err(|e| PwError { message: format!("File {} of {}: {}", n + 1, inputs.len(), e.message), ..e })?;
         had_bookmarks |= src.bookmarks().root().is_some();
         any_encrypted |= source_encrypted(&src);
@@ -249,7 +249,7 @@ pub fn merge(
     let total = out.pages().len().max(0) as u32;
     let bytes = save_bytes(&out)?;
     let expect = Expect { page_count: total, password: opts.password, rotations: None };
-    let (c, enc) = commit(pdfium, &bytes, output, policy, inputs, &expect)?;
+    let (c, enc) = commit(&pdfium, &bytes, output, policy, inputs, &expect)?;
     warnings.extend(protection_warnings(any_encrypted, enc));
     Ok((c, total, warnings))
 }
@@ -265,8 +265,8 @@ pub fn split(
     cancelled: &dyn Fn() -> bool,
 ) -> PwResult<SplitOutcome> {
     use pw_core::ops::SplitMode;
-    let pdfium = init(None)?;
-    let src = load(pdfium, input, opts)?;
+    let pdfium = engine()?;
+    let src = load(&pdfium, input, opts)?;
     let count = src.pages().len().max(0) as u32;
     let groups: Vec<Vec<u32>> = match split {
         SplitMode::EveryN { n } => {
@@ -299,7 +299,7 @@ pub fn split(
         if cancelled() {
             return Err(PwError::cancelled());
         }
-        let doc = copy_pages(pdfium, &src, g)?;
+        let doc = copy_pages(&pdfium, &src, g)?;
         built.push((save_bytes(&doc)?, g.len() as u32));
     }
     let src_encrypted = source_encrypted(&src);
@@ -311,7 +311,7 @@ pub fn split(
             Err(PwError::cancelled())
         } else {
             let expect = Expect { page_count: *n, password: opts.password, rotations: None };
-            commit(pdfium, bytes, &name, policy, &[input.to_path_buf()], &expect)
+            commit(&pdfium, bytes, &name, policy, &[input.to_path_buf()], &expect)
         };
         match result {
             Ok((c, enc)) => {
@@ -353,8 +353,8 @@ pub fn annotate(
     policy: CollisionPolicy,
 ) -> PwResult<EditOutcome> {
     use pw_core::ops::AnnotationKind;
-    let pdfium = init(None)?;
-    let doc = load(pdfium, input, opts)?;
+    let pdfium = engine()?;
+    let doc = load(&pdfium, input, opts)?;
     let count = doc.pages().len().max(0) as u32;
     let mut expected: std::collections::BTreeMap<u32, usize> = std::collections::BTreeMap::new();
     for spec in specs {
@@ -421,7 +421,7 @@ pub fn annotate(
     let mut encrypted = false;
     let c = write_atomic_bytes(output, policy, &protected, &bytes, |staged| {
         encrypted =
-            verify_output(pdfium, staged, &Expect { page_count: count, password: opts.password, rotations: None })?;
+            verify_output(&pdfium, staged, &Expect { page_count: count, password: opts.password, rotations: None })?;
         let reopened =
             pdfium.load_pdf_from_file(staged, if encrypted { opts.password } else { None }).map_err(|_| {
                 PwError::new(ErrorCategory::ValidationFailed, "output.verify", "The output could not be reopened.")

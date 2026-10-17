@@ -26,6 +26,25 @@ pub enum SplitMode {
 
 pub const MAX_ANNOTATIONS_PER_REQUEST: usize = 10_000;
 pub const MAX_NOTE_CHARS: usize = 10_000;
+pub const MAX_FORM_VALUES: usize = 10_000;
+pub const MAX_FORM_TEXT_CHARS: usize = 100_000;
+
+/// A value to put into a form field. Text fields, combo and list boxes take text (a choice must be
+/// one of the field's options unless the combo box is editable); a radio group takes the export
+/// value of the button to select; a checkbox takes true/false.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum FormValue {
+    Checked(bool),
+    Text(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FieldValue {
+    /// Fully qualified field name (e.g. `address.city`).
+    pub name: String,
+    pub value: FormValue,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -62,6 +81,10 @@ pub struct AnnotationSpec {
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Operation {
     Inspect {
+        input: PathBuf,
+    },
+    /// List the document's AcroForm fields (read-only).
+    FormFields {
         input: PathBuf,
     },
     ExtractText {
@@ -113,12 +136,19 @@ pub enum Operation {
         annotations: Vec<AnnotationSpec>,
         output: PathBuf,
     },
+    /// Fill AcroForm fields and write the result to a new file.
+    FillForm {
+        input: PathBuf,
+        values: Vec<FieldValue>,
+        output: PathBuf,
+    },
 }
 
 impl Operation {
     pub fn id(&self) -> &'static str {
         match self {
             Operation::Inspect { .. } => "inspect",
+            Operation::FormFields { .. } => "form_fields",
             Operation::ExtractText { .. } => "extract_text",
             Operation::Search { .. } => "search",
             Operation::Render { .. } => "render",
@@ -128,12 +158,19 @@ impl Operation {
             Operation::RotatePages { .. } => "rotate_pages",
             Operation::Split { .. } => "split",
             Operation::Annotate { .. } => "annotate",
+            Operation::FillForm { .. } => "fill_form",
         }
     }
 
     /// Whether the operation writes files.
     pub fn writes_output(&self) -> bool {
-        !matches!(self, Operation::Inspect { .. } | Operation::ExtractText { .. } | Operation::Search { .. })
+        !matches!(
+            self,
+            Operation::Inspect { .. }
+                | Operation::FormFields { .. }
+                | Operation::ExtractText { .. }
+                | Operation::Search { .. }
+        )
     }
 
     /// All input paths, used to protect sources from being overwritten.
@@ -141,6 +178,7 @@ impl Operation {
         match self {
             Operation::Merge { inputs, .. } => inputs.clone(),
             Operation::Inspect { input }
+            | Operation::FormFields { input }
             | Operation::ExtractText { input, .. }
             | Operation::Search { input, .. }
             | Operation::Render { input, .. }
@@ -148,7 +186,8 @@ impl Operation {
             | Operation::DeletePages { input, .. }
             | Operation::RotatePages { input, .. }
             | Operation::Split { input, .. }
-            | Operation::Annotate { input, .. } => vec![input.clone()],
+            | Operation::Annotate { input, .. }
+            | Operation::FillForm { input, .. } => vec![input.clone()],
         }
     }
 
@@ -163,14 +202,18 @@ impl Operation {
             )
         };
         match self {
-            Operation::Inspect { .. } | Operation::ExtractText { .. } | Operation::Search { .. } => None,
+            Operation::Inspect { .. }
+            | Operation::FormFields { .. }
+            | Operation::ExtractText { .. }
+            | Operation::Search { .. } => None,
             Operation::Split { output_dir, .. } => Some(output_dir.clone()),
             Operation::Render { output, .. }
             | Operation::Merge { output, .. }
             | Operation::ExtractPages { output, .. }
             | Operation::DeletePages { output, .. }
             | Operation::RotatePages { output, .. }
-            | Operation::Annotate { output, .. } => parent(output),
+            | Operation::Annotate { output, .. }
+            | Operation::FillForm { output, .. } => parent(output),
         }
     }
 
@@ -220,10 +263,35 @@ impl Operation {
                 return Err(PwError::invalid("split.no_ranges", "Enter at least one page range."));
             }
             Operation::Annotate { annotations, .. } => validate_annotations(annotations)?,
+            Operation::FillForm { values, .. } => validate_form_values(values)?,
             _ => {}
         }
         Ok(())
     }
+}
+
+fn validate_form_values(list: &[FieldValue]) -> PwResult<()> {
+    if list.is_empty() {
+        return Err(PwError::invalid("form.empty", "There are no field values to save."));
+    }
+    if list.len() > MAX_FORM_VALUES {
+        return Err(PwError::invalid("form.too_many", "Too many field values in one request."));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for v in list {
+        if v.name.trim().is_empty() {
+            return Err(PwError::invalid("form.no_name", "A field value has no field name."));
+        }
+        if !seen.insert(v.name.as_str()) {
+            return Err(PwError::invalid("form.duplicate", format!("The field “{}” is listed twice.", v.name)));
+        }
+        if let FormValue::Text(t) = &v.value {
+            if t.chars().count() > MAX_FORM_TEXT_CHARS {
+                return Err(PwError::invalid("form.too_long", format!("The value for “{}” is too long.", v.name)));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_annotations(list: &[AnnotationSpec]) -> PwResult<()> {
@@ -339,6 +407,33 @@ mod tests {
         assert_eq!(req.password.as_deref(), Some("hunter2"));
         let out = serde_json::to_string(&req).expect("ser");
         assert!(!out.contains("hunter2") && !out.contains("password"), "{out}");
+    }
+
+    #[test]
+    fn form_values_parse_and_validate() {
+        let req: OperationRequest = serde_json::from_value(serde_json::json!({
+            "schema_version": 1,
+            "operation": {"op": "fill_form", "input": "f.pdf", "output": "o.pdf", "values": [
+                {"name": "full_name", "value": "Ada"},
+                {"name": "subscribe", "value": true}
+            ]}
+        }))
+        .expect("parse");
+        let Operation::FillForm { values, .. } = &req.operation else { panic!("variant") };
+        assert_eq!(values[0].value, FormValue::Text("Ada".into()));
+        assert_eq!(values[1].value, FormValue::Checked(true));
+        assert!(req.validate().is_ok());
+        let v = |values: Vec<FieldValue>| {
+            OperationRequest::new(Operation::FillForm { input: "f".into(), values, output: "o".into() })
+                .validate()
+                .err()
+                .map(|e| e.code)
+        };
+        let fv = |n: &str, t: &str| FieldValue { name: n.into(), value: FormValue::Text(t.into()) };
+        assert_eq!(v(vec![]).as_deref(), Some("form.empty"));
+        assert_eq!(v(vec![fv(" ", "x")]).as_deref(), Some("form.no_name"));
+        assert_eq!(v(vec![fv("a", "x"), fv("a", "y")]).as_deref(), Some("form.duplicate"));
+        assert_eq!(v(vec![fv("a", &"x".repeat(MAX_FORM_TEXT_CHARS + 1))]).as_deref(), Some("form.too_long"));
     }
 
     #[test]

@@ -156,6 +156,38 @@ fn capabilities_lists_operations() {
 }
 
 #[test]
+fn fields_lists_and_run_fills_a_form() {
+    let out = bin().arg("fields").arg(fixture("form-fields.pdf")).output().expect("run");
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("full_name  (text)"), "{text}");
+    assert!(text.contains("subscribe  (checkbox) = unchecked"), "{text}");
+    assert!(text.contains("plan  (radio) options: basic pro"), "{text}");
+    assert!(text.contains("options: Canada | Germany | Japan"), "{text}");
+
+    let dir = tempfile::tempdir().expect("tmp");
+    let filled = dir.path().join("filled.pdf");
+    let req = serde_json::json!({
+        "schema_version": 1,
+        "operation": {"op": "fill_form", "input": fixture("form-fields.pdf"), "output": filled, "values": [
+            {"name": "full_name", "value": "Grace Hopper"},
+            {"name": "plan", "value": "basic"}
+        ]}
+    });
+    let req_path = dir.path().join("req.json");
+    std::fs::write(&req_path, req.to_string()).expect("write");
+    let out = bin().args(["--json", "run", req_path.to_str().expect("utf8")]).output().expect("run");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
+    let out = bin().args(["fields", filled.to_str().expect("utf8")]).output().expect("run");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("full_name  (text) = \"Grace Hopper\""), "{text}");
+    assert!(text.contains("options: [basic] pro"), "{text}");
+
+    let out = bin().args(["--json", "fields"]).arg(fixture("five-pages.pdf")).output().expect("run");
+    assert_eq!(json(&out)["result"]["data"]["fields"].as_array().map(Vec::len), Some(0));
+}
+
+#[test]
 fn unicode_and_space_paths() {
     let dir = tempfile::tempdir().expect("tmp");
     let src = dir.path().join("Résumé – 文件 copy.pdf");

@@ -37,6 +37,13 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(info.warnings.iter().cloned());
             (vec![], serde_json::to_value(&info).unwrap_or_default())
         }
+        Operation::FormFields { input } => {
+            let info = crate::forms::form_fields(input, opts.password)?;
+            if info.has_xfa {
+                warnings.push("This form uses XFA; its fields cannot be filled here.".into());
+            }
+            (vec![], serde_json::to_value(&info).unwrap_or_default())
+        }
         Operation::ExtractText { input, pages } => {
             let n = page_count(input, &opts)?;
             let idx = match pages {
@@ -94,6 +101,11 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             let (c, n, w) = edit::annotate(input, &opts, annotations, output, policy)?;
             warnings.extend(w);
             (vec![out(&c, Some(n))], json!({ "page_count": n, "annotations": annotations.len() }))
+        }
+        Operation::FillForm { input, values, output } => {
+            let (c, w) = crate::forms::fill_form(input, opts.password, values, output, policy)?;
+            warnings.extend(w);
+            (vec![out(&c, None)], json!({ "fields": values.len() }))
         }
         Operation::Split { input, split, output_dir } => {
             let (parts, w) = edit::split(input, &opts, split, output_dir, policy, &cancelled)?;

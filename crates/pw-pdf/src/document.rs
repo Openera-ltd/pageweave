@@ -1,6 +1,6 @@
 //! Opening, inspecting, searching and rendering documents.
 
-use crate::{init, map_pdfium_error};
+use crate::{engine, map_pdfium_error};
 use pdfium_render::prelude::*;
 use pw_core::{ErrorCategory, PwError, PwResult};
 use serde::{Deserialize, Serialize};
@@ -140,8 +140,8 @@ fn version_string(v: PdfDocumentVersion) -> String {
 
 /// Open a document and report its structure. Never executes document actions or scripts.
 pub fn open_document(path: &Path, opts: &OpenOptions) -> PwResult<DocumentInfo> {
-    let pdfium = init(None)?;
-    let doc = load(pdfium, path, opts)?;
+    let pdfium = engine()?;
+    let doc = load(&pdfium, path, opts)?;
     let file_bytes = fs::metadata(path).map_err(|e| PwError::from_io(&e, "file"))?.len();
     let mut warnings = Vec::new();
 
@@ -239,8 +239,8 @@ fn collect_bookmarks(first: &PdfBookmark, depth: u32, out: &mut Vec<BookmarkInfo
 
 /// Plain text per page (0-based page indices). Text order follows the engine's character order.
 pub(crate) fn page_texts(path: &Path, opts: &OpenOptions, pages: &[u32]) -> PwResult<Vec<(u32, String)>> {
-    let pdfium = init(None)?;
-    let doc = load(pdfium, path, opts)?;
+    let pdfium = engine()?;
+    let doc = load(&pdfium, path, opts)?;
     let mut out = Vec::with_capacity(pages.len());
     for &i in pages {
         let page = doc.pages().get(i as PdfPageIndex).map_err(|e| map_pdfium_error(&e, "page"))?;
@@ -251,8 +251,8 @@ pub(crate) fn page_texts(path: &Path, opts: &OpenOptions, pages: &[u32]) -> PwRe
 }
 
 pub(crate) fn page_count(path: &Path, opts: &OpenOptions) -> PwResult<u32> {
-    let pdfium = init(None)?;
-    let doc = load(pdfium, path, opts)?;
+    let pdfium = engine()?;
+    let doc = load(&pdfium, path, opts)?;
     Ok(doc.pages().len().max(0) as u32)
 }
 
@@ -278,8 +278,8 @@ pub struct PageText {
 
 /// Text runs of one page with geometry, in the engine's character order, for the selectable text layer.
 pub fn page_text_segments(path: &Path, opts: &OpenOptions, page_index: u32) -> PwResult<PageText> {
-    let pdfium = init(None)?;
-    let doc = load(pdfium, path, opts)?;
+    let pdfium = engine()?;
+    let doc = load(&pdfium, path, opts)?;
     let count = doc.pages().len().max(0) as u32;
     if page_index >= count {
         return Err(PwError::invalid(
@@ -343,8 +343,8 @@ pub fn search(
     if query.is_empty() {
         return Err(PwError::invalid("search.empty", "Enter text to search for."));
     }
-    let pdfium = init(None)?;
-    let doc = load(pdfium, path, opts)?;
+    let pdfium = engine()?;
+    let doc = load(&pdfium, path, opts)?;
     let options = PdfSearchOptions::new().match_case(match_case).match_whole_word(whole_word);
     let mut hits = Vec::new();
     for (i, page) in doc.pages().iter().enumerate() {
@@ -381,8 +381,8 @@ pub fn render_page_png(path: &Path, opts: &OpenOptions, page_index: u32, scale: 
     if !scale.is_finite() || scale <= 0.0 {
         return Err(PwError::invalid("render.scale", "Zoom must be greater than zero."));
     }
-    let pdfium = init(None)?;
-    let doc = load(pdfium, path, opts)?;
+    let pdfium = engine()?;
+    let doc = load(&pdfium, path, opts)?;
     let count = doc.pages().len().max(0) as u32;
     if page_index >= count {
         return Err(PwError::invalid(
