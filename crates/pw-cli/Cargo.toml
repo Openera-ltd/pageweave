@@ -19,6 +19,7 @@ serde_json.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+pw-ocr.workspace = true
 lopdf.workspace = true
 
 [lints]

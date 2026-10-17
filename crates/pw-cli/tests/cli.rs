@@ -233,6 +233,34 @@ fn redact_previews_then_writes_a_verified_copy() {
 }
 
 #[test]
+fn ocr_makes_a_scanned_file_searchable() {
+    if pw_ocr::default_resource_dir().is_none() {
+        assert!(std::env::var_os("CI").is_none(), "OCR resources missing in CI");
+        eprintln!("OCR resources not installed; skipping");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("searchable.pdf");
+    let r = bin()
+        .args(["--json", "ocr", "--pages", "1", "-o"])
+        .arg(&out)
+        .arg(fixture("scanned.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stdout));
+    assert_eq!(json(&r)["result"]["data"]["pages_processed"], 1);
+    let found = bin().args(["--json", "search"]).arg(&out).arg("Description").output().expect("run");
+    assert_eq!(json(&found)["result"]["data"]["count"], 1);
+    let bad = bin()
+        .args(["ocr", "--dpi", "20", "-o"])
+        .arg(dir.path().join("x.pdf"))
+        .arg(fixture("scanned.pdf"))
+        .output()
+        .expect("run");
+    assert!(!bad.status.success());
+}
+
+#[test]
 fn unicode_and_space_paths() {
     let dir = tempfile::tempdir().expect("tmp");
     let src = dir.path().join("Résumé – 文件 copy.pdf");

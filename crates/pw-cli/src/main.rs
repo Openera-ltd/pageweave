@@ -124,6 +124,20 @@ enum Command {
         #[arg(long)]
         out_dir: PathBuf,
     },
+    /// Recognise text on scanned pages and add it as an invisible, searchable layer in a new file.
+    Ocr {
+        file: PathBuf,
+        #[arg(long)]
+        pages: Option<String>,
+        /// Also process pages that already contain text (by default they are left unchanged).
+        #[arg(long)]
+        all_pages: bool,
+        /// Rendering resolution for recognition (100–400).
+        #[arg(long, default_value_t = pw_core::ops::DEFAULT_OCR_DPI)]
+        dpi: u32,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
     /// Permanently remove everything under the given areas and paint them black, in a new file.
     /// The result is verified before it is written. Use --preview to list what would be removed.
     Redact {
@@ -148,7 +162,7 @@ fn capabilities() -> serde_json::Value {
     json!({
         "schema_version": pw_core::ops::SCHEMA_VERSION,
         "engine": pw_pdf::engine_version(),
-        "operations": ["inspect", "extract_text", "search", "render", "merge", "extract_pages", "delete_pages", "rotate_pages", "split", "annotate", "form_fields", "fill_form", "apply_edits", "organize_pages", "stamp_text", "export_images", "redaction_preview", "redact"],
+        "operations": ["inspect", "extract_text", "search", "render", "merge", "extract_pages", "delete_pages", "rotate_pages", "split", "annotate", "form_fields", "fill_form", "apply_edits", "organize_pages", "stamp_text", "export_images", "redaction_preview", "redact", "ocr_pages"],
         "collision_policies": ["fail", "rename", "replace"],
         "network": "none",
     })
@@ -202,6 +216,13 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
             };
             Operation::Split { input: file.clone(), split, output_dir: out_dir.clone() }
         }
+        Command::Ocr { file, pages, all_pages, dpi, output } => Operation::OcrPages {
+            input: file.clone(),
+            pages: pages.clone(),
+            skip_text_pages: !all_pages,
+            dpi: *dpi,
+            output: output.clone(),
+        },
         Command::Redact { file, areas, preview, output } => {
             let areas = areas.iter().map(|a| parse_area(a)).collect::<Result<Vec<_>, _>>()?;
             match (preview, output) {
@@ -305,6 +326,19 @@ fn print_human(r: &OperationResult) {
                 println!("--- page {} ---", p["page"]);
                 println!("{}", p["text"].as_str().unwrap_or(""));
             }
+        }
+        "ocr_pages" => {
+            let d = &r.data;
+            for o in &r.outputs {
+                println!("Wrote {} ({} bytes)", o.path.display(), o.bytes);
+            }
+            println!(
+                "Pages recognised: {}, skipped (already had text): {}, lines: {}, mean confidence: {:.1}%",
+                d["pages_processed"],
+                d["pages_skipped_with_text"],
+                d["lines"],
+                d["mean_confidence"].as_f64().unwrap_or(0.0) * 100.0
+            );
         }
         "redaction_preview" => {
             for a in r.data["areas"].as_array().into_iter().flatten() {

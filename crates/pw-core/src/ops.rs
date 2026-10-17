@@ -57,6 +57,16 @@ fn default_start() -> u64 {
     1
 }
 
+fn default_true() -> bool {
+    true
+}
+
+pub const DEFAULT_OCR_DPI: u32 = 200;
+
+fn default_ocr_dpi() -> u32 {
+    DEFAULT_OCR_DPI
+}
+
 /// Text placed on pages. `text` may contain `{page}` (running number over the stamped pages,
 /// starting at the operation's `start`, zero-padded to `digits`) and `{total}` (pages in the document).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -243,6 +253,21 @@ pub enum Operation {
         digits: u8,
         output: PathBuf,
     },
+    /// Recognise text on page images and add it as an invisible, searchable text layer in a new
+    /// file; the pages look exactly as before.
+    OcrPages {
+        input: PathBuf,
+        /// Pages to process (range syntax); all pages when absent.
+        #[serde(default)]
+        pages: Option<String>,
+        /// Leave pages that already have text untouched.
+        #[serde(default = "default_true")]
+        skip_text_pages: bool,
+        /// Rendering resolution for recognition (dpi).
+        #[serde(default = "default_ocr_dpi")]
+        dpi: u32,
+        output: PathBuf,
+    },
     /// What redacting `areas` would remove (read-only; shown before applying).
     RedactionPreview {
         input: PathBuf,
@@ -285,6 +310,7 @@ impl Operation {
             Operation::StampText { .. } => "stamp_text",
             Operation::ExportImages { .. } => "export_images",
             Operation::RedactionPreview { .. } => "redaction_preview",
+            Operation::OcrPages { .. } => "ocr_pages",
             Operation::Redact { .. } => "redact",
         }
     }
@@ -322,6 +348,7 @@ impl Operation {
             | Operation::StampText { input, .. }
             | Operation::ExportImages { input, .. }
             | Operation::RedactionPreview { input, .. }
+            | Operation::OcrPages { input, .. }
             | Operation::Redact { input, .. }
             | Operation::ApplyEdits { input, .. } => vec![input.clone()],
         }
@@ -356,6 +383,7 @@ impl Operation {
             | Operation::ApplyEdits { output, .. }
             | Operation::OrganizePages { output, .. }
             | Operation::Redact { output, .. }
+            | Operation::OcrPages { output, .. }
             | Operation::StampText { output, .. } => parent(output),
         }
     }
@@ -471,6 +499,11 @@ impl Operation {
             }
             Operation::Redact { areas, .. } | Operation::RedactionPreview { areas, .. } => {
                 validate_redact_areas(areas)?
+            }
+            Operation::OcrPages { dpi, .. } => {
+                if !(100..=400).contains(dpi) {
+                    return Err(PwError::invalid("ocr.dpi", "Choose a recognition resolution from 100 to 400 dpi."));
+                }
             }
             Operation::ApplyEdits { form_values, annotations, .. } => {
                 if form_values.is_empty() && annotations.is_empty() {

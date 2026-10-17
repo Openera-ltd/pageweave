@@ -24,6 +24,21 @@ Required attributions:
   (FreeType is used under the FreeType License.)
 - This software is based in part on the work of the Independent JPEG Group.
 
+## ONNX Runtime (OCR inference runtime)
+
+- Source: official Microsoft release v1.31.0 (https://github.com/microsoft/onnxruntime), CPU build;
+  archive SHA-256 pinned per platform in `resources/ocr.lock.json`; only the runtime library is
+  redistributed (`ocr/onnxruntime.dll` on Windows).
+- License: MIT — `third_party/licenses/onnxruntime/LICENSE.txt`; components it includes are listed
+  with their licenses in `third_party/licenses/onnxruntime/ThirdPartyNotices.txt`.
+- Telemetry: PageWeave disables ONNX Runtime telemetry events when it creates the runtime.
+
+## PP-OCRv6 small text recognition models
+
+- Detection and recognition models by the PaddleOCR project (PaddlePaddle Authors, Baidu), Apache
+  License 2.0 — `third_party/licenses/ppocr/Apache-2.0.txt`, attribution and pinned sources in
+  `third_party/licenses/ppocr/NOTICE.txt`. Redistributed unmodified under `ocr/`.
+
 ## Rust crates and UI packages
 
 - `third_party/licenses/rust-crates.txt` — license texts of every Rust crate compiled into the

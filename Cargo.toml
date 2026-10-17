@@ -26,6 +26,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 clap = { version = "4", features = ["derive"] }
 pw-core = { path = "crates/pw-core" }
 pw-pdf = { path = "crates/pw-pdf" }
+pw-ocr = { path = "crates/pw-ocr" }
 
 [workspace.lints.rust]
 # Denied everywhere; the single audited exception is decision D-006 (enforced by a test).

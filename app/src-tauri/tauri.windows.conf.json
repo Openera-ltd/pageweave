@@ -5,7 +5,13 @@
       "../../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
       "../../third_party/licenses/pdfium/": "licenses/pdfium/",
       "../../third_party/licenses/rust-crates.txt": "licenses/rust-crates.txt",
-      "../../third_party/licenses/ui-npm.txt": "licenses/ui-npm.txt"
+      "../../third_party/licenses/ui-npm.txt": "licenses/ui-npm.txt",
+      "../../third_party/ocr/win-x64/onnxruntime.dll": "ocr/onnxruntime.dll",
+      "../../third_party/ocr/win-x64/det.onnx": "ocr/det.onnx",
+      "../../third_party/ocr/win-x64/rec.onnx": "ocr/rec.onnx",
+      "../../third_party/ocr/win-x64/rec_dict.txt": "ocr/rec_dict.txt",
+      "../../third_party/licenses/onnxruntime/": "licenses/onnxruntime/",
+      "../../third_party/licenses/ppocr/": "licenses/ppocr/"
     }
   }
 }

@@ -124,6 +124,26 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(w);
             (vec![out(&c, Some(n))], json!({ "page_count": n }))
         }
+        Operation::OcrPages { input, pages, skip_text_pages, dpi, output } => {
+            let page_progress = |done: u64, total: u64| {
+                if let Some(c) = ctx {
+                    c.set_progress(done, total, "pages");
+                }
+            };
+            let (c, n, summary, w) = crate::ocr::ocr_pages(
+                input,
+                &opts,
+                pages.as_deref(),
+                *skip_text_pages,
+                *dpi,
+                output,
+                policy,
+                &cancelled,
+                &page_progress,
+            )?;
+            warnings.extend(w);
+            (vec![out(&c, Some(n))], serde_json::to_value(&summary).unwrap_or_default())
+        }
         Operation::RedactionPreview { input, areas } => {
             let previews = crate::redact::redaction_preview(input, &opts, areas)?;
             (vec![], json!({ "areas": previews }))

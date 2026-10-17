@@ -188,7 +188,8 @@ export type Operation =
     }
   | { op: "export_images"; input: string; pages: string | null; dpi: number; output_dir: string }
   | { op: "organize_pages"; input: string; extra_inputs: string[]; pages: Array<{ source: number; page: number; rotate: number }>; output: string }
-  | { op: "redact"; input: string; areas: RedactArea[]; output: string };
+  | { op: "redact"; input: string; areas: RedactArea[]; output: string }
+  | { op: "ocr_pages"; input: string; pages: string | null; skip_text_pages: boolean; dpi: number; output: string };
 
 /** An area to redact, in PDF user space of a 0-based page. */
 export interface RedactArea {

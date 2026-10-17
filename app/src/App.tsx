@@ -85,6 +85,7 @@ const OPERATION_TITLES: Partial<Record<Operation["op"], string>> = {
   merge: "Combine files",
   annotate: "Save annotated copy",
   redact: "Apply redactions",
+  ocr_pages: "Recognize text",
 };
 
 function operationTarget(op: Operation): string {
@@ -715,6 +716,7 @@ export function App() {
     "pages.organize": { run: () => setDialog({ kind: "organize" }), available: all(needDoc, noDialog) },
     "pages.stamp": { run: () => openTool("stamp"), available: all(needDoc, noDialog) },
     "pages.exportImages": { run: () => openTool("images"), available: all(needDoc, noDialog) },
+    "pages.ocr": { run: () => openTool("ocr"), available: all(needDoc, noDialog) },
     "app.settings": { run: () => settings && setDialog({ kind: "settings", tab: "appearance", original: settings }), available: () => (settings ? noDialog() : "Settings are still loading.") },
     "app.shortcuts": { run: () => settings && setDialog({ kind: "settings", tab: "shortcuts", original: settings }), available: () => (settings ? noDialog() : "Settings are still loading.") },
     "app.commandPalette": { run: () => setDialog({ kind: "palette" }), available: noDialog },
@@ -865,7 +867,7 @@ export function App() {
 
   const pagesMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
-    setMenu({ label: "Page tools", x: r.left, y: r.bottom + 2, items: [item("pages.organize"), "separator", item("pages.extract"), item("pages.delete"), item("pages.rotate"), item("pages.split"), item("pages.stamp"), item("pages.exportImages"), "separator", item("pages.merge")] });
+    setMenu({ label: "Page tools", x: r.left, y: r.bottom + 2, items: [item("pages.organize"), "separator", item("pages.extract"), item("pages.delete"), item("pages.rotate"), item("pages.split"), item("pages.stamp"), item("pages.exportImages"), item("pages.ocr"), "separator", item("pages.merge")] });
   };
 
   /* ---------- Job results ---------- */

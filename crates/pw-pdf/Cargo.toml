@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 pw-core.workspace = true
+pw-ocr.workspace = true
 pdfium-render.workspace = true
 image.workspace = true
 serde.workspace = true

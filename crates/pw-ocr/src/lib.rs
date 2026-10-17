@@ -114,11 +114,15 @@ fn sha256_file(p: &Path) -> PwResult<String> {
     Ok(Sha256::digest(&bytes).iter().map(|b| format!("{b:02x}")).collect())
 }
 
-/// Locate the OCR resource directory: `PAGEWEAVE_OCR_DIR`, next to the executable (`ocr/`), or the
-/// development install (third_party/ocr/<platform>).
+/// Locate the OCR resource directory: `ocr/` next to the executable (or under `resources/`). The
+/// `PAGEWEAVE_OCR_DIR` override and the development install (third_party/ocr/<platform>) are honoured
+/// only in debug builds, so a packaged app never loads the runtime library from an
+/// environment-controlled or build-machine folder (PRD 11: DLL hijacking; same rule as PDFium).
 pub fn default_resource_dir() -> Option<PathBuf> {
-    if let Some(d) = std::env::var_os("PAGEWEAVE_OCR_DIR") {
-        return Some(PathBuf::from(d));
+    if cfg!(debug_assertions) {
+        if let Some(d) = std::env::var_os("PAGEWEAVE_OCR_DIR") {
+            return Some(PathBuf::from(d));
+        }
     }
     let mut candidates = Vec::new();
     if let Ok(exe) = std::env::current_exe() {
@@ -127,8 +131,10 @@ pub fn default_resource_dir() -> Option<PathBuf> {
             candidates.push(dir.join("resources").join("ocr"));
         }
     }
-    let plat = if cfg!(windows) { "win-x64" } else { "linux-x64" };
-    candidates.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../third_party/ocr").join(plat));
+    if cfg!(debug_assertions) {
+        let plat = if cfg!(windows) { "win-x64" } else { "linux-x64" };
+        candidates.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../third_party/ocr").join(plat));
+    }
     candidates.into_iter().find(|d| d.join(DET_FILE).exists())
 }
 

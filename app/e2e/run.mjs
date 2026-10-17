@@ -1066,6 +1066,51 @@ await test("export pages as images: page range and resolution; PNG files written
   assert(!existsSync(join(dir, "five-pages_p001.png")), "only the chosen pages");
 });
 
+await test("OCR: a scanned file becomes searchable from the Pages menu; the copy opens with selectable text", async () => {
+  const src = join(FIX, "scanned.pdf");
+  const before = sha(src);
+  const out = join(work, "searchable.pdf");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    // Nothing to find before recognition.
+    await s.keys(["Control", "f"]);
+    await s.type('input[aria-label="Find in document"]', "Description");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => (await s.text(".searchbar .count")) === "No matches", "no text before OCR");
+    await s.keys(["Escape"]);
+    // Pages menu → Recognize text (OCR)…
+    await s.exec("[...document.querySelectorAll('button[aria-haspopup=menu]')].find(b => b.textContent.trim() === 'Pages').click(); return 1");
+    await s.click('[role="menuitem"][data-command="pages.ocr"]');
+    await s.waitFor("#output");
+    assert((await s.text('[role="dialog"] h2')) === "Recognize text (OCR)", "dialog title");
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("scanned-searchable.pdf"), "default output name");
+    assert((await s.text('[data-testid="tool-start"]')) === "Recognize", "start button label");
+    await axeCheck(s, "ocr-dialog");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved searchable.pdf")), "saved notice", 240000);
+    // Open the copy from the notice and find text in it.
+    await s.exec("[...document.querySelectorAll('.notice button')].find(b => b.textContent === 'Open').click(); return 1");
+    await s.waitUntil(async () => (await s.exec("return [...document.querySelectorAll('.tab-label .name')].map(n => n.textContent)")).includes("searchable.pdf"), "copy opened");
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "f"]);
+    await s.type('input[aria-label="Find in document"]', "Description");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => /^1 of 1/.test(await s.text(".searchbar .count")), "found after OCR");
+    await s.keys(["Escape"]);
+    // The recognised text is selectable in the viewer's text layer.
+    await markSpan(s, 0, "Invoice");
+    await s.doubleClickAt(...(await s.exec("const r=document.querySelector('[data-e2e=target]').getBoundingClientRect(); return [r.left + 8, r.top + r.height/2]")));
+    await s.waitUntil(async () => (await selection(s)).trim().length > 0, "word selectable");
+  });
+  assert(existsSync(out), "searchable copy exists");
+  assert(sha(src) === before, "source PDF unchanged");
+  if (CLI) {
+    const t = JSON.parse(execFileSync(CLI, ["--json", "text", "--pages", "1", out], { encoding: "utf8" })).result.data.pages[0].text;
+    assert(t.includes("Invoice") && t.includes("Description"), `independent text check: ${t.slice(0, 200)}`);
+  }
+});
+
 await test("redaction: mark by search, selection and dragged area; review; apply a verified copy with the content gone", async () => {
   const src = join(FIX, "redaction.pdf");
   const before = sha(src);

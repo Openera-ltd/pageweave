@@ -101,7 +101,7 @@ fn commit(
     Ok((c, encrypted))
 }
 
-fn source_encrypted(doc: &PdfDocument) -> bool {
+pub(crate) fn source_encrypted(doc: &PdfDocument) -> bool {
     !matches!(doc.permissions().security_handler_revision(), Ok(PdfSecurityHandlerRevision::Unprotected))
 }
 
@@ -254,7 +254,7 @@ pub fn merge(
     Ok((c, total, warnings))
 }
 
-fn rotation_of(page: &PdfPage) -> u32 {
+pub(crate) fn rotation_of(page: &PdfPage) -> u32 {
     match page.rotation() {
         Ok(PdfPageRenderRotation::Degrees90) => 90,
         Ok(PdfPageRenderRotation::Degrees180) => 180,
@@ -345,7 +345,7 @@ pub fn organize_pages(
 
 /// Map a point given in displayed-page space (origin bottom-left of the page as shown, after its
 /// clockwise /Rotate) to unrotated page space. `w`, `h` are the unrotated page size.
-fn display_to_page(rot: u32, w: f32, h: f32, x: f32, y: f32) -> (f32, f32) {
+pub(crate) fn display_to_page(rot: u32, w: f32, h: f32, x: f32, y: f32) -> (f32, f32) {
     match rot {
         90 => (w - y, x),
         180 => (w - x, h - y),

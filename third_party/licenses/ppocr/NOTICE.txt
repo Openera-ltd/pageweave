@@ -1,0 +1,12 @@
+PP-OCRv6 small text detection and recognition models (ONNX), redistributed by PageWeave.
+
+Copyright (c) PaddlePaddle Authors (Baidu). Released by the PaddleOCR project
+(https://github.com/PaddlePaddle/PaddleOCR) under the Apache License, Version 2.0 (Apache-2.0.txt).
+
+Files and sources (pinned in resources/ocr.lock.json):
+- det.onnx — https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx (revision 28fe5895c24fd108c19eb3e8479f4ab385fbfc62)
+- rec.onnx — https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx (revision b8f84f0b80c529de40b4fbb3544b84fa7233a513)
+- rec_dict.txt — the recognition model's character dictionary, extracted unchanged from that
+  repository's inference.yml (PostProcess.character_dict), one entry per line.
+
+The model files are redistributed unmodified.

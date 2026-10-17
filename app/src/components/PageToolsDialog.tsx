@@ -5,7 +5,7 @@ import { basename, dirname, siblingOutput } from "../paths";
 import { toPwError, type AnnotationSpec, type CollisionPolicy, type FieldValue, type StampPosition, type JobSnapshot, type OpenedDoc, type Operation, type PwError } from "../types";
 import { Dialog, useDebounced } from "./ui";
 
-export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images";
+export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr";
 
 const TITLES: Record<PageTool, string> = {
   extract: "Extract pages",
@@ -16,7 +16,11 @@ const TITLES: Record<PageTool, string> = {
   save: "Save a copy with your changes",
   stamp: "Page numbers and stamps",
   images: "Export pages as images",
+  ocr: "Recognize text (OCR)",
 };
+
+/** Start-button label (the title's first word does not fit every tool). */
+const START: Partial<Record<PageTool, string>> = { ocr: "Recognize" };
 
 const SUFFIX: Record<PageTool, string> = {
   extract: "extract",
@@ -27,6 +31,7 @@ const SUFFIX: Record<PageTool, string> = {
   save: "edited",
   stamp: "numbered",
   images: "",
+  ocr: "searchable",
 };
 
 const DPI_CHOICES = [72, 96, 150, 300, 600];
@@ -93,7 +98,8 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   const suffix = tool === "save" ? (nFields === 0 ? "annotated" : nAnnots === 0 ? "filled" : "edited") : SUFFIX[tool];
   const api = useApi();
   const [pages, setPages] = useState(initialPages ?? (tool === "rotate" ? "" : ""));
-  const [allPages, setAllPages] = useState((tool === "rotate" || tool === "stamp" || tool === "images") && !initialPages);
+  const [allPages, setAllPages] = useState((tool === "rotate" || tool === "stamp" || tool === "images" || tool === "ocr") && !initialPages);
+  const [includeTextPages, setIncludeTextPages] = useState(false);
   const [dpi, setDpi] = useState(150);
   /** Tools that write several files into a folder rather than one new PDF. */
   const toFolder = tool === "split" || tool === "images";
@@ -112,7 +118,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   const [error, setError] = useState<PwError | null>(null);
   const [conflict, setConflict] = useState(false);
 
-  const needsRange = tool === "extract" || tool === "delete" || ((tool === "rotate" || tool === "stamp" || tool === "images") && !allPages);
+  const needsRange = tool === "extract" || tool === "delete" || ((tool === "rotate" || tool === "stamp" || tool === "images" || tool === "ocr") && !allPages);
   const sizeN = Number(fontSize);
   const startN = Number(startAt);
   const digitsN = Number(digits);
@@ -177,6 +183,8 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         return { op: "merge", inputs: files, output };
       case "images":
         return { op: "export_images", input: doc.path, pages: allPages ? null : pages, dpi, output_dir: output };
+      case "ocr":
+        return { op: "ocr_pages", input: doc.path, pages: allPages ? null : pages, skip_text_pages: !includeTextPages, dpi: 200, output };
       case "stamp":
         return {
           op: "stamp_text",
@@ -241,7 +249,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         title={blocker ?? undefined}
         onClick={() => start("fail")}
       >
-        {busy ? "Working…" : TITLES[tool].split(" ")[0]}
+        {busy ? "Working…" : START[tool] ?? TITLES[tool].split(" ")[0]}
       </button>
     </>
   );
@@ -327,10 +335,24 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         </div>
       )}
 
-      {(tool === "rotate" || tool === "stamp" || tool === "images") && (
+      {tool === "ocr" && (
+        <p className="hint" style={{ marginTop: 0 }}>
+          Adds selectable, searchable text to scanned pages in a new copy. The pages look exactly the same.
+        </p>
+      )}
+
+      {(tool === "rotate" || tool === "stamp" || tool === "images" || tool === "ocr") && (
         <div className="field">
           <label className="row">
             <input type="checkbox" checked={allPages} onChange={(e) => setAllPages(e.target.checked)} /> All pages
+          </label>
+        </div>
+      )}
+
+      {tool === "ocr" && (
+        <div className="field">
+          <label className="row">
+            <input type="checkbox" checked={includeTextPages} onChange={(e) => setIncludeTextPages(e.target.checked)} data-testid="ocr-include-text-pages" /> Also process pages that already have text
           </label>
         </div>
       )}
