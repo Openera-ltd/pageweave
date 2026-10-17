@@ -171,6 +171,74 @@ def build_form_document() -> bytes:
     return w.render(catalog, info)
 
 
+def build_redaction_document() -> bytes:
+    """Four pages exercising redaction: text runs to cut, images inside / across / outside areas
+    (one shared with another page), vector art, a note with a popup, links, a thumbnail, a form
+    XObject holding text, a rotated page and a page whose MediaBox does not start at 0,0. Secrets
+    are marked so tests can search raw (decompressed) file content for them."""
+    w = PdfWriter()
+    catalog, pages_obj = w.reserve(), w.reserve()
+    p1, p2, p3, p4 = w.reserve(), w.reserve(), w.reserve(), w.reserve()
+    font = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+
+    def image(width: int, height: int, data: bytes) -> int:
+        assert len(data) == width * height * 3
+        return w.stream(data, f"/Type /XObject /Subtype /Image /Width {width} /Height {height} "
+                              "/ColorSpace /DeviceRGB /BitsPerComponent 8 ")
+
+    # Distinct, deterministic pixel data (tests look for these exact bytes in the output).
+    im1 = image(8, 8, bytes((i * 7 + 13) % 256 for i in range(8 * 8 * 3)))
+    im2 = image(4, 4, bytes((i * 11 + 5) % 256 for i in range(4 * 4 * 3)))
+    im3 = image(4, 4, bytes((i * 3 + 101) % 256 for i in range(4 * 4 * 3)))
+    thumb = image(2, 2, b"PWTHUMB!PWTH")
+    res = f"/Resources << /Font << /F1 {font} 0 R >> /XObject << /Im1 {im1} 0 R /Im2 {im2} 0 R /Im3 {im3} 0 R >> >>"
+
+    c1 = "\n".join([
+        "0.9 0.9 1 rg 36 36 540 720 re f",  # background: crosses every area, stays
+        "0 g",
+        text_page_content(["Name: Alice Example", "Account SECRET-4711 is closed",
+                           "Fully hidden line PWHIDE", "Public footer text"], x=72, y=700, leading=20).decode(),
+        "0 0 0 rg 400 500 20 20 re f",  # inside an area: removed
+        "q 64 0 0 64 300 400 cm /Im1 Do Q",  # crosses an area edge: pixels painted
+        "q 32 0 0 32 450 300 cm /Im2 Do Q",  # inside an area: removed
+        "q 32 0 0 32 100 100 cm /Im3 Do Q",  # outside every area (also on page 4)
+    ]).encode("latin-1")
+    note = w.reserve()
+    popup = w.add(f"<< /Type /Annot /Subtype /Popup /Rect [480 400 600 500] /Parent {note} 0 R /Open false >>")
+    w.set(note, f"<< /Type /Annot /Subtype /Text /Rect [480 520 500 540] /Contents (secret note PWNOTE) "
+                f"/Popup {popup} 0 R >>")
+    secret_link = w.add("<< /Type /Annot /Subtype /Link /Rect [72 676 260 692] /Border [0 0 0] "
+                        "/A << /S /URI /URI (http://example.invalid/PWLINK) >> >>")
+    page_link = w.add(f"<< /Type /Annot /Subtype /Link /Rect [72 60 200 76] /Border [0 0 0] /Dest [{p2} 0 R /Fit] >>")
+    w.set(p1, f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] {res} "
+              f"/Contents {w.stream(c1)} 0 R /Thumb {thumb} 0 R "
+              f"/Annots [{secret_link} 0 R {note} 0 R {popup} 0 R {page_link} 0 R] >>")
+
+    form_ops = text_page_content(["Inside form PWFORMX"], x=0, y=10).decode().encode("latin-1")
+    fm = w.add(b"<< /Type /XObject /Subtype /Form /BBox [0 0 300 30] /Resources << /Font << /F1 %d 0 R >> >> "
+               b"/Length %d >>\nstream\n" % (font, len(form_ops)) + form_ops + b"\nendstream")
+    c2 = (text_page_content(["Page two visible"], x=72, y=700).decode() + "\nq 1 0 0 1 72 500 cm /Fm1 Do Q").encode()
+    w.set(p2, f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] "
+              f"/Resources << /Font << /F1 {font} 0 R >> /XObject << /Fm1 {fm} 0 R >> >> /Contents {w.stream(c2)} 0 R >>")
+
+    c3 = text_page_content(["Rotated page keeps this", "Rotated secret PWROT here"], x=72, y=700, leading=20)
+    w.set(p3, f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] /Rotate 90 "
+              f"/Resources << /Font << /F1 {font} 0 R >> >> /Contents {w.stream(c3)} 0 R >>")
+
+    c4 = (text_page_content(["Offset page PWOFF secret", "Offset page stays"], x=172, y=800, leading=20).decode()
+          + "\nq 32 0 0 32 200 200 cm /Im3 Do Q").encode()
+    w.set(p4, f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [100 100 712 892] {res} "
+              f"/Contents {w.stream(c4)} 0 R >>")
+
+    w.set(pages_obj, f"<< /Type /Pages /Kids [{p1} 0 R {p2} 0 R {p3} 0 R {p4} 0 R] /Count 4 >>")
+    outlines, item = w.reserve(), w.reserve()
+    w.set(item, f"<< /Title (Chapter SECRET-4711) /Parent {outlines} 0 R /Dest [{p1} 0 R /Fit] >>")
+    w.set(outlines, f"<< /Type /Outlines /First {item} 0 R /Last {item} 0 R /Count 1 >>")
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R /Outlines {outlines} 0 R >>")
+    info = w.add("<< /Title (Redaction fixture SECRET-4711) /Author (PageWeave fixtures) /Producer (gen_fixtures.py) >>")
+    return w.render(catalog, info)
+
+
 def numbered_pages(n: int, size=LETTER) -> list[dict]:
     return [{"lines": [f"PageWeave fixture page {i}", f"Marker token PWMARK{i:03d}",
                        "The quick brown fox jumps over the lazy dog."], "size": size}
@@ -202,6 +270,7 @@ def main() -> int:
     files["search-terms.pdf"] = build_document(search, title="Search terms")
 
     files["form-fields.pdf"] = build_form_document()
+    files["redaction.pdf"] = build_redaction_document()
 
     good = files["five-pages.pdf"]
     files["corrupt-truncated.pdf"] = good[: len(good) // 2]

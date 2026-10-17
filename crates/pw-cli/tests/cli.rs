@@ -204,6 +204,35 @@ fn images_command_exports_pngs() {
 }
 
 #[test]
+fn redact_previews_then_writes_a_verified_copy() {
+    let src = fixture("redaction.pdf");
+    let out = bin().args(["redact", "--preview", "--area", "1:100,670,200,700"]).arg(&src).output().expect("run");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("SECRET-4711"));
+
+    let dir = tempfile::tempdir().expect("tmp");
+    let red = dir.path().join("red.pdf");
+    let out = bin()
+        .args(["--json", "redact", "--area", "1:100,670,200,700", "-o"])
+        .arg(&red)
+        .arg(&src)
+        .output()
+        .expect("run");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
+    assert_eq!(json(&out)["result"]["operation"], "redact");
+    let text = bin().args(["text", "--pages", "1"]).arg(&red).output().expect("run");
+    let text = String::from_utf8_lossy(&text.stdout);
+    assert!(!text.contains("SECRET") && text.contains("is closed"), "{text}");
+
+    // Bad area syntax is a usage error naming the expected form; nothing is written.
+    let bad = dir.path().join("bad.pdf");
+    let out = bin().args(["redact", "--area", "1:1,2,3", "-o"]).arg(&bad).arg(&src).output().expect("run");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("PAGE:LEFT,BOTTOM,RIGHT,TOP"));
+    assert!(!bad.exists());
+}
+
+#[test]
 fn unicode_and_space_paths() {
     let dir = tempfile::tempdir().expect("tmp");
     let src = dir.path().join("Résumé – 文件 copy.pdf");

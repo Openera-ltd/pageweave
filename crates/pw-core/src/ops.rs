@@ -30,6 +30,7 @@ pub const MAX_FORM_VALUES: usize = 10_000;
 pub const MAX_ORGANIZE_PAGES: usize = 100_000;
 pub const MAX_STAMPS: usize = 6;
 pub const MAX_STAMP_CHARS: usize = 200;
+pub const MAX_REDACT_AREAS: usize = 10_000;
 
 /// Where a stamp sits on the page as displayed (after the page's own rotation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -123,6 +124,14 @@ pub struct RectPt {
     pub bottom: f32,
     pub right: f32,
     pub top: f32,
+}
+
+/// An area to redact: everything under it is removed and it is painted black.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct RedactArea {
+    /// 0-based page index.
+    pub page: u32,
+    pub rect: RectPt,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -234,6 +243,17 @@ pub enum Operation {
         digits: u8,
         output: PathBuf,
     },
+    /// What redacting `areas` would remove (read-only; shown before applying).
+    RedactionPreview {
+        input: PathBuf,
+        areas: Vec<RedactArea>,
+    },
+    /// Permanently remove the content under `areas` and write a verified new file.
+    Redact {
+        input: PathBuf,
+        areas: Vec<RedactArea>,
+        output: PathBuf,
+    },
     /// Apply pending edits (form values and/or annotations) to one new file.
     ApplyEdits {
         input: PathBuf,
@@ -264,6 +284,8 @@ impl Operation {
             Operation::OrganizePages { .. } => "organize_pages",
             Operation::StampText { .. } => "stamp_text",
             Operation::ExportImages { .. } => "export_images",
+            Operation::RedactionPreview { .. } => "redaction_preview",
+            Operation::Redact { .. } => "redact",
         }
     }
 
@@ -275,6 +297,7 @@ impl Operation {
                 | Operation::FormFields { .. }
                 | Operation::ExtractText { .. }
                 | Operation::Search { .. }
+                | Operation::RedactionPreview { .. }
         )
     }
 
@@ -298,6 +321,8 @@ impl Operation {
             | Operation::FillForm { input, .. }
             | Operation::StampText { input, .. }
             | Operation::ExportImages { input, .. }
+            | Operation::RedactionPreview { input, .. }
+            | Operation::Redact { input, .. }
             | Operation::ApplyEdits { input, .. } => vec![input.clone()],
         }
     }
@@ -316,7 +341,8 @@ impl Operation {
             Operation::Inspect { .. }
             | Operation::FormFields { .. }
             | Operation::ExtractText { .. }
-            | Operation::Search { .. } => None,
+            | Operation::Search { .. }
+            | Operation::RedactionPreview { .. } => None,
             Operation::Split { output_dir, .. } | Operation::ExportImages { output_dir, .. } => {
                 Some(output_dir.clone())
             }
@@ -329,6 +355,7 @@ impl Operation {
             | Operation::FillForm { output, .. }
             | Operation::ApplyEdits { output, .. }
             | Operation::OrganizePages { output, .. }
+            | Operation::Redact { output, .. }
             | Operation::StampText { output, .. } => parent(output),
         }
     }
@@ -442,6 +469,9 @@ impl Operation {
                     }
                 }
             }
+            Operation::Redact { areas, .. } | Operation::RedactionPreview { areas, .. } => {
+                validate_redact_areas(areas)?
+            }
             Operation::ApplyEdits { form_values, annotations, .. } => {
                 if form_values.is_empty() && annotations.is_empty() {
                     return Err(PwError::invalid("edits.empty", "There are no changes to save."));
@@ -478,6 +508,23 @@ fn validate_form_values(list: &[FieldValue]) -> PwResult<()> {
             if t.chars().count() > MAX_FORM_TEXT_CHARS {
                 return Err(PwError::invalid("form.too_long", format!("The value for “{}” is too long.", v.name)));
             }
+        }
+    }
+    Ok(())
+}
+
+fn validate_redact_areas(areas: &[RedactArea]) -> PwResult<()> {
+    if areas.is_empty() {
+        return Err(PwError::invalid("redact.empty", "Mark at least one area to redact."));
+    }
+    if areas.len() > MAX_REDACT_AREAS {
+        return Err(PwError::invalid("redact.too_many", "Too many redaction areas in one request."));
+    }
+    for a in areas {
+        let r = a.rect;
+        let finite = [r.left, r.bottom, r.right, r.top].iter().all(|v| v.is_finite() && v.abs() < 1.0e6);
+        if !finite || r.right <= r.left || r.top <= r.bottom {
+            return Err(PwError::invalid("redact.rect", "A redaction area has an invalid location."));
         }
     }
     Ok(())
@@ -708,6 +755,17 @@ mod tests {
         assert_eq!(v(ann(AnnotationKind::Highlight, "yellow", None, vec![rect])).as_deref(), Some("annotate.color"));
         assert_eq!(v(ann(AnnotationKind::Highlight, "#ffcc00", None, vec![])).as_deref(), Some("annotate.rects"));
         let flipped = RectPt { left: 5.0, ..rect };
+        let redact = |areas: Vec<RedactArea>| Operation::Redact { input: "a".into(), areas, output: "o".into() };
+        assert!(v(redact(vec![RedactArea { page: 0, rect }])).is_none());
+        assert_eq!(v(redact(vec![])).as_deref(), Some("redact.empty"));
+        assert_eq!(v(redact(vec![RedactArea { page: 0, rect: flipped }])).as_deref(), Some("redact.rect"));
+        let inf = RectPt { top: f32::INFINITY, ..rect };
+        assert_eq!(
+            v(Operation::RedactionPreview { input: "a".into(), areas: vec![RedactArea { page: 0, rect: inf }] })
+                .as_deref(),
+            Some("redact.rect")
+        );
+        assert!(!Operation::RedactionPreview { input: "a".into(), areas: vec![] }.writes_output());
         assert_eq!(v(ann(AnnotationKind::Underline, "#ffcc00", None, vec![flipped])).as_deref(), Some("annotate.rect"));
         let nan = RectPt { left: f32::NAN, ..rect };
         assert_eq!(v(ann(AnnotationKind::Underline, "#ffcc00", None, vec![nan])).as_deref(), Some("annotate.rect"));

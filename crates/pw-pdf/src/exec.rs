@@ -124,6 +124,15 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(w);
             (vec![out(&c, Some(n))], json!({ "page_count": n }))
         }
+        Operation::RedactionPreview { input, areas } => {
+            let previews = crate::redact::redaction_preview(input, &opts, areas)?;
+            (vec![], json!({ "areas": previews }))
+        }
+        Operation::Redact { input, areas, output } => {
+            let (c, n, w) = crate::redact::redact(input, &opts, areas, output, policy, &cancelled)?;
+            warnings.extend(w);
+            (vec![out(&c, Some(n))], json!({ "page_count": n, "areas": areas.len() }))
+        }
         Operation::ApplyEdits { input, form_values, annotations, output } => {
             let (c, w) = crate::forms::apply_edits(input, opts.password, form_values, annotations, output, policy)?;
             warnings.extend(w);

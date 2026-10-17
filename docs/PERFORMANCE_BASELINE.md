@@ -74,3 +74,5 @@ GitHub-hosted `windows-latest`, WebView2 154.0.4258.62, Edge WebDriver; release 
 5 launches with `five-pages.pdf`: UI ready 1468 ms p50, first page 1584 ms p50. Hosted runners are
 shared VMs, so this is an upper-bound reference, not a hardware claim. Installed-app smoke test on
 the same runner type: UI ready 3.3–5.4 s on a cold first launch (WebView2 first start).
+Second run (`4b97eeb`, same runner type): UI ready 1684 ms p50, first page 1804 ms p50, first launch
+3437 ms — about 15% slower than the first run; treat runner-to-runner variance as at least that.

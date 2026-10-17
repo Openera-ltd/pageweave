@@ -124,6 +124,20 @@ enum Command {
         #[arg(long)]
         out_dir: PathBuf,
     },
+    /// Permanently remove everything under the given areas and paint them black, in a new file.
+    /// The result is verified before it is written. Use --preview to list what would be removed.
+    Redact {
+        file: PathBuf,
+        /// PAGE:LEFT,BOTTOM,RIGHT,TOP in PDF points (pages from 1), e.g. --area 1:72,700,200,712.
+        /// Repeat for several areas.
+        #[arg(long = "area", required = true)]
+        areas: Vec<String>,
+        /// Only list the text and objects under each area; write nothing.
+        #[arg(long)]
+        preview: bool,
+        #[arg(short, long, required_unless_present = "preview")]
+        output: Option<PathBuf>,
+    },
     /// Run a typed JSON request (the same schema the local API and MCP use) from a file or "-" for stdin.
     Run { request: PathBuf },
     /// List the operations this build supports.
@@ -134,7 +148,7 @@ fn capabilities() -> serde_json::Value {
     json!({
         "schema_version": pw_core::ops::SCHEMA_VERSION,
         "engine": pw_pdf::engine_version(),
-        "operations": ["inspect", "extract_text", "search", "render", "merge", "extract_pages", "delete_pages", "rotate_pages", "split", "annotate", "form_fields", "fill_form", "apply_edits", "organize_pages", "stamp_text", "export_images"],
+        "operations": ["inspect", "extract_text", "search", "render", "merge", "extract_pages", "delete_pages", "rotate_pages", "split", "annotate", "form_fields", "fill_form", "apply_edits", "organize_pages", "stamp_text", "export_images", "redaction_preview", "redact"],
         "collision_policies": ["fail", "rename", "replace"],
         "network": "none",
     })
@@ -188,6 +202,13 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
             };
             Operation::Split { input: file.clone(), split, output_dir: out_dir.clone() }
         }
+        Command::Redact { file, areas, preview, output } => {
+            let areas = areas.iter().map(|a| parse_area(a)).collect::<Result<Vec<_>, _>>()?;
+            match (preview, output) {
+                (false, Some(out)) => Operation::Redact { input: file.clone(), areas, output: out.clone() },
+                _ => Operation::RedactionPreview { input: file.clone(), areas },
+            }
+        }
         Command::Images { file, pages, dpi, out_dir } => Operation::ExportImages {
             input: file.clone(),
             pages: pages.clone(),
@@ -202,6 +223,22 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
         Conflict::Replace => CollisionPolicy::Replace,
     };
     Ok(Some(req))
+}
+
+/// `PAGE:LEFT,BOTTOM,RIGHT,TOP` (page from 1) → area on the 0-based page.
+fn parse_area(s: &str) -> Result<pw_core::ops::RedactArea, PwError> {
+    let bad =
+        || PwError::invalid("redact.area_syntax", format!("Use PAGE:LEFT,BOTTOM,RIGHT,TOP for an area, not {s:?}."));
+    let (page, rect) = s.split_once(':').ok_or_else(bad)?;
+    let page: u32 = page.trim().parse().map_err(|_| bad())?;
+    let v: Vec<f32> = rect.split(',').map(|x| x.trim().parse::<f32>()).collect::<Result<_, _>>().map_err(|_| bad())?;
+    if page == 0 || v.len() != 4 {
+        return Err(bad());
+    }
+    Ok(pw_core::ops::RedactArea {
+        page: page - 1,
+        rect: pw_core::ops::RectPt { left: v[0], bottom: v[1], right: v[2], top: v[3] },
+    })
 }
 
 fn print_human(r: &OperationResult) {
@@ -267,6 +304,18 @@ fn print_human(r: &OperationResult) {
             for p in r.data["pages"].as_array().into_iter().flatten() {
                 println!("--- page {} ---", p["page"]);
                 println!("{}", p["text"].as_str().unwrap_or(""));
+            }
+        }
+        "redaction_preview" => {
+            for a in r.data["areas"].as_array().into_iter().flatten() {
+                println!(
+                    "page {}: {:?} (images {}, graphics {}, annotations {})",
+                    a["page"].as_u64().unwrap_or(0) + 1,
+                    a["text"].as_str().unwrap_or(""),
+                    a["images"],
+                    a["graphics"],
+                    a["annotations"]
+                );
             }
         }
         "search" => {
