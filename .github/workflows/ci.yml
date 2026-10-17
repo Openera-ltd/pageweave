@@ -286,10 +286,17 @@ jobs:
           $log = (Join-Path (Resolve-Path ..\e2e-artifacts-windows) "msedgedriver-diag.log")
           $d = Start-Process $edge -ArgumentList "--port=9515", "--verbose", "--log-path=$log" -PassThru
           Start-Sleep -Seconds 2
-          $caps = @{ capabilities = @{ alwaysMatch = @{ browserName = "webview2"; "ms:edgeChromium" = $true; "ms:edgeOptions" = @{ binary = $app; args = @() } } } } | ConvertTo-Json -Depth 6
+          $fixture = (Resolve-Path ..\fixtures\pdf\five-pages.pdf).Path
+          $caps = @{ capabilities = @{ alwaysMatch = @{ browserName = "webview2"; "ms:edgeChromium" = $true; "ms:edgeOptions" = @{ binary = $app; args = @($fixture) } } } } | ConvertTo-Json -Depth 6
           try {
             $sess = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:9515/session -Body $caps -ContentType "application/json" -TimeoutSec 60
             "Native Edge WebDriver session OK: $($sess.value.sessionId)"
+            Start-Sleep -Seconds 5
+            # What did the driver actually pass to the app, and did the app open the file?
+            Get-CimInstance Win32_Process -Filter "name='pageweave-app.exe'" | ForEach-Object { "App command line under the driver: $($_.CommandLine)" }
+            Get-ChildItem "$env:LOCALAPPDATA\io.github.kuyamcliff.pageweave\logs\*.jsonl" -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Tail 6 }
+            $url = Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:9515/session/$($sess.value.sessionId)/url" -TimeoutSec 20
+            "Page URL under the driver: $($url.value)"
             Invoke-RestMethod -Method Delete -Uri "http://127.0.0.1:9515/session/$($sess.value.sessionId)" -TimeoutSec 20 | Out-Null
           } catch { "Native Edge WebDriver session FAILED: $_" }
           Stop-Process -Id $d.Id -Force -ErrorAction SilentlyContinue
