@@ -184,4 +184,5 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - Crop pages (PRD 05 page boxes): CropBox from the visible box with margins mapped through /Rotate (displayed top on a /Rotate 90 page is the page's left side); verified exactly per page; warns that cropping hides rather than removes.
 - Attachments (PRD 05): list / save one as stored / attach into a copy (PDFium embedded files; name tree is kept sorted so lookups go by name). Found while testing: the sidebar's third tab overflowed the 200 px sidebar (click intercepted) → icon tabs with accessible names; success notices offered "Open" for non-PDF outputs (exported images, saved attachments) → Open only for PDFs.
 - Kaggle: the GPU queue held the probe re-run ~2 h; a CPU probe (supersede option added) ran at once and verified the dataset mount (720/720 image hashes). Training run pushed (T4, 3 GPU-h ceiling) — queued.
+- Edit bookmarks (PRD 05): outline rebuilt with lopdf (/Fit destinations), verified by PDFium read-back; editing logic in a pure module (subtree-aware indent/outdent/move/delete).
 

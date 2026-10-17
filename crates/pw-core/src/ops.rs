@@ -31,6 +31,22 @@ pub const MAX_ORGANIZE_PAGES: usize = 100_000;
 pub const MAX_STAMPS: usize = 6;
 pub const MAX_STAMP_CHARS: usize = 200;
 pub const MAX_REDACT_AREAS: usize = 10_000;
+/// Most bookmarks in one outline, longest title, deepest nesting.
+pub const MAX_BOOKMARKS: usize = 10_000;
+pub const MAX_BOOKMARK_TITLE: usize = 500;
+pub const MAX_BOOKMARK_DEPTH: u32 = 32;
+
+/// One bookmark in an outline given as a flat list in reading order; `depth` 0 is top level and a
+/// bookmark is a child of the closest earlier one with a smaller depth.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BookmarkSpec {
+    pub title: String,
+    /// 0-based page index.
+    pub page: u32,
+    #[serde(default)]
+    pub depth: u32,
+}
+
 /// Most files attached in one request, and the largest single attachment.
 pub const MAX_ATTACH_FILES: usize = 100;
 pub const MAX_ATTACH_BYTES: u64 = 256 * 1024 * 1024;
@@ -388,6 +404,12 @@ pub enum Operation {
         permissions: ProtectPermissions,
         output: PathBuf,
     },
+    /// Replace the document's bookmarks (outline) in a new file. An empty list removes them.
+    SetBookmarks {
+        input: PathBuf,
+        bookmarks: Vec<BookmarkSpec>,
+        output: PathBuf,
+    },
     /// List the files embedded in the document (read-only).
     ListAttachments {
         input: PathBuf,
@@ -515,6 +537,7 @@ impl Operation {
             Operation::SetProperties { .. } => "set_properties",
             Operation::Watermark { .. } => "watermark",
             Operation::CropPages { .. } => "crop_pages",
+            Operation::SetBookmarks { .. } => "set_bookmarks",
             Operation::ListAttachments { .. } => "list_attachments",
             Operation::ExtractAttachment { .. } => "extract_attachment",
             Operation::AddAttachments { .. } => "add_attachments",
@@ -570,6 +593,7 @@ impl Operation {
             | Operation::Watermark { input, .. }
             | Operation::CropPages { input, .. }
             | Operation::ListAttachments { input }
+            | Operation::SetBookmarks { input, .. }
             | Operation::ExtractAttachment { input, .. }
             | Operation::SanitizeInspect { input }
             | Operation::Sanitize { input, .. }
@@ -616,6 +640,7 @@ impl Operation {
             | Operation::Watermark { output, .. }
             | Operation::CropPages { output, .. }
             | Operation::ExtractAttachment { output, .. }
+            | Operation::SetBookmarks { output, .. }
             | Operation::AddAttachments { output, .. }
             | Operation::Sanitize { output, .. }
             | Operation::StampText { output, .. } => parent(output),
@@ -733,6 +758,35 @@ impl Operation {
             }
             Operation::Redact { areas, .. } | Operation::RedactionPreview { areas, .. } => {
                 validate_redact_areas(areas)?
+            }
+            Operation::SetBookmarks { bookmarks, .. } => {
+                if bookmarks.len() > MAX_BOOKMARKS {
+                    return Err(PwError::invalid(
+                        "bookmarks.too_many",
+                        format!("Use at most {MAX_BOOKMARKS} bookmarks."),
+                    ));
+                }
+                let mut prev: Option<u32> = None;
+                for (i, b) in bookmarks.iter().enumerate() {
+                    let n = i + 1;
+                    if b.title.trim().is_empty() {
+                        return Err(PwError::invalid("bookmarks.title_empty", format!("Bookmark {n} needs a title.")));
+                    }
+                    if b.title.chars().count() > MAX_BOOKMARK_TITLE || b.title.chars().any(|c| c.is_control()) {
+                        return Err(PwError::invalid(
+                            "bookmarks.title",
+                            format!("Bookmark {n}: titles are at most {MAX_BOOKMARK_TITLE} characters, without line breaks."),
+                        ));
+                    }
+                    let max_depth = prev.map_or(0, |p| p + 1).min(MAX_BOOKMARK_DEPTH);
+                    if b.depth > max_depth {
+                        return Err(PwError::invalid(
+                            "bookmarks.depth",
+                            format!("Bookmark {n} is indented more than one level below the one before it."),
+                        ));
+                    }
+                    prev = Some(b.depth);
+                }
             }
             Operation::AddAttachments { files, .. } => {
                 if files.is_empty() {

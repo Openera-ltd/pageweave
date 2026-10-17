@@ -1114,6 +1114,49 @@ await test("protect with password: AES-256 copy needs the password; wrong passwo
   }
 });
 
+await test("bookmarks: add from the page menu, rename, nest, reorder, delete; saved outline read back exactly", async () => {
+  const src = join(FIX, "five-pages.pdf");
+  const before = sha(src);
+  const out = join(work, "outline.pdf");
+  const titles = (s) => s.exec("return [...document.querySelectorAll('[data-bookmark-title]')].map(i => i.value)");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.contextClick('[data-page="0"]');
+    await s.waitFor('[role="menu"]');
+    assert((await s.text('[role="menuitem"][data-command="file.editBookmarks"]')).startsWith("Add bookmark for page 1"), "menu entry names the page");
+    await s.click('[role="menuitem"][data-command="file.editBookmarks"]');
+    await s.waitFor('[data-bookmark-title="5"]');
+    assert(JSON.stringify(await titles(s)) === JSON.stringify(["Chapter 1", "Chapter 2", "Chapter 3", "Chapter 4", "Chapter 5", "Page 1"]), `rows: ${await titles(s)}`);
+    // Rename the new one and make it a sub-bookmark of Chapter 5.
+    await s.type('[data-bookmark-title="5"]', "Summary");
+    await s.click('[data-testid="bookmark-indent"]');
+    // A sub-bookmark cannot move above its parent's siblings: Move up is disabled with a reason.
+    assert((await s.attr('[data-testid="bookmark-up"]', "aria-disabled")) === "true", "move up disabled for an only child");
+    // Delete Chapter 2, then move Chapter 1 down below Chapter 3.
+    await s.click('[data-bookmark-title="1"]');
+    await s.click('[data-testid="bookmark-delete"]');
+    await s.click('[data-bookmark-title="0"]');
+    await s.click('[data-testid="bookmark-down"]');
+    assert(JSON.stringify(await titles(s)) === JSON.stringify(["Chapter 3", "Chapter 1", "Chapter 4", "Chapter 5", "Summary"]), `after edits: ${await titles(s)}`);
+    // An out-of-range page blocks saving with a reason.
+    await s.type('[data-bookmark-page="0"]', "9");
+    await s.waitUntil(async () => ((await s.attr('[data-testid="bookmarks-save"]', "title")) ?? "").includes("from 1 to 5"), "page range explained");
+    await s.type('[data-bookmark-page="0"]', "3");
+    await s.type("#bookmarks-output", out);
+    await axeCheck(s, "edit-bookmarks-dialog");
+    writeFileSync(join(ART, "edit-bookmarks-dialog.png"), await s.screenshot());
+    await s.waitUntil(async () => (await s.attr('[data-testid="bookmarks-save"]', "aria-disabled")) === null, "ready");
+    await s.click('[data-testid="bookmarks-save"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved outline.pdf")), "saved notice", 30000);
+  });
+  assert(sha(src) === before, "source PDF unchanged");
+  if (CLI) {
+    const b = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data.bookmarks;
+    const got = b.map((x) => `${x.depth}:${x.title}@${x.page}`).join("|");
+    assert(got === "0:Chapter 3@2|0:Chapter 1@0|0:Chapter 4@3|0:Chapter 5@4|1:Summary@0", `outline read back: ${got}`);
+  }
+});
+
 await test("attachments: the sidebar lists embedded files; one is saved exactly as stored", async () => {
   const src = join(FIX, "hidden-info.pdf");
   const before = sha(src);

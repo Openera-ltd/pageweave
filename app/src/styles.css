@@ -308,6 +308,47 @@ textarea {
   flex: 1;
 }
 
+/* Edit bookmarks */
+.bookmarks-pane {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  min-height: 0;
+}
+
+.bookmark-tools {
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+.bookmark-edit {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-1);
+  max-height: min(50vh, 420px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-1, 4px);
+}
+
+.bookmark-edit li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding-top: var(--space-1);
+  padding-bottom: var(--space-1);
+  padding-right: var(--space-2);
+  border-radius: var(--radius-1, 4px);
+}
+
+.bookmark-edit li > input {
+  flex: 1;
+  min-width: 0;
+}
+
+.bookmark-edit li[aria-current="true"] {
+  background: var(--accent-soft, rgb(37 99 235 / 0.1));
+}
+
 /* Attachments panel */
 .attachments ul {
   list-style: none;

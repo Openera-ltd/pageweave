@@ -18,7 +18,7 @@ function setup(list: () => Promise<AttachmentInfo[]>) {
   const api = { listAttachments: vi.fn(list), pageUrl: () => "" } as unknown as Api;
   render(
     <ApiContext.Provider value={api}>
-      <Sidebar doc={doc} view="attachments" onView={() => undefined} currentPage={0} onSelectPage={() => undefined} onPageContextMenu={() => undefined} onSaveAttachment={onSave} onAttachFiles={onAttach} />
+      <Sidebar doc={doc} view="attachments" onView={() => undefined} currentPage={0} onSelectPage={() => undefined} onPageContextMenu={() => undefined} onSaveAttachment={onSave} onAttachFiles={onAttach} onEditBookmarks={() => undefined} />
     </ApiContext.Provider>,
   );
   return { api, onSave, onAttach };

@@ -197,6 +197,7 @@ export type Operation =
   | { op: "ocr_pages"; input: string; pages: string | null; skip_text_pages: boolean; dpi: number; output: string }
   | { op: "protect"; input: string; permissions: ProtectPermissions; output: string }
   | { op: "unprotect"; input: string; output: string }
+  | { op: "set_bookmarks"; input: string; bookmarks: Array<{ title: string; page: number; depth: number }>; output: string }
   | { op: "extract_attachment"; input: string; index: number; output: string }
   | { op: "add_attachments"; input: string; files: string[]; output: string }
   | { op: "crop_pages"; input: string; pages: string | null; margins: { top: number; right: number; bottom: number; left: number }; output: string }

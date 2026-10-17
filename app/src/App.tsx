@@ -52,6 +52,7 @@ import { SanitizeDialog } from "./components/SanitizeDialog";
 import { UnprotectDialog } from "./components/UnprotectDialog";
 import { EditPropertiesDialog } from "./components/EditPropertiesDialog";
 import { SaveAttachmentDialog } from "./components/SaveAttachmentDialog";
+import { EditBookmarksDialog } from "./components/EditBookmarksDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { NoteDialog, UnsavedDialog } from "./components/AnnotationDialogs";
 import { CommandPalette, Home, Notices, PasswordDialog, PropertiesDialog, SearchBar, StatusBar, type Notice, type NoticeAction, type SearchState } from "./components/Panels";
@@ -77,6 +78,7 @@ type DialogState =
   | { kind: "unprotect" }
   | { kind: "editProperties" }
   | { kind: "saveAttachment"; attachment: AttachmentInfo }
+  | { kind: "bookmarks"; addOnOpen: boolean; page: number }
   | { kind: "unsaved"; reason: "tab"; docId: number }
   | { kind: "unsaved"; reason: "quit" }
   | null;
@@ -101,6 +103,7 @@ const OPERATION_TITLES: Partial<Record<Operation["op"], string>> = {
   unprotect: "Remove password",
   set_properties: "Edit document properties",
   extract_attachment: "Save attached file",
+  set_bookmarks: "Edit bookmarks",
   add_attachments: "Attach files",
   watermark: "Add watermark",
   crop_pages: "Crop pages",
@@ -681,6 +684,7 @@ export function App() {
     "file.properties": { run: () => setDialog({ kind: "properties" }), available: all(needDoc, noDialog) },
     "file.protect": { run: () => setDialog({ kind: "protect" }), available: all(needDoc, noDialog) },
     "file.sanitize": { run: () => setDialog({ kind: "sanitize" }), available: all(needDoc, noDialog) },
+    "file.editBookmarks": { run: () => setDialog({ kind: "bookmarks", addOnOpen: false, page: view.page }), available: all(needDoc, noDialog) },
     "file.attachFiles": { run: () => active && attachFiles(active), available: all(needDoc, noDialog) },
     "file.editProperties": { run: () => setDialog({ kind: "editProperties" }), available: all(needDoc, () => (dialog && dialog.kind !== "properties" ? "Close the open dialog first." : true)) },
     "file.unprotect": {
@@ -857,6 +861,7 @@ export function App() {
         item("pages.rotate", `Rotate page ${n}…`, () => openTool("rotate", String(n))),
         item("pages.delete", `Delete page ${n}…`, () => openTool("delete", String(n)), multi ? true : "A one-page document has no pages to delete."),
         item("pages.organize"),
+        item("file.editBookmarks", `Add bookmark for page ${n}…`, () => setDialog({ kind: "bookmarks", addOnOpen: true, page }), dialog ? "Close the open dialog first." : true),
         "separator",
         item("redact.markPage", `Mark page ${n} for redaction`, () => markPage(page), room),
         item("redact.markArea", markMode ? "Stop marking areas" : "Mark areas for redaction"),
@@ -1133,6 +1138,7 @@ export function App() {
               onPageContextMenu={pageMenu}
               onSaveAttachment={(a) => setDialog({ kind: "saveAttachment", attachment: a })}
               onAttachFiles={() => attachFiles(active)}
+              onEditBookmarks={() => setDialog({ kind: "bookmarks", addOnOpen: false, page: view.page })}
             />
           )}
           <div ref={viewerHost} style={{ display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0, minWidth: 0 }}>
@@ -1263,6 +1269,7 @@ export function App() {
         />
       )}
       {dialog?.kind === "protect" && active && <ProtectDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
+      {dialog?.kind === "bookmarks" && active && <EditBookmarksDialog doc={active} currentPage={dialog.page} addOnOpen={dialog.addOnOpen} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "saveAttachment" && active && <SaveAttachmentDialog doc={active} attachment={dialog.attachment} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "editProperties" && active && <EditPropertiesDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "unprotect" && active && <UnprotectDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}

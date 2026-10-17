@@ -16,10 +16,11 @@ interface Props {
   onPageContextMenu: (page: number, x: number, y: number) => void;
   onSaveAttachment: (a: AttachmentInfo) => void;
   onAttachFiles: () => void;
+  onEditBookmarks: () => void;
 }
 
 /** Left panel: page thumbnails or the document outline (bookmarks). */
-export function Sidebar({ doc, view, onView, currentPage, onSelectPage, onPageContextMenu, onSaveAttachment, onAttachFiles }: Props) {
+export function Sidebar({ doc, view, onView, currentPage, onSelectPage, onPageContextMenu, onSaveAttachment, onAttachFiles, onEditBookmarks }: Props) {
   const hasBookmarks = doc.info.bookmarks.length > 0;
   const shown: SidebarView = view === "bookmarks" ? (hasBookmarks ? "bookmarks" : "pages") : view;
   return (
@@ -49,7 +50,14 @@ export function Sidebar({ doc, view, onView, currentPage, onSelectPage, onPageCo
         {shown === "pages" ? (
           <Thumbnails doc={doc} currentPage={currentPage} onSelect={onSelectPage} onContextMenu={onPageContextMenu} />
         ) : shown === "bookmarks" ? (
-          <Bookmarks doc={doc} currentPage={currentPage} onSelect={onSelectPage} />
+          <div className="bookmarks-pane">
+            <Bookmarks doc={doc} currentPage={currentPage} onSelect={onSelectPage} />
+            <div className="attach-actions">
+              <button type="button" className="btn outline" data-command="file.editBookmarks" onClick={onEditBookmarks}>
+                Edit bookmarks…
+              </button>
+            </div>
+          </div>
         ) : (
           <Attachments doc={doc} onSave={onSaveAttachment} onAttach={onAttachFiles} />
         )}

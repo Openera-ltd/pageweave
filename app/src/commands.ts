@@ -12,6 +12,7 @@ export type CommandId =
   | "file.protect"
   | "file.editProperties"
   | "file.attachFiles"
+  | "file.editBookmarks"
   | "file.unprotect"
   | "file.sanitize"
   | "edit.copy"
@@ -77,6 +78,7 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "file.reveal", label: "Show in folder", category: "File", shortcuts: [] },
   { id: "file.properties", label: "Document properties", category: "File", shortcuts: ["Ctrl+D"] },
   { id: "file.protect", label: "Protect with password…", category: "File", shortcuts: [] },
+  { id: "file.editBookmarks", label: "Edit bookmarks…", category: "File", shortcuts: [] },
   { id: "file.attachFiles", label: "Attach files…", category: "File", shortcuts: [] },
   { id: "file.editProperties", label: "Edit document properties…", category: "File", shortcuts: [] },
   { id: "file.unprotect", label: "Remove password…", category: "File", shortcuts: [] },
