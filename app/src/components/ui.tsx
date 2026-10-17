@@ -162,13 +162,15 @@ interface DialogProps {
   children: ReactNode;
   footer?: ReactNode;
   wide?: boolean;
+  /** Nearly the whole window (side-by-side views). */
+  full?: boolean;
   /** While busy, Escape and the close button are disabled so work is not abandoned by accident. */
   busy?: boolean;
   initialFocus?: string;
 }
 
 /** Modal dialog: focus trap, initial focus, Escape to close, focus restored to the opener. */
-export function Dialog({ title, onClose, children, footer, wide, busy, initialFocus }: DialogProps) {
+export function Dialog({ title, onClose, children, footer, wide, full, busy, initialFocus }: DialogProps) {
   const ref = useRef<HTMLDivElement>(null);
   const opener = useRef<Element | null>(document.activeElement);
   const titleId = useRef(`dlg-${Math.random().toString(36).slice(2)}`).current;
@@ -208,7 +210,7 @@ export function Dialog({ title, onClose, children, footer, wide, busy, initialFo
 
   return (
     <div className="backdrop" onMouseDown={(e) => e.target === e.currentTarget && !busy && onClose()}>
-      <div ref={ref} className={`dialog ${wide ? "wide" : ""}`} role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={onKeyDown}>
+      <div ref={ref} className={`dialog ${wide ? "wide" : ""} ${full ? "full" : ""}`} role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={onKeyDown}>
         <div className="dialog-header">
           <h2 id={titleId}>{title}</h2>
           <button type="button" className="btn icon dialog-close" aria-label="Close" title={busy ? "Wait for the task to finish or cancel it" : "Close (Esc)"} disabled={busy} onClick={onClose}>

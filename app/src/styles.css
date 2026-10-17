@@ -54,6 +54,8 @@
   --danger: #b42318;
   --on-danger: #ffffff;
   --danger-bg: #fdecea;
+  /* Compare view: changes that are not text. */
+  --diff-visual: #7a4cc2;
   --warning-bg: #fff4e0;
   --shadow-1: 0 1px 2px rgba(15, 23, 42, 0.08);
   --shadow-2: 0 8px 24px rgba(15, 23, 42, 0.18);
@@ -69,6 +71,7 @@
 }
 
 :root[data-theme="dark"] {
+  --diff-visual: #b28df0;
   --bg: #16181c;
   --surface: #1e2126;
   --surface-2: #262a30;
@@ -1080,6 +1083,11 @@ textarea {
   width: min(720px, 100%);
 }
 
+.dialog.full {
+  width: min(1400px, 100%);
+  height: calc(100vh - 48px);
+}
+
 .dialog .dialog-header {
   display: flex;
   align-items: center;
@@ -1470,5 +1478,183 @@ kbd,
 @media (prefers-reduced-motion: reduce) {
   .organize-tile .frame img {
     transition: none;
+  }
+}
+
+/* ---------- Compare view ---------- */
+.compare {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: var(--space-3);
+  height: 100%;
+  min-height: 0;
+}
+.compare-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.compare-files {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.compare-main {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) 1fr;
+  gap: var(--space-4);
+  min-height: 0;
+}
+.compare-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+  overflow: auto;
+}
+.compare-meta {
+  margin: 0;
+  font-size: var(--font-size-1);
+}
+.compare-meta div {
+  display: flex;
+  gap: var(--space-2);
+}
+.compare-meta dt {
+  font-weight: 600;
+}
+.compare-meta dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.compare-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  outline: none;
+}
+.compare-list:focus-visible {
+  box-shadow: 0 0 0 2px var(--focus);
+  border-radius: var(--radius-2);
+}
+.compare-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-2);
+  /* A stripe in the change's colour (a coloured left border on rounded corners leaves specks). */
+  box-shadow: inset 3px 0 0 var(--diff-color, var(--border-strong));
+  cursor: pointer;
+  font-size: var(--font-size-1);
+}
+.compare-item:hover {
+  background: var(--surface-hover);
+}
+.compare-item[aria-selected="true"] {
+  background: var(--selection);
+}
+.compare-item[aria-selected="true"] .compare-where {
+  color: var(--text);
+}
+.compare-kind {
+  font-weight: 600;
+}
+.compare-where {
+  color: var(--text-muted);
+  text-align: right;
+}
+.compare-text {
+  grid-column: 1 / -1;
+  overflow-wrap: anywhere;
+}
+.compare-pages {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+  min-height: 0;
+}
+.compare-pane {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 0;
+  min-width: 0;
+}
+.compare-pane-title {
+  font-size: var(--font-size-1);
+  color: var(--text-muted);
+  padding-bottom: var(--space-2);
+}
+.compare-scroll {
+  overflow: auto;
+  background: var(--canvas);
+  border-radius: var(--radius-2);
+  padding: var(--space-3);
+  min-height: 0;
+}
+.compare-scroll:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.compare-page {
+  position: relative;
+  box-shadow: var(--page-shadow);
+  background: #fff;
+}
+.compare-page img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.compare-missing {
+  text-align: center;
+  padding: var(--space-6);
+}
+.compare-box {
+  position: absolute;
+  border: 2px solid var(--diff-color);
+  background: color-mix(in srgb, var(--diff-color) 14%, transparent);
+  border-radius: 2px;
+  pointer-events: none;
+}
+.compare-box.kind-visual,
+.compare-box.kind-page_size {
+  border-style: dashed;
+  background: transparent;
+}
+.compare-box.current {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--diff-color) 45%, transparent);
+}
+.kind-inserted,
+.kind-page_inserted {
+  --diff-color: var(--success);
+}
+.kind-deleted,
+.kind-page_deleted {
+  --diff-color: var(--danger);
+}
+.kind-replaced,
+.kind-moved,
+.kind-page_moved {
+  --diff-color: var(--warning);
+}
+.kind-format {
+  --diff-color: var(--accent);
+}
+.kind-visual,
+.kind-page_size {
+  --diff-color: var(--diff-visual);
+}
+
+.truncate {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  .compare-list [data-item] {
+    scroll-behavior: auto;
   }
 }

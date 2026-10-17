@@ -227,6 +227,8 @@ export class Session {
   }
 
   async screenshot() {
+    // Let the page paint what the DOM now holds (WebKitGTK can otherwise return an older frame).
+    await this.exec("return new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(1))))");
     return Buffer.from(await this.cmd("GET", "/screenshot"), "base64");
   }
 

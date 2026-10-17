@@ -50,6 +50,7 @@ import { OrganizeDialog } from "./components/OrganizeDialog";
 import { RedactDialog } from "./components/RedactDialog";
 import { ProtectDialog } from "./components/ProtectDialog";
 import { SanitizeDialog } from "./components/SanitizeDialog";
+import { CompareView } from "./components/CompareView";
 import { UnprotectDialog } from "./components/UnprotectDialog";
 import { EditPropertiesDialog } from "./components/EditPropertiesDialog";
 import { SaveAttachmentDialog } from "./components/SaveAttachmentDialog";
@@ -77,6 +78,7 @@ type DialogState =
   | { kind: "redact"; areas: RedactArea[] }
   | { kind: "protect" }
   | { kind: "sanitize" }
+  | { kind: "compare" }
   | { kind: "unprotect" }
   | { kind: "editProperties" }
   | { kind: "saveAttachment"; attachment: AttachmentInfo }
@@ -692,6 +694,7 @@ export function App() {
     "file.protect": { run: () => setDialog({ kind: "protect" }), available: all(needDoc, noDialog) },
     "file.sanitize": { run: () => setDialog({ kind: "sanitize" }), available: all(needDoc, noDialog) },
     "file.reduceSize": { run: () => openTool("optimize"), available: all(needDoc, noDialog) },
+    "file.compare": { run: () => setDialog({ kind: "compare" }), available: all(needDoc, noDialog) },
     "file.imagesToPdf": { run: () => setDialog({ kind: "images", files: [] }), available: noDialog },
     "file.editBookmarks": { run: () => setDialog({ kind: "bookmarks", addOnOpen: false, page: view.page }), available: all(needDoc, noDialog) },
     "file.attachFiles": { run: () => active && attachFiles(active), available: all(needDoc, noDialog) },
@@ -917,6 +920,10 @@ export function App() {
         item("file.sanitize", "Remove hidden information…", () => {
           setActiveId(doc.doc_id);
           setDialog({ kind: "sanitize" });
+        }, dialog ? "Close the open dialog first." : true),
+        item("file.compare", "Compare with…", () => {
+          setActiveId(doc.doc_id);
+          setDialog({ kind: "compare" });
         }, dialog ? "Close the open dialog first." : true),
         item("file.reduceSize", "Reduce file size…", () => {
           setActiveId(doc.doc_id);
@@ -1294,6 +1301,7 @@ export function App() {
       {dialog?.kind === "editProperties" && active && <EditPropertiesDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "unprotect" && active && <UnprotectDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "sanitize" && active && <SanitizeDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
+      {dialog?.kind === "compare" && active && <CompareView doc={active} others={tabs.filter((t) => t.doc_id !== active.doc_id)} jobs={jobs} onClose={() => setDialog(null)} />}
       {dialog?.kind === "organize" && active && <OrganizeDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "note" && active && (
         <NoteDialog

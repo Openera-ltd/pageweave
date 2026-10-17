@@ -1170,6 +1170,80 @@ await test("reduce file size with image resolution: preset applied; images resam
   }
 });
 
+await test("compare documents: with an open tab; difference list, side-by-side highlights, keyboard and buttons", async () => {
+  await withApp([join(FIX, "compare-old.pdf"), join(FIX, "compare-new.pdf")], async (s) => {
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label .name').length")) === 2, "both open");
+    await s.click(".tab-label[data-doc]:first-of-type");
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('.tab-label[aria-current=page] .name')?.textContent ?? null")) === "compare-old.pdf", "old active");
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Compare with");
+    await s.click('[role="option"][data-command="file.compare"]');
+    await s.waitFor('[data-testid="compare-start"]');
+    assert((await s.text('[data-testid="compare-order"]')).includes("Older: compare-old.pdf · Newer: compare-new.pdf"), "order shown");
+    await axeCheck(s, "compare-choose-dialog");
+    await s.click('[data-testid="compare-start"]');
+    await s.waitFor('[data-testid="compare-summary"]');
+    assert((await s.text('[data-testid="compare-summary"]')) === "4 pages changed · 1 page inserted · 1 page deleted", `summary: ${await s.text('[data-testid="compare-summary"]')}`);
+    const kinds = await s.exec("return [...document.querySelectorAll('.compare-item .compare-kind')].map(k => k.textContent)");
+    assert(JSON.stringify(kinds) === JSON.stringify(["Replaced", "Inserted", "Deleted", "Format", "Page deleted", "Page inserted", "Moved", "Moved", "Visual", "Page size"]), `items: ${kinds}`);
+    assert((await s.exec("return document.querySelector('.compare-meta')?.textContent ?? null")).includes("Report v1"), "title change listed");
+    // First item selected: both panes show page 2 with the replaced word highlighted on each side.
+    await s.waitUntil(
+      async () => (await s.exec("return [...document.querySelectorAll('.compare-pane img')].filter(i => i.complete && i.naturalWidth > 0).length")) === 2,
+      "two page images loaded",
+    );
+    assert((await s.exec("return [...document.querySelectorAll('.compare-pane-title')].map(t => t.textContent).join('|')")) === "Old · page 2|New · page 2", "page 2 on both sides");
+    assert((await s.exec("return document.querySelectorAll('.compare-box.current').length")) === 2, "current change boxed on both sides");
+    writeFileSync(join(ART, "compare-page2.png"), await s.screenshot());
+    // Keyboard: End jumps to the last difference (page size, page 6); Up goes back one.
+    await s.click(".compare-item[data-item='0']");
+    await s.keys(["End"]);
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('.compare-item[aria-selected=true] .compare-kind')?.textContent ?? null")) === "Page size", "End selects the last item");
+    await s.click('[aria-label="Previous difference"]');
+    assert((await s.exec("return document.querySelector('.compare-item[aria-selected=true] .compare-kind').textContent")) === "Visual", "previous button");
+    // The visual change on page 5 is drawn as a box near where the shape was drawn (lower middle).
+    const box = await s.exec("const b = document.querySelectorAll('.compare-pane')[1].querySelector('.compare-box.current'); return b ? [parseFloat(b.style.left), parseFloat(b.style.top)] : null");
+    assert(box && box[0] > 40 && box[0] < 55 && box[1] > 40 && box[1] < 70, `visual box position ${box}`);
+    // An inserted page: the old side says so.
+    await s.click(".compare-item.kind-page_inserted");
+    await s.waitUntil(async () => ((await s.exec("return document.querySelector('.compare-missing')?.textContent ?? null")) ?? "") === "Not in the old document", "missing side explained");
+    await axeCheck(s, "compare-result");
+    writeFileSync(join(ART, "compare-result.png"), await s.screenshot());
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[role=dialog]')")) === null, "closed");
+    assert((await s.exec("return document.querySelectorAll('.tab-label .name').length")) === 2, "tabs unchanged");
+  });
+});
+
+await test("compare documents: another file by path; errors explained; swap order", async () => {
+  await withApp([join(FIX, "compare-new.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Compare with");
+    await s.click('[role="option"][data-command="file.compare"]');
+    await s.waitFor("#compare-path");
+    assert((await s.attr('[data-testid="compare-start"]', "title")) === "Choose the file to compare with.", "disabled with a reason");
+    const alertText = async () => (await s.exec("return document.querySelector('[role=dialog] [role=alert]')?.textContent ?? null")) ?? "";
+    await s.type("#compare-path", join(FIX, "not-a-pdf.pdf"));
+    await s.click('[data-testid="compare-start"]');
+    await s.waitUntil(async () => (await alertText()).length > 0, "error shown");
+    await s.type("#compare-path", join(FIX, "encrypted-rc4-user-password.pdf"));
+    await s.click('[data-testid="compare-start"]');
+    await s.waitUntil(async () => /password/i.test(await alertText()), "password explained");
+    // The open document is the newer version here: swap, then compare.
+    await s.type("#compare-path", join(FIX, "compare-old.pdf"));
+    await s.click('[data-testid="compare-swap"]');
+    await s.waitUntil(async () => (await s.text('[data-testid="compare-order"]')).includes("Older: compare-old.pdf · Newer: compare-new.pdf"), "swapped");
+    await s.click('[data-testid="compare-start"]');
+    await s.waitFor('[data-testid="compare-summary"]');
+    assert((await s.text('[data-testid="compare-summary"]')) === "4 pages changed · 1 page inserted · 1 page deleted", "same result after swapping");
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[role=dialog]')")) === null, "closed");
+    assert((await s.exec("return document.querySelectorAll('.tab-label .name').length")) === 1, "the compared file did not become a tab");
+  });
+});
+
 await test("protect with password: AES-256 copy needs the password; wrong password refused; content intact", async () => {
   const src = join(FIX, "five-pages.pdf");
   const before = sha(src);
