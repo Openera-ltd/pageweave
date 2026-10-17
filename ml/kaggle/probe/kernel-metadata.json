@@ -1,0 +1,8 @@
+{
+  "id_suffix": "env-probe",
+  "code_file": "probe.py",
+  "enable_gpu": true,
+  "enable_internet": false,
+  "accelerator": "NvidiaTeslaT4",
+  "dataset_sources": ["{user}/pageweave-ocr-corpus-v1"]
+}

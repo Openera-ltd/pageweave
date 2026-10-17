@@ -45,3 +45,7 @@ Thumbs.db
 # Python bytecode
 __pycache__/
 *.pyc
+
+# ML workspace (PRD 14/15): venv, generated corpora, run outputs
+/ml/.venv/
+/ml/out/

@@ -8,6 +8,7 @@ step "rustfmt";            cargo fmt --all -- --check
 step "clippy";             cargo clippy --workspace --all-targets -q -- -D warnings
 step "rust tests";         cargo test --workspace -q 2>&1 | grep -E 'test result|FAILED|panicked' ; test "${PIPESTATUS[0]}" -eq 0
 step "tool tests";         python3 -I -m unittest discover -s tools/tests -q
+step "ML tests";           (cd ml && python3 -m unittest discover -s tests -t . -q)
 # Note: `set -e` does not stop on a failure left of `&&`, so each check is its own command.
 step "fixtures reproducible"; python3 -I tools/fixtures/gen_fixtures.py >/dev/null
 git diff --exit-code --stat -- fixtures/pdf ':!fixtures/pdf/encrypted-*'

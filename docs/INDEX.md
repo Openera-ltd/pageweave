@@ -12,6 +12,7 @@ This directory is the durable product/engineering memory. Use it with the root `
 - `RELEASE_CHECKLIST.md` — final packaged release gate.
 - `FEATURE_ACCEPTANCE_TEMPLATE.md` — use for each feature or meaningful feature change.
 - `DECISIONS.md` — record approved architectural/product decisions, date, rationale, consequences, and status.
+- `../ml/README.md` — ML workspace: synthetic rights-clean corpora, OCR benchmark harness, training-data rights gate, budgeted Kaggle runs and run manifests (PRD 14–16).
 
 - `../prd/INDEX.md` — detailed multi-document product requirements suite, including Acrobat-style desktop parity, user interactions, specialist AI, model training/data rights, offline resources, watchdog and release acceptance.
 

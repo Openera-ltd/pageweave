@@ -72,6 +72,14 @@ jobs:
         run: python3 -I tools/fetch_pdfium.py --platform linux-x64
       - name: Tool tests (watchdog decision logic)
         run: python3 -I -m unittest discover -s tools/tests -v
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: ML workspace tests (corpus, scorer, rights gate, Kaggle safety)
+        working-directory: ml
+        run: |
+          python -m pip install --quiet -r requirements-test.txt
+          python -m unittest discover -s tests -t . -v
       - name: Fixtures are reproducible from the generator
         run: |
           python3 -I tools/fixtures/gen_fixtures.py

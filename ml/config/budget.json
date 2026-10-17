@@ -1,0 +1,8 @@
+{
+  "note": "Ceilings for Kaggle use (PRD 14 token/compute discipline, PRD 16 approval boundaries). Raising them is a human decision.",
+  "max_gpu_hours_per_run": 3,
+  "default_gpu_hours_per_run": 1,
+  "max_concurrent_runs": 1,
+  "max_dataset_mb": 2000,
+  "max_runs_per_day": 4
+}
