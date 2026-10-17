@@ -249,8 +249,12 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npx vite build
-          npx tauri build --debug --no-bundle
-          cargo build -p pw-cli
+          # Release build = the shipping configuration. (The debug build's web UI never loaded on the
+          # Windows runner — no ui_ready mark, no DevTools — while the installed release app does.)
+          npx tauri build --no-bundle
+          cargo build --release -p pw-cli
+          # Release builds look for the engine next to the executable only.
+          cp ../third_party/pdfium/win-x64/bin/pdfium.dll ../target/release/
       - name: Install tauri-driver
         run: cargo install --locked tauri-driver@2.1.0
       # Every WebDriver session timed out on the first Windows runs. This bounded step records whether
@@ -263,7 +267,7 @@ jobs:
         continue-on-error: true
         run: |
           New-Item -ItemType Directory -Force ..\e2e-artifacts-windows | Out-Null
-          $app = (Resolve-Path ..\target\debug\pageweave-app.exe).Path
+          $app = (Resolve-Path ..\target\release\pageweave-app.exe).Path
           $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9333"
           $p = Start-Process $app -PassThru
           $ok = $false
@@ -290,7 +294,7 @@ jobs:
         shell: pwsh
         working-directory: app
         env:
-          PAGEWEAVE_CLI: ${{ github.workspace }}\target\debug\pageweave.exe
+          PAGEWEAVE_CLI: ${{ github.workspace }}\target\release\pageweave.exe
         run: |
           $ErrorActionPreference = "Stop"
           $edge = Join-Path $env:EDGEWEBDRIVER "msedgedriver.exe"
@@ -300,7 +304,7 @@ jobs:
           New-Item -ItemType Directory -Force ..\e2e-artifacts-windows | Out-Null
           $drv = Start-Process tauri-driver -ArgumentList "--port", "4444", "--native-driver", "`"$edge`"" -PassThru -RedirectStandardOutput ..\e2e-artifacts-windows\tauri-driver.out.log -RedirectStandardError ..\e2e-artifacts-windows\tauri-driver.err.log
           for ($i = 0; $i -lt 50; $i++) { try { Invoke-WebRequest http://127.0.0.1:4444/status -UseBasicParsing | Out-Null; break } catch { Start-Sleep -Milliseconds 200 } }
-          node e2e/run.mjs ..\target\debug\pageweave-app.exe ..\e2e-artifacts-windows
+          node e2e/run.mjs ..\target\release\pageweave-app.exe ..\e2e-artifacts-windows
           $code = $LASTEXITCODE
           Stop-Process -Id $drv.Id -Force -ErrorAction SilentlyContinue
           exit $code
