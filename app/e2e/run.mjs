@@ -1066,6 +1066,44 @@ await test("export pages as images: page range and resolution; PNG files written
   assert(!existsSync(join(dir, "five-pages_p001.png")), "only the chosen pages");
 });
 
+await test("export as text: chosen pages saved as UTF-8 text with page sections; existing file kept until Replace", async () => {
+  const dir = mkdtempSync(join(work, "text-"));
+  const out = join(dir, "five.txt");
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Export as text");
+    await s.click('[role="option"][data-command="pages.exportText"]');
+    await s.waitFor("#output");
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("five-pages.txt"), "default name is the document's with .txt");
+    await s.click('[role="dialog"] input[type="checkbox"]'); // untick "All pages"
+    await s.type("#pages", "2, 4");
+    await s.waitUntil(async () => (await s.text("#pages-msg")) === "2 pages selected", "range validated");
+    await s.type("#output", out);
+    await axeCheck(s, "export-text-dialog");
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved five.txt")), "saved notice");
+    const text = readFileSync(out, "utf8");
+    assert(text.includes("--- Page 2 ---\r\n") && text.includes("PWMARK002") && text.includes("PWMARK004"), "chosen pages written");
+    assert(!text.includes("PWMARK001") && !text.includes("PWMARK003"), "other pages left out");
+    // A second export to the same name asks before replacing.
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Export as text");
+    await s.click('[role="option"][data-command="pages.exportText"]');
+    await s.waitFor("#output");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(
+      async () => await s.exec("return [...document.querySelectorAll('[role=dialog] .btn.danger')].some(b => b.textContent.includes('Replace'))"),
+      "conflict offered",
+    );
+    assert(readFileSync(out, "utf8") === text, "file untouched until Replace");
+    await s.exec("[...document.querySelectorAll('[role=dialog] .btn.danger')].find(b => b.textContent.includes('Replace')).click()");
+    await s.waitUntil(async () => readFileSync(out, "utf8").includes("PWMARK001"), "replaced with all pages");
+  });
+});
+
 await test("protect with password: AES-256 copy needs the password; wrong password refused; content intact", async () => {
   const src = join(FIX, "five-pages.pdf");
   const before = sha(src);
@@ -1159,9 +1197,9 @@ await test("bookmarks: add from the page menu, rename, nest, reorder, delete; sa
     await s.click('[data-testid="bookmark-down"]');
     assert(JSON.stringify(await titles(s)) === JSON.stringify(["Chapter 3", "Chapter 1", "Chapter 4", "Chapter 5", "Summary"]), `after edits: ${await titles(s)}`);
     // An out-of-range page blocks saving with a reason.
-    await s.type('[data-bookmark-page="0"]', "9");
+    await s.replaceText('[data-bookmark-page="0"]', "9");
     await s.waitUntil(async () => ((await s.attr('[data-testid="bookmarks-save"]', "title")) ?? "").includes("from 1 to 5"), "page range explained");
-    await s.type('[data-bookmark-page="0"]', "3");
+    await s.replaceText('[data-bookmark-page="0"]', "3");
     await s.type("#bookmarks-output", out);
     await axeCheck(s, "edit-bookmarks-dialog");
     writeFileSync(join(ART, "edit-bookmarks-dialog.png"), await s.screenshot());

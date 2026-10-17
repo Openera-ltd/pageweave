@@ -421,6 +421,13 @@ pub enum Operation {
         permissions: ProtectPermissions,
         output: PathBuf,
     },
+    /// Save the text of pages (all when `pages` is absent) as a UTF-8 text file, one block per page.
+    ExportText {
+        input: PathBuf,
+        #[serde(default)]
+        pages: Option<String>,
+        output: PathBuf,
+    },
     /// Make a new PDF from JPEG and PNG images, one image per page in the given order.
     ImagesToPdf {
         inputs: Vec<PathBuf>,
@@ -538,6 +545,42 @@ pub enum Operation {
     },
 }
 
+/// Every operation id (`Operation::id`), for capability listings; a test keeps it in step with the enum.
+pub const OPERATION_IDS: &[&str] = &[
+    "inspect",
+    "form_fields",
+    "extract_text",
+    "search",
+    "render",
+    "merge",
+    "extract_pages",
+    "delete_pages",
+    "rotate_pages",
+    "split",
+    "annotate",
+    "fill_form",
+    "apply_edits",
+    "organize_pages",
+    "stamp_text",
+    "export_images",
+    "redaction_preview",
+    "ocr_pages",
+    "protect",
+    "unprotect",
+    "set_properties",
+    "watermark",
+    "crop_pages",
+    "set_bookmarks",
+    "images_to_pdf",
+    "export_text",
+    "list_attachments",
+    "extract_attachment",
+    "add_attachments",
+    "sanitize_inspect",
+    "sanitize",
+    "redact",
+];
+
 impl Operation {
     pub fn id(&self) -> &'static str {
         match self {
@@ -566,6 +609,7 @@ impl Operation {
             Operation::CropPages { .. } => "crop_pages",
             Operation::SetBookmarks { .. } => "set_bookmarks",
             Operation::ImagesToPdf { .. } => "images_to_pdf",
+            Operation::ExportText { .. } => "export_text",
             Operation::ListAttachments { .. } => "list_attachments",
             Operation::ExtractAttachment { .. } => "extract_attachment",
             Operation::AddAttachments { .. } => "add_attachments",
@@ -622,6 +666,7 @@ impl Operation {
             | Operation::CropPages { input, .. }
             | Operation::ListAttachments { input }
             | Operation::SetBookmarks { input, .. }
+            | Operation::ExportText { input, .. }
             | Operation::ExtractAttachment { input, .. }
             | Operation::SanitizeInspect { input }
             | Operation::Sanitize { input, .. }
@@ -670,6 +715,7 @@ impl Operation {
             | Operation::ExtractAttachment { output, .. }
             | Operation::SetBookmarks { output, .. }
             | Operation::ImagesToPdf { output, .. }
+            | Operation::ExportText { output, .. }
             | Operation::AddAttachments { output, .. }
             | Operation::Sanitize { output, .. }
             | Operation::StampText { output, .. } => parent(output),
@@ -1076,6 +1122,22 @@ pub struct OperationResult {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn operation_ids_list_every_variant_once() {
+        let src = include_str!("ops.rs");
+        let start = src.find("pub fn id(&self)").expect("id fn");
+        let end = start + src[start..].find("\n    }\n").expect("end of id fn");
+        let mut ids: Vec<&str> =
+            src[start..end].split("=> \"").skip(1).map(|t| &t[..t.find('"').expect("quote")]).collect();
+        let n = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), n, "operation ids are unique");
+        let mut listed: Vec<&str> = OPERATION_IDS.to_vec();
+        listed.sort_unstable();
+        assert_eq!(listed, ids, "OPERATION_IDS must match Operation::id");
+    }
+
     use super::*;
 
     #[test]

@@ -118,6 +118,19 @@ export class Session {
     await this.cmd("DELETE", "/actions");
   }
 
+  /**
+   * Replace a field's content as a user does: focus, Ctrl+A, type. For controlled number inputs,
+   * where WebDriver's element clear is not seen as an edit by every engine (WebView2 kept "3" → "39").
+   */
+  async replaceText(css, text) {
+    const el = await this.waitFor(css);
+    await this.exec("arguments[0].focus(); return 1", { [ELEMENT]: el });
+    await this.keys(["Control", "a"]);
+    await this.typeKeys(text);
+    const got = await this.exec("return arguments[0].value", { [ELEMENT]: el });
+    if (got !== text) throw new Error(`replaced ${css} with ${JSON.stringify(text)} but the field contains ${JSON.stringify(got)}`);
+  }
+
   async text(css) {
     const el = await this.waitFor(css);
     return this.cmd("GET", `/element/${el}/text`);

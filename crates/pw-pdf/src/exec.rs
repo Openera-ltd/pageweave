@@ -138,6 +138,46 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(w);
             (vec![out(&c, Some(n))], json!({ "page_count": n, "encryption": "AES-256" }))
         }
+        Operation::ExportText { input, pages, output } => {
+            let n = page_count(input, &opts)?;
+            let idx = match pages {
+                Some(spec) => parse_page_ranges(spec, n)?,
+                None => (0..n).collect(),
+            };
+            let texts = page_texts(input, &opts, &idx)?;
+            // Windows line endings so the file reads correctly in every editor; a form feed and a
+            // page heading separate pages.
+            let mut body = String::new();
+            for (k, (p, t)) in texts.iter().enumerate() {
+                if k > 0 {
+                    body.push_str("\r\n\x0c\r\n");
+                }
+                body.push_str(&format!("--- Page {} ---\r\n", p + 1));
+                body.push_str(&t.replace("\r\n", "\n").replace('\r', "\n").replace('\n', "\r\n"));
+                body.push_str("\r\n");
+            }
+            let bytes = body.into_bytes();
+            let empty = texts.iter().filter(|(_, t)| t.trim().is_empty()).count();
+            let c = write_atomic_bytes(output, policy, &req.operation.inputs(), &bytes, |p| {
+                let back = std::fs::read(p).map_err(|e| pw_core::PwError::from_io(&e, "output file"))?;
+                if back == bytes && std::str::from_utf8(&back).is_ok() {
+                    Ok(())
+                } else {
+                    Err(pw_core::PwError::new(
+                        pw_core::ErrorCategory::ValidationFailed,
+                        "output.verify",
+                        "The text file failed verification.",
+                    ))
+                }
+            })?;
+            if empty == texts.len() {
+                warnings
+                    .push("No text was found on these pages. Scanned pages need text recognition (OCR) first.".into());
+            } else if empty > 0 {
+                warnings.push(format!("{empty} page(s) had no text; scanned pages need text recognition (OCR) first."));
+            }
+            (vec![out(&c, None)], json!({ "pages": texts.len(), "pages_without_text": empty }))
+        }
         Operation::ImagesToPdf { inputs, page_size, margin, output } => {
             let page_progress = |done: u64, total: u64| {
                 if let Some(c) = ctx {

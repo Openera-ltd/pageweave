@@ -153,6 +153,35 @@ fn capabilities_lists_operations() {
     assert!(v["result"]["operations"].as_array().expect("ops").iter().any(|o| o == "merge"));
     assert!(v["result"]["operations"].as_array().expect("ops").iter().any(|o| o == "annotate"));
     assert_eq!(v["result"]["network"], "none");
+    let ops = v["result"]["operations"].as_array().expect("ops");
+    for id in ["set_bookmarks", "export_text", "redact"] {
+        assert!(ops.iter().any(|o| o == id), "{id} listed");
+    }
+}
+
+#[test]
+fn text_saves_a_file_with_output_and_prints_without() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("five.txt");
+    let r = bin()
+        .args(["--json", "text", "--pages", "2-3", "-o"])
+        .arg(&out)
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert_eq!(json(&r)["result"]["operation"], "export_text");
+    let text = std::fs::read_to_string(&out).expect("read");
+    assert!(
+        text.contains("--- Page 2 ---\r\n") && text.contains("PWMARK003") && !text.contains("PWMARK001"),
+        "{text:?}"
+    );
+    // The same command again refuses to overwrite (exit 2 = invalid input / conflict) and leaves the file.
+    let again = bin().args(["text", "-o"]).arg(&out).arg(fixture("five-pages.pdf")).output().expect("run");
+    assert!(!again.status.success());
+    assert_eq!(std::fs::read_to_string(&out).expect("read"), text);
+    let printed = bin().args(["text", "--pages", "1"]).arg(fixture("five-pages.pdf")).output().expect("run");
+    assert!(String::from_utf8_lossy(&printed.stdout).contains("PWMARK001"));
 }
 
 #[test]

@@ -80,6 +80,7 @@ pageweave --json --on-conflict rename merge a.pdf b.pdf -o combined.pdf
 pageweave --password-stdin inspect protected.pdf < password.txt
 pageweave --password-stdin unprotect -o open.pdf protected.pdf < password.txt
 pageweave properties --title "Q3 report" --author "" -o report-q3.pdf report.pdf
+pageweave text --pages 2-4 -o report.txt report.pdf     # without -o the text is printed
 pageweave images-to-pdf scan1.jpg scan2.jpg --page-size a4 -o scans.pdf
 pageweave attachments report.pdf                       # list; --save 0 -o file / --add a.csv -o copy.pdf
 pageweave crop --top 10 --bottom 10 --unit mm -o report-trimmed.pdf report.pdf

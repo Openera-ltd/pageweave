@@ -55,6 +55,7 @@ export type CommandId =
   | "pages.organize"
   | "pages.stamp"
   | "pages.exportImages"
+  | "pages.exportText"
   | "pages.ocr"
   | "pages.watermark"
   | "pages.crop"
@@ -125,6 +126,7 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "pages.organize", label: "Organize pages…", category: "Pages", shortcuts: ["Ctrl+Shift+O"] },
   { id: "pages.stamp", label: "Page numbers and stamps…", category: "Pages", shortcuts: [] },
   { id: "pages.exportImages", label: "Export pages as images…", category: "Pages", shortcuts: [] },
+  { id: "pages.exportText", label: "Export as text…", category: "Pages", shortcuts: [] },
   { id: "pages.ocr", label: "Recognize text (OCR)…", category: "Pages", shortcuts: [] },
   { id: "pages.watermark", label: "Watermark…", category: "Pages", shortcuts: [] },
   { id: "pages.crop", label: "Crop pages…", category: "Pages", shortcuts: [] },

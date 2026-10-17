@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, FolderOpen, Plus, Trash2 } from "lucide-react";
 import { useApi } from "../api";
-import { basename, dirname, siblingOutput } from "../paths";
+import { basename, dirname, join, siblingOutput, stem } from "../paths";
 import { toPwError, type AnnotationSpec, type CollisionPolicy, type FieldValue, type StampPosition, type JobSnapshot, type WatermarkLayer, type OpenedDoc, type Operation, type PwError } from "../types";
 import { Dialog, useDebounced } from "./ui";
 
-export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop";
+export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop" | "text";
 
 const TITLES: Record<PageTool, string> = {
   extract: "Extract pages",
@@ -19,10 +19,11 @@ const TITLES: Record<PageTool, string> = {
   ocr: "Recognize text (OCR)",
   watermark: "Watermark",
   crop: "Crop pages",
+  text: "Export as text",
 };
 
 /** Start-button label (the title's first word does not fit every tool). */
-const START: Partial<Record<PageTool, string>> = { ocr: "Recognize", watermark: "Add watermark", crop: "Crop" };
+const START: Partial<Record<PageTool, string>> = { ocr: "Recognize", watermark: "Add watermark", crop: "Crop", text: "Export" };
 
 const SUFFIX: Record<PageTool, string> = {
   extract: "extract",
@@ -36,7 +37,11 @@ const SUFFIX: Record<PageTool, string> = {
   ocr: "searchable",
   watermark: "watermarked",
   crop: "cropped",
+  text: "",
 };
+
+/** Tools that offer "All pages" (on by default unless pages were preselected). */
+const ALL_PAGES_TOOLS: PageTool[] = ["rotate", "stamp", "images", "ocr", "watermark", "crop", "text"];
 
 export type CropUnit = "mm" | "in" | "pt";
 /** Points per unit. */
@@ -119,7 +124,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   const suffix = tool === "save" ? (nFields === 0 ? "annotated" : nAnnots === 0 ? "filled" : "edited") : SUFFIX[tool];
   const api = useApi();
   const [pages, setPages] = useState(initialPages ?? (tool === "rotate" ? "" : ""));
-  const [allPages, setAllPages] = useState((tool === "rotate" || tool === "stamp" || tool === "images" || tool === "ocr" || tool === "watermark" || tool === "crop") && !initialPages);
+  const [allPages, setAllPages] = useState(ALL_PAGES_TOOLS.includes(tool) && !initialPages);
   const [includeTextPages, setIncludeTextPages] = useState(false);
   const [dpi, setDpi] = useState(150);
   /** Tools that write several files into a folder rather than one new PDF. */
@@ -138,7 +143,9 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   const [wmLayer, setWmLayer] = useState<WatermarkLayer>("over");
   const [cropUnit, setCropUnit] = useState<CropUnit>("mm");
   const [crop, setCrop] = useState({ top: "0", right: "0", bottom: "0", left: "0" });
-  const [output, setOutput] = useState(tool === "split" || tool === "images" ? dirname(doc.path) : siblingOutput(doc.path, suffix));
+  const [output, setOutput] = useState(
+    toFolder ? dirname(doc.path) : tool === "text" ? join(dirname(doc.path), `${stem(doc.path)}.txt`) : siblingOutput(doc.path, suffix),
+  );
   const [splitMode, setSplitMode] = useState<"every_n" | "ranges">("every_n");
   const [everyN, setEveryN] = useState("1");
   const [ranges, setRanges] = useState("");
@@ -147,7 +154,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   const [error, setError] = useState<PwError | null>(null);
   const [conflict, setConflict] = useState(false);
 
-  const needsRange = tool === "extract" || tool === "delete" || ((tool === "rotate" || tool === "stamp" || tool === "images" || tool === "ocr" || tool === "watermark" || tool === "crop") && !allPages);
+  const needsRange = tool === "extract" || tool === "delete" || (ALL_PAGES_TOOLS.includes(tool) && !allPages);
   const wmSizeN = Number(wmSize);
   const cropPt = {
     top: Number(crop.top) * UNIT_PT[cropUnit],
@@ -244,6 +251,8 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
           digits: digitsN,
           output,
         };
+      case "text":
+        return { op: "export_text", input: doc.path, pages: allPages ? null : pages, output };
       case "crop":
         return { op: "crop_pages", input: doc.path, pages: allPages ? null : pages, margins: cropPt, output };
       case "watermark":
@@ -282,6 +291,9 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
     if (toFolder) {
       const dir = await api.pickFolder(output || dirname(doc.path));
       if (dir) setOutput(dir);
+    } else if (tool === "text") {
+      const p = await api.pickSaveAnyPath(output);
+      if (p) setOutput(/\.txt$/i.test(p) ? p : `${p}.txt`);
     } else {
       const p = await api.pickSavePath(output);
       if (p) setOutput(p.toLowerCase().endsWith(".pdf") ? p : `${p}.pdf`);
@@ -505,7 +517,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         </p>
       )}
 
-      {(tool === "rotate" || tool === "stamp" || tool === "images" || tool === "ocr" || tool === "watermark" || tool === "crop") && (
+      {ALL_PAGES_TOOLS.includes(tool) && (
         <div className="field">
           <label className="row">
             <input type="checkbox" checked={allPages} onChange={(e) => setAllPages(e.target.checked)} /> All pages
@@ -614,6 +626,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
           </button>
         </div>
         {tool === "split" && <span className="hint">Files are named “{doc.name.replace(/\.pdf$/i, "")}_part01.pdf”, …</span>}
+        {tool === "text" && <span className="hint">UTF-8 text, one section per page. Scanned pages need text recognition first.</span>}
         {tool === "images" && <span className="hint">PNG files named “{doc.name.replace(/\.pdf$/i, "")}_p001.png”, …</span>}
       </div>
 

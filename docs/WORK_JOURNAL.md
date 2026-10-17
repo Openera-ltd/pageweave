@@ -188,3 +188,4 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - Organize: blank pages (PageRef.blank) sized and turned like the page they follow; verified by engine and component tests (no separate E2E: the organize E2E covers the dialog's keyboard flow and save path).
 - Images to PDF (PRD 06): JPEG passthrough (inline DCT; bytes verified identical), PNG decode, EXIF orientation via page /Rotate, own JPEG/PNG header parsers before PDFium; fixtures from tools/fixtures/gen_images.py (Pillow, committed).
 
+- Export as text (PRD 06): `export_text` op (UTF-8, CRLF, page headings, form feed separators; atomic write verified by byte read-back; OCR hint when pages have no text); CLI `text -o`; Pages ▸ Export as text…. Found while adding it: the CLI capability list was hand-written and had drifted (set_bookmarks missing) → `pw_core::ops::OPERATION_IDS`, kept in step with `Operation::id` by a unit test.

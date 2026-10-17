@@ -10,5 +10,5 @@
   ],
   "gpu_hours_ceiling": 3.0,
   "accelerator": "NvidiaTeslaT4",
-  "status": "queued"
+  "status": "running"
 }

@@ -201,6 +201,7 @@ export type Operation =
   | { op: "set_bookmarks"; input: string; bookmarks: Array<{ title: string; page: number; depth: number }>; output: string }
   | { op: "extract_attachment"; input: string; index: number; output: string }
   | { op: "add_attachments"; input: string; files: string[]; output: string }
+  | { op: "export_text"; input: string; pages: string | null; output: string }
   | { op: "crop_pages"; input: string; pages: string | null; margins: { top: number; right: number; bottom: number; left: number }; output: string }
   | { op: "watermark"; input: string; pages: string | null; watermark: WatermarkSpec; output: string }
   | { op: "set_properties"; input: string; title?: string; author?: string; subject?: string; keywords?: string; output: string }

@@ -43,11 +43,13 @@ enum Command {
     Inspect { file: PathBuf },
     /// List form fields (names, kinds, values, options) as JSON.
     Fields { file: PathBuf },
-    /// Print the text of all or selected pages.
+    /// Print the text of all or selected pages, or save it as a UTF-8 text file with -o.
     Text {
         file: PathBuf,
         #[arg(long)]
         pages: Option<String>,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
     },
     /// Find text and report pages and positions.
     Search {
@@ -303,7 +305,7 @@ fn capabilities() -> serde_json::Value {
     json!({
         "schema_version": pw_core::ops::SCHEMA_VERSION,
         "engine": pw_pdf::engine_version(),
-        "operations": ["inspect", "extract_text", "search", "render", "merge", "extract_pages", "delete_pages", "rotate_pages", "split", "annotate", "form_fields", "fill_form", "apply_edits", "organize_pages", "stamp_text", "export_images", "redaction_preview", "redact", "ocr_pages", "protect", "unprotect", "set_properties", "images_to_pdf", "watermark", "crop_pages", "list_attachments", "extract_attachment", "add_attachments", "sanitize_inspect", "sanitize"],
+        "operations": pw_core::ops::OPERATION_IDS,
         "collision_policies": ["fail", "rename", "replace"],
         "network": "none",
     })
@@ -326,7 +328,12 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
         }
         Command::Inspect { file } => Operation::Inspect { input: file.clone() },
         Command::Fields { file } => Operation::FormFields { input: file.clone() },
-        Command::Text { file, pages } => Operation::ExtractText { input: file.clone(), pages: pages.clone() },
+        Command::Text { file, pages, output: None } => {
+            Operation::ExtractText { input: file.clone(), pages: pages.clone() }
+        }
+        Command::Text { file, pages, output: Some(out) } => {
+            Operation::ExportText { input: file.clone(), pages: pages.clone(), output: out.clone() }
+        }
         Command::Search { file, query, match_case, whole_word } => Operation::Search {
             input: file.clone(),
             query: query.clone(),
