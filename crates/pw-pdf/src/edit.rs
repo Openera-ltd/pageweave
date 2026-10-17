@@ -295,17 +295,34 @@ pub fn organize_pages(
         }
     }
     let mut out = pdfium.create_new_pdf().map_err(|e| map_pdfium_error(&e, "create"))?;
-    let mut rotations = Vec::with_capacity(pages.len());
-    for (i, p) in pages.iter().enumerate() {
-        if i % 64 == 0 && cancelled() {
+    // Copy consecutive runs (same source, ascending pages) in one call: much faster than page by
+    // page for typical reorders (measured: 2,000 scattered single copies ≈1.4 s).
+    let mut i = 0;
+    while i < pages.len() {
+        if cancelled() {
             return Err(PwError::cancelled());
         }
-        let src = &sources[p.source as usize];
+        let first = pages[i];
+        let mut end = i;
+        while end + 1 < pages.len()
+            && pages[end + 1].source == first.source
+            && pages[end + 1].page == pages[end].page + 1
+        {
+            end += 1;
+        }
         let dest = out.pages().len();
         out.pages_mut()
-            .copy_page_range_from_document(src, (p.page as PdfPageIndex)..=(p.page as PdfPageIndex), dest)
+            .copy_page_range_from_document(
+                &sources[first.source as usize],
+                (first.page as PdfPageIndex)..=(pages[end].page as PdfPageIndex),
+                dest,
+            )
             .map_err(|e| map_pdfium_error(&e, "copy_pages"))?;
-        let mut page = out.pages().get(dest).map_err(|e| map_pdfium_error(&e, "page"))?;
+        i = end + 1;
+    }
+    let mut rotations = Vec::with_capacity(pages.len());
+    for (i, p) in pages.iter().enumerate() {
+        let mut page = out.pages().get(i as PdfPageIndex).map_err(|e| map_pdfium_error(&e, "page"))?;
         let current = rotation_of(&page);
         let new = (current as i32 + p.rotate).rem_euclid(360) as u32;
         if new != current {

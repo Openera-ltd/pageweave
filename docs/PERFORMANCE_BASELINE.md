@@ -53,3 +53,17 @@ Observations / follow-ups:
   the first page adds ~0.2 s in release. Real Windows/WebView2 numbers on target hardware are needed
   before setting a budget; CI Windows E2E will report the same marks.
 - Not a cold start in the strict sense (files cached); a true cold-boot measurement needs real hardware.
+
+## 2026-10-17 — engine lock hold times for heavy operations
+
+Engine use is serialized per operation (D-006 amendment), so a long operation delays page rendering
+until it finishes. Measured hold times (release CLI, same Linux container, synthetic text pages):
+
+| Operation | Duration |
+|---|---|
+| Combine 2 × 1,000 pages | 145–239 ms |
+| Organize 1,000 pages, one page moved and one rotated (runs copied in one call) | 95 ms |
+| Organize 2,000 fully scattered page references (worst case: no consecutive runs) | ≈1.4 s |
+
+Follow-up: if real documents push hold times past ~0.5 s in normal use, split long operations into
+steps that release the lock between pages so rendering can interleave.
