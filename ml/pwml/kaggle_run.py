@@ -146,12 +146,22 @@ def git(*args: str) -> str:
     return subprocess.run(["git", *args], capture_output=True, text=True, cwd=ML).stdout.strip()
 
 
-def push(kernel_dir: Path, purpose: str, gpu_hours: float | None) -> dict:
+def push(kernel_dir: Path, purpose: str, gpu_hours: float | None, supersede: bool = False, cpu: bool = False) -> dict:
+    """Start a run. `supersede` replaces a still-active run of the SAME kernel (Kaggle runs only the
+    newest version of a kernel; the older run is recorded as superseded). `cpu` runs without a GPU."""
     b = budget()
     hours = gpu_hours if gpu_hours is not None else b["default_gpu_hours_per_run"]
     if hours > b["max_gpu_hours_per_run"]:
         raise KaggleError(f"{hours} GPU-hours exceeds the per-run ceiling of {b['max_gpu_hours_per_run']}.")
+    suffix = json.loads((kernel_dir / "kernel-metadata.json").read_text())["id_suffix"]
     active = [r for r in list_runs() if r.get("status") in ("queued", "running")]
+    if supersede:
+        for r in active:
+            if r.get("kernel", "").endswith(f"/pageweave-{suffix}"):
+                r["status"] = "superseded"
+                r["superseded_utc"] = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+                save_run(r)
+        active = [r for r in active if r.get("status") != "superseded"]
     if len(active) >= b["max_concurrent_runs"]:
         raise KaggleError(f"{len(active)} run(s) already active ({', '.join(r['run_id'] for r in active)}); the budget allows {b['max_concurrent_runs']}.")
     if git("status", "--porcelain", "--", str(kernel_dir)):
@@ -171,7 +181,7 @@ def push(kernel_dir: Path, purpose: str, gpu_hours: float | None) -> dict:
             "language": "python",
             "kernel_type": "script",
             "is_private": True,
-            "enable_gpu": meta_tpl.get("enable_gpu", True),
+            "enable_gpu": meta_tpl.get("enable_gpu", True) and not cpu,
             "enable_internet": meta_tpl.get("enable_internet", False),
             "dataset_sources": [s.replace("{user}", user) for s in meta_tpl.get("dataset_sources", [])],
             "model_sources": meta_tpl.get("model_sources", []),
@@ -192,6 +202,7 @@ def push(kernel_dir: Path, purpose: str, gpu_hours: float | None) -> dict:
         "kernel_files_sha256": files_hash,
         "datasets": meta["dataset_sources"],
         "gpu_hours_ceiling": hours,
+        "accelerator": meta_tpl.get("accelerator") if meta["enable_gpu"] else "none",
         "status": "queued",
     }
     save_run(run)
@@ -288,6 +299,8 @@ def main() -> int:
     p.add_argument("kernel_dir", type=Path)
     p.add_argument("--purpose", required=True)
     p.add_argument("--gpu-hours", type=float)
+    p.add_argument("--supersede", action="store_true", help="replace a still-active run of the same kernel")
+    p.add_argument("--cpu", action="store_true", help="run without a GPU")
     p = sub.add_parser("wait")
     p.add_argument("run_id")
     p = sub.add_parser("pull")
@@ -300,7 +313,7 @@ def main() -> int:
         elif a.cmd == "publish-dataset":
             r = publish_dataset(a.dir, a.slug, a.title or a.slug.replace("-", " "))
         elif a.cmd == "push":
-            r = push(a.kernel_dir, a.purpose, a.gpu_hours)
+            r = push(a.kernel_dir, a.purpose, a.gpu_hours, supersede=a.supersede, cpu=a.cpu)
         elif a.cmd == "wait":
             r = wait(a.run_id)
         else:

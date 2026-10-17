@@ -86,6 +86,19 @@ class KaggleSafety(unittest.TestCase):
         finally:
             shutil.rmtree(tmp)
 
+    def test_supersede_only_replaces_the_same_kernel(self):
+        other = {"run_id": "r1", "kernel": "u/pageweave-rec-finetune", "status": "queued"}
+        same = {"run_id": "r2", "kernel": "u/pageweave-env-probe", "status": "queued"}
+        saved = []
+        with mock.patch.object(kaggle_run, "list_runs", return_value=[dict(other), dict(same)]), \
+             mock.patch.object(kaggle_run, "save_run", side_effect=lambda r: saved.append(r)), \
+             mock.patch.object(kaggle_run, "kaggle", side_effect=AssertionError("must not call Kaggle")):
+            # Another kernel is still active, so the budget of one concurrent run refuses even with supersede.
+            with self.assertRaisesRegex(kaggle_run.KaggleError, "already active"):
+                kaggle_run.push(Path("kaggle/probe"), "test", None, supersede=True)
+        self.assertEqual([r["run_id"] for r in saved], ["r2"])
+        self.assertEqual(saved[0]["status"], "superseded")
+
     def test_gpu_ceiling_is_enforced_before_anything_is_sent(self):
         with mock.patch.object(kaggle_run, "kaggle", side_effect=AssertionError("must not call Kaggle")):
             with self.assertRaisesRegex(kaggle_run.KaggleError, "ceiling"):
