@@ -1134,7 +1134,8 @@ pub struct OperationResult {
 mod tests {
     #[test]
     fn operation_ids_list_every_variant_once() {
-        let src = include_str!("ops.rs");
+        // Windows checkouts may have CRLF line endings.
+        let src = include_str!("ops.rs").replace("\r\n", "\n");
         let start = src.find("pub fn id(&self)").expect("id fn");
         let end = start + src[start..].find("\n    }\n").expect("end of id fn");
         let mut ids: Vec<&str> =
