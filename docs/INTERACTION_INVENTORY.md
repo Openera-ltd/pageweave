@@ -54,9 +54,10 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `pages.stamp` | Page numbers and stamps… | — | Exercised by tests |
 | `pages.exportImages` | Export pages as images… | — | Exercised by tests |
 | `pages.ocr` | Recognize text (OCR)… | — | Exercised by tests |
+| `pages.watermark` | Watermark… | — | Exercised by tests |
 | `app.settings` | Settings | Ctrl+ | Exercised by tests |
 | `app.shortcuts` | Keyboard shortcuts | — | Exercised by tests |
 | `app.commandPalette` | Command palette | Ctrl+K, Ctrl+Shift+P | Exercised by tests |
 | `app.openLogs` | Show log folder | — | Exercised by tests |
 
-Coverage: 52 of 52 commands exercised by unit or real-app E2E tests.
+Coverage: 53 of 53 commands exercised by unit or real-app E2E tests.

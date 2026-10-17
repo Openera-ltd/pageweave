@@ -204,6 +204,49 @@ impl Default for SanitizeOptions {
     }
 }
 
+/// Where a watermark goes relative to the page content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WatermarkLayer {
+    /// Drawn over the content (always visible).
+    #[default]
+    Over,
+    /// Drawn behind the content (hidden where the page is covered, e.g. by a scanned image).
+    Behind,
+}
+
+fn default_watermark_size() -> f32 {
+    72.0
+}
+fn default_watermark_color() -> String {
+    "#808080".into()
+}
+fn default_watermark_opacity() -> f32 {
+    0.25
+}
+fn default_watermark_angle() -> f32 {
+    45.0
+}
+
+/// A text watermark, centred on each page.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WatermarkSpec {
+    pub text: String,
+    #[serde(default = "default_watermark_size")]
+    pub font_size: f32,
+    /// `#rrggbb`.
+    #[serde(default = "default_watermark_color")]
+    pub color: String,
+    /// 0.05–1.
+    #[serde(default = "default_watermark_opacity")]
+    pub opacity: f32,
+    /// Degrees counter-clockwise, −90 to 90, as the page is displayed.
+    #[serde(default = "default_watermark_angle")]
+    pub angle: f32,
+    #[serde(default)]
+    pub layer: WatermarkLayer,
+}
+
 /// An area to redact: everything under it is removed and it is painted black.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct RedactArea {
@@ -329,6 +372,14 @@ pub enum Operation {
         permissions: ProtectPermissions,
         output: PathBuf,
     },
+    /// Add a text watermark to pages (all when `pages` is absent) in a new file.
+    Watermark {
+        input: PathBuf,
+        #[serde(default)]
+        pages: Option<String>,
+        watermark: WatermarkSpec,
+        output: PathBuf,
+    },
     /// Change document properties in a new file. `None` keeps a property, an empty string removes it.
     SetProperties {
         input: PathBuf,
@@ -420,6 +471,7 @@ impl Operation {
             Operation::Protect { .. } => "protect",
             Operation::Unprotect { .. } => "unprotect",
             Operation::SetProperties { .. } => "set_properties",
+            Operation::Watermark { .. } => "watermark",
             Operation::SanitizeInspect { .. } => "sanitize_inspect",
             Operation::Sanitize { .. } => "sanitize",
             Operation::Redact { .. } => "redact",
@@ -464,6 +516,7 @@ impl Operation {
             | Operation::Protect { input, .. }
             | Operation::Unprotect { input, .. }
             | Operation::SetProperties { input, .. }
+            | Operation::Watermark { input, .. }
             | Operation::SanitizeInspect { input }
             | Operation::Sanitize { input, .. }
             | Operation::Redact { input, .. }
@@ -505,6 +558,7 @@ impl Operation {
             | Operation::Protect { output, .. }
             | Operation::Unprotect { output, .. }
             | Operation::SetProperties { output, .. }
+            | Operation::Watermark { output, .. }
             | Operation::Sanitize { output, .. }
             | Operation::StampText { output, .. } => parent(output),
         }
@@ -621,6 +675,33 @@ impl Operation {
             }
             Operation::Redact { areas, .. } | Operation::RedactionPreview { areas, .. } => {
                 validate_redact_areas(areas)?
+            }
+            Operation::Watermark { watermark: w, .. } => {
+                if w.text.trim().is_empty() {
+                    return Err(PwError::invalid("watermark.empty", "Enter the watermark text."));
+                }
+                if w.text.chars().count() > MAX_STAMP_CHARS {
+                    return Err(PwError::invalid("watermark.too_long", "The watermark text is too long."));
+                }
+                if !w.text.chars().all(|c| (' '..='~').contains(&c) || ('\u{a0}'..='\u{ff}').contains(&c)) {
+                    return Err(PwError::invalid(
+                        "watermark.charset",
+                        "Watermarks support Latin characters only for now (letters, digits and common symbols).",
+                    ));
+                }
+                if !(8.0..=400.0).contains(&w.font_size) {
+                    return Err(PwError::invalid("watermark.size", "Use a text size of 8–400 pt."));
+                }
+                if !(0.05..=1.0).contains(&w.opacity) {
+                    return Err(PwError::invalid("watermark.opacity", "Use an opacity of 5–100%."));
+                }
+                if !(-90.0..=90.0).contains(&w.angle) || !w.angle.is_finite() {
+                    return Err(PwError::invalid("watermark.angle", "Use an angle from −90° to 90°."));
+                }
+                let hex = w.color.strip_prefix('#').unwrap_or("");
+                if hex.len() != 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+                    return Err(PwError::invalid("watermark.color", "Watermark colors must look like #rrggbb."));
+                }
             }
             Operation::SetProperties { title, author, subject, keywords, .. } => {
                 let fields = [title, author, subject, keywords];

@@ -21,6 +21,7 @@ Implemented and tested:
 | Forms | Fill AcroForm text, multiline, checkbox, radio, combo and list fields directly on the page; values are entered through PDFium's form filler so the saved copy's appearances show them; Ctrl+S saves all changes (fields and annotations) into one verified copy, then the tab switches to it | engine tests verify values, button states and regenerated appearance streams with an independent parser and by rendering; E2E fills every kind in the real app and checks the saved file with the CLI |
 | OCR | Recognise text on scanned pages and save a searchable copy (invisible text layer over the words; pages look identical); pages that already have text are left alone | Benchmark against Tesseract on a synthetic, rights-clean corpus (`docs/benchmarks/OCR_BASELINE.md`); engine tests check word recall, placement and search; E2E runs it in the real app; the Windows package runs it in CI |
 | Password protection | Encrypted copy (AES-256) with an open password and optional permissions; protected originals can be re-protected with a new password | engine tests check refusal without the password, content, and the encryption dictionary with an independent parser; E2E protects and reopens in the real app |
+| Watermark | Text watermark with size, colour, opacity and angle, over or behind the content, on chosen pages | text found on exactly the chosen pages, translucency and angle measured in renders; pages where it cannot be seen are reported; E2E in the real app |
 | Document properties | View, and edit title, author, subject and keywords into a new file (XMP kept in step) | values read back by PDFium and an independent parser; every page renders as before; E2E edits and re-inspects in the real app |
 | Remove password | Copy that opens without a password; files whose owner restricted them need the permissions password | engine tests check the copy opens without a password with identical text and no encryption dictionary (independent parser), and that restrictions are honoured; E2E in the real app |
 | Remove hidden information | Lists and removes metadata, scripts and actions, attachments, hidden layers and comments (optionally form fields and web links) in a new file; earlier saved versions always removed | every removed kind is searched for in the whole output with an independent parser, and each page must render exactly as before; E2E cleans and re-inspects in the real app |
@@ -75,6 +76,7 @@ pageweave --json --on-conflict rename merge a.pdf b.pdf -o combined.pdf
 pageweave --password-stdin inspect protected.pdf < password.txt
 pageweave --password-stdin unprotect -o open.pdf protected.pdf < password.txt
 pageweave properties --title "Q3 report" --author "" -o report-q3.pdf report.pdf
+pageweave watermark --text DRAFT --opacity 20 --angle 45 -o report-draft.pdf report.pdf
 pageweave sanitize --inspect report.pdf
 pageweave sanitize --remove-web-links -o report-clean.pdf report.pdf
 ```

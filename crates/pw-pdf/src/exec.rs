@@ -138,6 +138,11 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(w);
             (vec![out(&c, Some(n))], json!({ "page_count": n, "encryption": "AES-256" }))
         }
+        Operation::Watermark { input, pages, watermark, output } => {
+            let (c, n, w) = edit::watermark(input, &opts, pages.as_deref(), watermark, output, policy, &cancelled)?;
+            warnings.extend(w);
+            (vec![out(&c, Some(n))], json!({ "page_count": n }))
+        }
         Operation::SetProperties { input, title, author, subject, keywords, output } => {
             let page_progress = |done: u64, total: u64| {
                 if let Some(c) = ctx {

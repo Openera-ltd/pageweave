@@ -146,6 +146,32 @@ enum Command {
         #[arg(long)]
         no_assemble: bool,
     },
+    /// Add a text watermark, centred on each page, in a new file.
+    Watermark {
+        file: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        #[arg(long)]
+        text: String,
+        /// Pages (range syntax); all pages when absent.
+        #[arg(long)]
+        pages: Option<String>,
+        /// Text size in points (8–400).
+        #[arg(long, default_value_t = 72.0)]
+        size: f32,
+        /// #rrggbb
+        #[arg(long, default_value = "#808080")]
+        color: String,
+        /// Opacity in percent (5–100).
+        #[arg(long, default_value_t = 25)]
+        opacity: u32,
+        /// Degrees counter-clockwise as displayed (−90 to 90).
+        #[arg(long, default_value_t = 45.0, allow_hyphen_values = true)]
+        angle: f32,
+        /// Place it behind the page content instead of over it.
+        #[arg(long)]
+        behind: bool,
+    },
     /// Change document properties in a new file. Options not given keep their value; an empty
     /// value (--author "") removes the property.
     Properties {
@@ -233,7 +259,7 @@ fn capabilities() -> serde_json::Value {
     json!({
         "schema_version": pw_core::ops::SCHEMA_VERSION,
         "engine": pw_pdf::engine_version(),
-        "operations": ["inspect", "extract_text", "search", "render", "merge", "extract_pages", "delete_pages", "rotate_pages", "split", "annotate", "form_fields", "fill_form", "apply_edits", "organize_pages", "stamp_text", "export_images", "redaction_preview", "redact", "ocr_pages", "protect", "unprotect", "set_properties", "sanitize_inspect", "sanitize"],
+        "operations": ["inspect", "extract_text", "search", "render", "merge", "extract_pages", "delete_pages", "rotate_pages", "split", "annotate", "form_fields", "fill_form", "apply_edits", "organize_pages", "stamp_text", "export_images", "redaction_preview", "redact", "ocr_pages", "protect", "unprotect", "set_properties", "watermark", "sanitize_inspect", "sanitize"],
         "collision_policies": ["fail", "rename", "replace"],
         "network": "none",
     })
@@ -306,6 +332,19 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
                 annotate: !no_annotate,
                 fill_forms: !no_fill_forms,
                 assemble: !no_assemble,
+            },
+            output: output.clone(),
+        },
+        Command::Watermark { file, output, text, pages, size, color, opacity, angle, behind } => Operation::Watermark {
+            input: file.clone(),
+            pages: pages.clone(),
+            watermark: pw_core::ops::WatermarkSpec {
+                text: text.clone(),
+                font_size: *size,
+                color: color.clone(),
+                opacity: *opacity as f32 / 100.0,
+                angle: *angle,
+                layer: if *behind { pw_core::ops::WatermarkLayer::Behind } else { pw_core::ops::WatermarkLayer::Over },
             },
             output: output.clone(),
         },

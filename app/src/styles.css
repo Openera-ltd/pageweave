@@ -308,6 +308,18 @@ textarea {
   flex: 1;
 }
 
+/* Watermark preview: a small page with the watermark as it will be placed. */
+.wm-preview {
+  flex: none;
+  width: 96px;
+  height: 124px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-1, 4px);
+  box-shadow: var(--shadow-1, none);
+}
+
+
 /* Fieldsets default to min-content width; let long findings truncate instead of widening the dialog. */
 .sanitize-kinds {
   min-width: 0;

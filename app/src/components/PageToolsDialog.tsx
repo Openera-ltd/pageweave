@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, FolderOpen, Plus, Trash2 } from "lucide-react";
 import { useApi } from "../api";
 import { basename, dirname, siblingOutput } from "../paths";
-import { toPwError, type AnnotationSpec, type CollisionPolicy, type FieldValue, type StampPosition, type JobSnapshot, type OpenedDoc, type Operation, type PwError } from "../types";
+import { toPwError, type AnnotationSpec, type CollisionPolicy, type FieldValue, type StampPosition, type JobSnapshot, type WatermarkLayer, type OpenedDoc, type Operation, type PwError } from "../types";
 import { Dialog, useDebounced } from "./ui";
 
-export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr";
+export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark";
 
 const TITLES: Record<PageTool, string> = {
   extract: "Extract pages",
@@ -17,10 +17,11 @@ const TITLES: Record<PageTool, string> = {
   stamp: "Page numbers and stamps",
   images: "Export pages as images",
   ocr: "Recognize text (OCR)",
+  watermark: "Watermark",
 };
 
 /** Start-button label (the title's first word does not fit every tool). */
-const START: Partial<Record<PageTool, string>> = { ocr: "Recognize" };
+const START: Partial<Record<PageTool, string>> = { ocr: "Recognize", watermark: "Add watermark" };
 
 const SUFFIX: Record<PageTool, string> = {
   extract: "extract",
@@ -32,7 +33,16 @@ const SUFFIX: Record<PageTool, string> = {
   stamp: "numbered",
   images: "",
   ocr: "searchable",
+  watermark: "watermarked",
 };
+
+/** Watermark angles as displayed (degrees counter-clockwise). */
+const ANGLES: Array<[number, string]> = [
+  [45, "Diagonal up"],
+  [-45, "Diagonal down"],
+  [0, "Horizontal"],
+  [90, "Vertical"],
+];
 
 const DPI_CHOICES = [72, 96, 150, 300, 600];
 
@@ -98,7 +108,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   const suffix = tool === "save" ? (nFields === 0 ? "annotated" : nAnnots === 0 ? "filled" : "edited") : SUFFIX[tool];
   const api = useApi();
   const [pages, setPages] = useState(initialPages ?? (tool === "rotate" ? "" : ""));
-  const [allPages, setAllPages] = useState((tool === "rotate" || tool === "stamp" || tool === "images" || tool === "ocr") && !initialPages);
+  const [allPages, setAllPages] = useState((tool === "rotate" || tool === "stamp" || tool === "images" || tool === "ocr" || tool === "watermark") && !initialPages);
   const [includeTextPages, setIncludeTextPages] = useState(false);
   const [dpi, setDpi] = useState(150);
   /** Tools that write several files into a folder rather than one new PDF. */
@@ -109,6 +119,12 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   const [startAt, setStartAt] = useState("1");
   const [digits, setDigits] = useState("0");
   const [degrees, setDegrees] = useState(90);
+  const [wmText, setWmText] = useState("CONFIDENTIAL");
+  const [wmSize, setWmSize] = useState("72");
+  const [wmColor, setWmColor] = useState("#808080");
+  const [wmOpacity, setWmOpacity] = useState(25);
+  const [wmAngle, setWmAngle] = useState(45);
+  const [wmLayer, setWmLayer] = useState<WatermarkLayer>("over");
   const [output, setOutput] = useState(tool === "split" || tool === "images" ? dirname(doc.path) : siblingOutput(doc.path, suffix));
   const [splitMode, setSplitMode] = useState<"every_n" | "ranges">("every_n");
   const [everyN, setEveryN] = useState("1");
@@ -118,7 +134,8 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   const [error, setError] = useState<PwError | null>(null);
   const [conflict, setConflict] = useState(false);
 
-  const needsRange = tool === "extract" || tool === "delete" || ((tool === "rotate" || tool === "stamp" || tool === "images" || tool === "ocr") && !allPages);
+  const needsRange = tool === "extract" || tool === "delete" || ((tool === "rotate" || tool === "stamp" || tool === "images" || tool === "ocr" || tool === "watermark") && !allPages);
+  const wmSizeN = Number(wmSize);
   const sizeN = Number(fontSize);
   const startN = Number(startAt);
   const digitsN = Number(digits);
@@ -160,6 +177,11 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
       if (!Number.isInteger(startN) || startN < 0) return "Start at must be a whole number.";
       if (!Number.isInteger(digitsN) || digitsN < 0 || digitsN > 12) return "Digits must be 0 to 12.";
     }
+    if (tool === "watermark") {
+      if (!wmText.trim()) return "Enter the watermark text.";
+      if (!stampCharsOk(wmText)) return "Watermarks support Latin characters only for now.";
+      if (!(wmSizeN >= 8 && wmSizeN <= 400)) return "Use a text size from 8 to 400.";
+    }
     if (!output.trim()) return toFolder ? "Choose an output folder." : "Choose where to save the new file.";
     return null;
   })();
@@ -193,6 +215,14 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
           stamps: [{ text: stampText, position, font_size: sizeN, color: "#000000", margin: 28 }],
           start: startN,
           digits: digitsN,
+          output,
+        };
+      case "watermark":
+        return {
+          op: "watermark",
+          input: doc.path,
+          pages: allPages ? null : pages,
+          watermark: { text: wmText, font_size: wmSizeN, color: wmColor, opacity: wmOpacity / 100, angle: wmAngle, layer: wmLayer },
           output,
         };
       case "save":
@@ -322,6 +352,70 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         </>
       )}
 
+      {tool === "watermark" && (
+        <>
+          <div className="row" style={{ gap: "var(--space-4)", alignItems: "flex-start" }}>
+            <div className="grow" style={{ display: "grid", gap: "var(--space-3)" }}>
+              <div className="field">
+                <label htmlFor="wm-text">Text</label>
+                <input id="wm-text" className="input" value={wmText} onChange={(e) => setWmText(e.target.value)} spellCheck={false} />
+              </div>
+              <div className="row" style={{ gap: "var(--space-4)" }}>
+                <div className="field">
+                  <label htmlFor="wm-size">Size (pt)</label>
+                  <input id="wm-size" className="input" type="number" min={8} max={400} style={{ width: "8ch" }} value={wmSize} onChange={(e) => setWmSize(e.target.value)} />
+                </div>
+                <div className="field">
+                  <label htmlFor="wm-color">Color</label>
+                  <input id="wm-color" className="input" type="color" style={{ width: 48, padding: 2 }} value={wmColor} onChange={(e) => setWmColor(e.target.value)} />
+                </div>
+                <div className="field grow">
+                  <label htmlFor="wm-opacity">Opacity {wmOpacity}%</label>
+                  <input id="wm-opacity" type="range" min={5} max={100} step={5} value={wmOpacity} onChange={(e) => setWmOpacity(Number(e.target.value))} />
+                </div>
+              </div>
+            </div>
+            <svg className="wm-preview" viewBox="0 0 96 124" role="img" aria-label={`Preview: “${wmText}” at ${wmAngle}°, ${wmOpacity}% opacity`} data-testid="wm-preview">
+              <rect x="0" y="0" width="96" height="124" fill="#fff" />
+              <text
+                x="48"
+                y="62"
+                textAnchor="middle"
+                dominantBaseline="middle"
+                transform={`rotate(${-wmAngle} 48 62)`}
+                fill={wmColor}
+                fillOpacity={wmOpacity / 100}
+                fontSize={Math.max(4, Math.min(40, (wmSizeN || 72) / 6))}
+                fontFamily="Helvetica, Arial, sans-serif"
+              >
+                {wmText}
+              </text>
+            </svg>
+          </div>
+          <div className="field">
+            <span className="label" id="wm-angle-label">Angle</span>
+            <div className="segmented" role="radiogroup" aria-labelledby="wm-angle-label">
+              {ANGLES.map(([a, l]) => (
+                <button key={a} type="button" role="radio" aria-checked={wmAngle === a} data-angle={a} onClick={() => setWmAngle(a)}>
+                  {l}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="field">
+            <span className="label" id="wm-layer-label">Place</span>
+            <div className="segmented" role="radiogroup" aria-labelledby="wm-layer-label">
+              <button type="button" role="radio" aria-checked={wmLayer === "over"} data-layer="over" onClick={() => setWmLayer("over")}>
+                Over the content
+              </button>
+              <button type="button" role="radio" aria-checked={wmLayer === "behind"} data-layer="behind" onClick={() => setWmLayer("behind")} title="Hidden where the page is covered, for example by a scanned image">
+                Behind the content
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
       {tool === "images" && (
         <div className="field">
           <label htmlFor="export-dpi">Resolution</label>
@@ -341,7 +435,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         </p>
       )}
 
-      {(tool === "rotate" || tool === "stamp" || tool === "images" || tool === "ocr") && (
+      {(tool === "rotate" || tool === "stamp" || tool === "images" || tool === "ocr" || tool === "watermark") && (
         <div className="field">
           <label className="row">
             <input type="checkbox" checked={allPages} onChange={(e) => setAllPages(e.target.checked)} /> All pages

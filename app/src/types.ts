@@ -197,8 +197,23 @@ export type Operation =
   | { op: "ocr_pages"; input: string; pages: string | null; skip_text_pages: boolean; dpi: number; output: string }
   | { op: "protect"; input: string; permissions: ProtectPermissions; output: string }
   | { op: "unprotect"; input: string; output: string }
+  | { op: "watermark"; input: string; pages: string | null; watermark: WatermarkSpec; output: string }
   | { op: "set_properties"; input: string; title?: string; author?: string; subject?: string; keywords?: string; output: string }
   | { op: "sanitize"; input: string; options: SanitizeOptions; output: string };
+
+export type WatermarkLayer = "over" | "behind";
+
+/** A text watermark centred on each page (pw-core `WatermarkSpec`). */
+export interface WatermarkSpec {
+  text: string;
+  font_size: number;
+  color: string;
+  /** 0.05–1. */
+  opacity: number;
+  /** Degrees counter-clockwise as displayed, −90 to 90. */
+  angle: number;
+  layer: WatermarkLayer;
+}
 
 /** What a sanitized copy leaves out (pw-core `SanitizeOptions`). */
 export interface SanitizeOptions {

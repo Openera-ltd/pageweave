@@ -53,6 +53,7 @@ export type CommandId =
   | "pages.stamp"
   | "pages.exportImages"
   | "pages.ocr"
+  | "pages.watermark"
   | "app.settings"
   | "app.shortcuts"
   | "app.commandPalette"
@@ -118,6 +119,7 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "pages.stamp", label: "Page numbers and stamps…", category: "Pages", shortcuts: [] },
   { id: "pages.exportImages", label: "Export pages as images…", category: "Pages", shortcuts: [] },
   { id: "pages.ocr", label: "Recognize text (OCR)…", category: "Pages", shortcuts: [] },
+  { id: "pages.watermark", label: "Watermark…", category: "Pages", shortcuts: [] },
   { id: "app.settings", label: "Settings", category: "App", shortcuts: ["Ctrl+,"] },
   { id: "app.shortcuts", label: "Keyboard shortcuts", category: "App", shortcuts: [] },
   { id: "app.commandPalette", label: "Command palette", category: "App", shortcuts: ["Ctrl+K", "Ctrl+Shift+P"], allowInInput: true },

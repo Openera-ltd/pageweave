@@ -394,3 +394,26 @@ fn properties_set_keep_and_remove() {
     assert_eq!(r.status.code(), Some(2));
     assert!(!none.exists());
 }
+
+#[test]
+fn watermark_command() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("w.pdf");
+    let r = bin()
+        .args(["watermark", "--text", "DRAFT", "--pages", "2", "--angle", "-45", "--opacity", "40", "-o"])
+        .arg(&out)
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let v = json(&bin().args(["--json", "search"]).arg(&out).arg("DRAFT").output().expect("run"));
+    assert_eq!(v["result"]["data"]["count"], 1);
+    assert_eq!(v["result"]["data"]["hits"][0]["page"], 1);
+    let bad = bin()
+        .args(["watermark", "--text", "x", "--opacity", "0", "-o"])
+        .arg(dir.path().join("b.pdf"))
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert_eq!(bad.status.code(), Some(2));
+}

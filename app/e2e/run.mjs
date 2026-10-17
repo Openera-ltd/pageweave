@@ -1114,6 +1114,51 @@ await test("protect with password: AES-256 copy needs the password; wrong passwo
   }
 });
 
+await test("watermark: Pages menu, preview follows angle, chosen pages only, translucent result verified", async () => {
+  const src = join(FIX, "five-pages.pdf");
+  const before = sha(src);
+  const out = join(work, "stamped-draft.pdf");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.exec("[...document.querySelectorAll('button[aria-haspopup=menu]')].find(b => b.textContent.trim() === 'Pages').click(); return 1");
+    await s.click('[role="menuitem"][data-command="pages.watermark"]');
+    await s.waitFor("#wm-text");
+    assert((await s.text('[role="dialog"] h2')) === "Watermark", "dialog title");
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("five-pages-watermarked.pdf"), "default output name");
+    await s.type("#wm-text", "DRAFT COPY");
+    await s.click('[role="radio"][data-angle="0"]');
+    const transform = () => s.exec("return document.querySelector('[data-testid=wm-preview] text').getAttribute('transform')");
+    assert(/^rotate\(-?0 48 62\)$/.test(await transform()), `preview follows the angle: ${await transform()}`);
+    await s.click('[role="radio"][data-angle="45"]');
+    assert((await transform()) === "rotate(-45 48 62)", "preview at 45°");
+    assert((await s.attr('[data-testid="wm-preview"]', "aria-label")).includes("45°"), "preview has an accessible description");
+    // Only pages 2 and 4.
+    await s.click('[role="dialog"] input[type=checkbox]');
+    await s.type("#pages", "2, 4");
+    await s.waitUntil(async () => (await s.text("#pages-msg")) === "2 pages selected", "range checked");
+    await s.type("#output", out);
+    await axeCheck(s, "watermark-dialog");
+    writeFileSync(join(ART, "watermark-dialog.png"), await s.screenshot());
+    await s.waitUntil(async () => (await s.attr('[data-testid="tool-start"]', "aria-disabled")) === null, "ready");
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved stamped-draft.pdf")), "saved notice", 30000);
+    // Open the copy: the watermark is findable on page 2.
+    await s.exec("[...document.querySelectorAll('.notice button')].find(b => b.textContent === 'Open').click(); return 1");
+    await s.waitUntil(async () => (await s.exec("return [...document.querySelectorAll('.tab-label .name')].map(n => n.textContent)")).includes("stamped-draft.pdf"), "copy opened");
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "f"]);
+    await s.type('input[aria-label="Find in document"]', "DRAFT");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => /^1 of 2/.test(await s.text(".searchbar .count")), "found on two pages");
+    await s.keys(["Escape"]);
+  });
+  assert(sha(src) === before, "source PDF unchanged");
+  if (CLI) {
+    const r = JSON.parse(execFileSync(CLI, ["--json", "search", out, "DRAFT"], { encoding: "utf8" })).result.data;
+    assert(r.count === 2 && r.hits.map((h) => h.page).join() === "1,3", `independent check: ${JSON.stringify(r.hits.map((h) => h.page))}`);
+  }
+});
+
 await test("document properties: edit from the properties dialog; saved copy shows the new values; unchanged values kept", async () => {
   const src = join(FIX, "five-pages.pdf");
   const before = sha(src);

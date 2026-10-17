@@ -575,6 +575,123 @@ pub fn split(
     Ok((committed, protection_warnings(src_encrypted, !any_unprotected)))
 }
 
+/// Render a page small (longest side ≤ 300 px, annotations off) for visibility checks.
+fn thumb(page: &PdfPage) -> PwResult<image::RgbaImage> {
+    let longest = page.width().value.max(page.height().value).max(1.0);
+    let cfg = PdfRenderConfig::new()
+        .scale_page_by_factor((300.0 / longest).min(1.0))
+        .render_annotations(false)
+        .render_form_data(false);
+    let bmp = page.render_with_config(&cfg).map_err(|e| map_pdfium_error(&e, "render"))?;
+    Ok(bmp.as_image().map_err(|e| map_pdfium_error(&e, "render"))?.to_rgba8())
+}
+
+/// Add a text watermark, centred and turned by `angle` as the page is displayed, over or behind
+/// the content. Verified: page count, the watermark text on every chosen page, and whether it can be
+/// seen (pages where it is covered or invisible are reported, not hidden).
+pub fn watermark(
+    input: &Path,
+    opts: &OpenOptions,
+    pages: Option<&str>,
+    w: &pw_core::ops::WatermarkSpec,
+    output: &Path,
+    policy: CollisionPolicy,
+    cancelled: &dyn Fn() -> bool,
+) -> PwResult<EditOutcome> {
+    use pw_core::ops::WatermarkLayer;
+    let pdfium = engine()?;
+    let source = load(&pdfium, input, opts)?;
+    let mut doc = load(&pdfium, input, opts)?;
+    let total = doc.pages().len().max(0) as u32;
+    let indices = match pages {
+        Some(spec) => parse_page_ranges(spec, total)?,
+        None => (0..total).collect(),
+    };
+    let font = doc.fonts_mut().helvetica();
+    let err = |e: PdfiumError| map_pdfium_error(&e, "watermark");
+    let base = parse_color(&w.color)?;
+    let alpha = (w.opacity.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let color = PdfColor::new(base.red(), base.green(), base.blue(), alpha);
+    for &i in &indices {
+        if cancelled() {
+            return Err(PwError::new(ErrorCategory::Cancelled, "job.cancelled", "The watermark was cancelled."));
+        }
+        let mut page = doc.pages().get(i as PdfPageIndex).map_err(err)?;
+        let rot = rotation_of(&page);
+        let b = page
+            .boundaries()
+            .bounding()
+            .map(|b| b.bounds)
+            .unwrap_or_else(|_| PdfRect::new_from_values(0.0, 0.0, page.height().value, page.width().value));
+        let (cx, cy) = ((b.left().value + b.right().value) / 2.0, (b.bottom().value + b.top().value) / 2.0);
+        let mut obj = PdfPageTextObject::new(&doc, &w.text, font, PdfPoints::new(w.font_size)).map_err(err)?;
+        obj.set_fill_color(color).map_err(err)?;
+        let tw = obj.width().map_err(err)?.value;
+        // Centre the text on its own origin (cap height ≈ 0.7 em), turn it, then move it to the
+        // page centre. The page's /Rotate is added so the angle is as displayed.
+        obj.translate(PdfPoints::new(-tw / 2.0), PdfPoints::new(-w.font_size * 0.35)).map_err(err)?;
+        obj.rotate_counter_clockwise_degrees(w.angle + rot as f32).map_err(err)?;
+        obj.translate(PdfPoints::new(cx), PdfPoints::new(cy)).map_err(err)?;
+        match w.layer {
+            WatermarkLayer::Over => {
+                page.objects_mut().add_text_object(obj).map_err(err)?;
+            }
+            WatermarkLayer::Behind => {
+                page.objects_mut().insert_object_at_index(0, PdfPageObject::Text(obj)).map_err(err)?;
+            }
+        }
+    }
+    let bytes = save_bytes(&doc)?;
+    let src_encrypted = source_encrypted(&doc);
+    let protected = [input.to_path_buf()];
+    let mut encrypted = false;
+    let mut hidden: Vec<u32> = Vec::new();
+    let squash = |t: &str| t.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    let want = squash(&w.text);
+    let c = write_atomic_bytes(output, policy, &protected, &bytes, |staged| {
+        encrypted =
+            verify_output(&pdfium, staged, &Expect { page_count: total, password: opts.password, rotations: None })?;
+        let reopened =
+            pdfium.load_pdf_from_file(staged, if encrypted { opts.password } else { None }).map_err(|_| {
+                PwError::new(ErrorCategory::ValidationFailed, "output.verify", "The output could not be reopened.")
+            })?;
+        let everything = PdfRect::new_from_values(-1.0e6, -1.0e6, 1.0e6, 1.0e6);
+        hidden.clear();
+        for &i in &indices {
+            let page = reopened.pages().get(i as PdfPageIndex).map_err(|e| map_pdfium_error(&e, "page"))?;
+            let got = page.text().map_err(|e| map_pdfium_error(&e, "text"))?.inside_rect(everything);
+            if !squash(&got).contains(&want) {
+                return Err(PwError::new(
+                    ErrorCategory::ValidationFailed,
+                    "output.verify",
+                    format!("The output failed verification (page {} is missing its watermark).", i + 1),
+                ));
+            }
+            let src = source.pages().get(i as PdfPageIndex).map_err(|e| map_pdfium_error(&e, "page"))?;
+            let (a, b) = (thumb(&src)?, thumb(&page)?);
+            let changed = a.dimensions() == b.dimensions()
+                && a.pixels().zip(b.pixels()).any(|(p, q)| (0..3).any(|k| p.0[k].abs_diff(q.0[k]) > 8));
+            if !changed {
+                hidden.push(i + 1);
+            }
+        }
+        Ok(())
+    })?;
+    let mut warnings = protection_warnings(src_encrypted, encrypted);
+    if !hidden.is_empty() {
+        let list = hidden.iter().map(u32::to_string).collect::<Vec<_>>().join(", ");
+        warnings.push(format!(
+            "The watermark cannot be seen on page{} {list}: {}",
+            if hidden.len() == 1 { "" } else { "s" },
+            match w.layer {
+                WatermarkLayer::Behind => "the page content covers it. Place it over the content instead.",
+                WatermarkLayer::Over => "it matches the page colours there, or is too faint.",
+            }
+        ));
+    }
+    Ok((c, total, warnings))
+}
+
 fn parse_color(hex: &str) -> PwResult<PdfColor> {
     let v = u32::from_str_radix(hex.trim_start_matches('#'), 16)
         .map_err(|_| PwError::invalid("annotate.color", "Annotation colors must look like #rrggbb."))?;
