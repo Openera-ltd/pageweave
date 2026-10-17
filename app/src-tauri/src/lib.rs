@@ -12,9 +12,17 @@ use pw_core::{fields, PwError};
 use serde::Serialize;
 use state::{AppState, DocId, OpenedDoc};
 use std::path::PathBuf;
+use std::sync::OnceLock;
+use std::time::Instant;
 use tauri::{Emitter, Manager, State};
 
 type CmdResult<T> = Result<T, PwError>;
+
+/// Set as the first thing in `run()`; startup milestones are measured from here.
+static HOST_START: OnceLock<Instant> = OnceLock::new();
+
+/// Startup milestones the UI may report (anything else is rejected).
+pub const TIMING_MARKS: [&str; 2] = ["ui_ready", "first_page"];
 
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> CmdResult<T> + Send + 'static) -> CmdResult<T> {
     tauri::async_runtime::spawn_blocking(f)
@@ -164,6 +172,27 @@ fn log_dir(state: State<'_, AppState>) -> String {
     state.log_dir.to_string_lossy().into_owned()
 }
 
+/// Record a startup milestone (milliseconds since the host started) in the diagnostic log, once per
+/// run. Returns the elapsed time, or null when the milestone was already recorded.
+#[tauri::command]
+fn mark_timing(state: State<'_, AppState>, name: String) -> CmdResult<Option<u64>> {
+    if !TIMING_MARKS.contains(&name.as_str()) {
+        return Err(PwError::invalid("timing.unknown", "Unknown timing mark."));
+    }
+    if !state.first_mark(&name) {
+        return Ok(None);
+    }
+    let ms = HOST_START.get().map(|t| t.elapsed().as_millis() as u64).unwrap_or(0);
+    state.logger.log(
+        pw_core::log::Level::Info,
+        "app",
+        "timing",
+        None,
+        fields! {"mark" => name, "since_start_ms" => ms},
+    );
+    Ok(Some(ms))
+}
+
 /// The UI reports how many unsaved edits exist so the window-close guard can hold back a close.
 #[tauri::command]
 fn set_unsaved_changes(state: State<'_, AppState>, count: u32) {
@@ -183,6 +212,7 @@ pub fn close_needs_confirmation(state: &AppState) -> bool {
 }
 
 pub fn run() {
+    HOST_START.get_or_init(Instant::now);
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -235,6 +265,7 @@ pub fn run() {
             launch_files,
             set_unsaved_changes,
             quit_app,
+            mark_timing,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PageWeave");

@@ -29,5 +29,27 @@ Observations / follow-ups:
 - Each page render re-opens the document (simple and memory-bounded). Cost is small for these files;
   re-measure with complex real documents before deciding whether an open-document cache is needed.
 - Extract p95 is dominated by fsync of the committed file.
-- Not yet measured: app cold/warm start, time to first visible page in the app, scroll frame times,
-  memory over long sessions, Windows numbers. These are release blockers under PRD 12.
+- Not yet measured: scroll frame times, memory over long sessions, Windows numbers, minimum-spec
+  hardware. These are release blockers under PRD 12.
+
+## 2026-10-17 — app startup to first page (real app, E2E-driven)
+
+- What: the host records milliseconds from its entry point (`run()`) to the UI's first React effect
+  (`ui_ready`) and to the first page image decoded in the viewer (`first_page`), logged once per run as
+  `timing` events in the diagnostic log (no paths or content). Scenario "startup timing" in
+  `app/e2e/run.mjs` launches the app 5 times with `fixtures/pdf/five-pages.pdf` and writes
+  `perf-startup.json` to the E2E artifacts. Process creation before `run()` and WebDriver session set-up
+  are not included.
+- Environment: same Linux container as above; Xvfb 1366×900 (software rendering, no GPU); WebKitGTK
+  via tauri-driver; OS file cache warm after the first launch.
+
+| Build | ui_ready p50 | first_page p50 | first launch first_page | all first_page (ms) |
+|---|---|---|---|---|
+| Release (`tauri build --no-bundle`) | 822 ms | 1043 ms | 1331 ms | 1331, 1522, 1043, 1010, 991 |
+| Debug | 898 ms | 1333 ms | 2153 ms | 2153, 1473, 1333, 1279, 1293 |
+
+Observations / follow-ups:
+- Most of the time is WebView start-up before the UI's first effect (~0.8 s); opening and rendering
+  the first page adds ~0.2 s in release. Real Windows/WebView2 numbers on target hardware are needed
+  before setting a budget; CI Windows E2E will report the same marks.
+- Not a cold start in the strict sense (files cached); a true cold-boot measurement needs real hardware.

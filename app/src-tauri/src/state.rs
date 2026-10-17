@@ -6,7 +6,7 @@ use pw_core::settings::{LoadOutcome, Settings, SettingsStore};
 use pw_core::{fields, PwError, PwResult};
 use pw_pdf::DocumentInfo;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -52,6 +52,8 @@ struct Inner {
     /// Number of unsaved edits (pending annotations) the UI reports; closing the window is held
     /// back while it is non-zero so work is not lost silently.
     unsaved: AtomicU32,
+    /// Startup milestones already recorded (each is logged once per run).
+    marks: Mutex<HashSet<String>>,
 }
 
 impl AppState {
@@ -77,6 +79,7 @@ impl AppState {
                 settings: Mutex::new(settings),
                 store,
                 unsaved: AtomicU32::new(0),
+                marks: Mutex::new(HashSet::new()),
             }),
             jobs: Arc::new(JobManager::new(workers)),
             logger: Arc::new(logger),
@@ -88,6 +91,11 @@ impl AppState {
 
     pub fn set_unsaved(&self, count: u32) {
         self.inner.unsaved.store(count, Ordering::SeqCst);
+    }
+
+    /// Record a startup milestone once. Returns false if it was already recorded.
+    pub fn first_mark(&self, name: &str) -> bool {
+        self.inner.marks.lock().unwrap_or_else(|p| p.into_inner()).insert(name.to_string())
     }
 
     pub fn unsaved(&self) -> u32 {
@@ -248,6 +256,14 @@ mod tests {
         assert!(crate::close_needs_confirmation(&s.clone()), "clones share the count");
         s.set_unsaved(0);
         assert!(!crate::close_needs_confirmation(&s));
+    }
+
+    #[test]
+    fn startup_marks_are_recorded_once() {
+        let (s, _d) = state();
+        assert!(s.first_mark("first_page"));
+        assert!(!s.first_mark("first_page"));
+        assert!(s.first_mark("ui_ready"));
     }
 
     #[test]

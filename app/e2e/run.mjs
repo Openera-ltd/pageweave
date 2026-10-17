@@ -47,10 +47,21 @@ async function captureFailure(s) {
 }
 
 const phase = { create: 0, teardown: 0 };
+/** App launches that failed before a session existed and were retried (reported in the summary). */
+const launchRetries = [];
 
 async function withApp(args, fn) {
   const t0 = Date.now();
-  const s = await Session.create(DRIVER, APP, args);
+  let s;
+  try {
+    s = await Session.create(DRIVER, APP, args);
+  } catch (e) {
+    // Seen on CI: GTK occasionally fails to connect to the virtual display at process start, and the
+    // driver then waits out its timeout. Retry the launch once and record it; a second failure is real.
+    launchRetries.push({ test: currentTest, error: String(e?.message ?? e).slice(0, 300) });
+    console.log(`  note: app launch failed (${String(e?.message ?? e).slice(0, 160)}); retrying the launch once`);
+    s = await Session.create(DRIVER, APP, args);
+  }
   phase.create += Date.now() - t0;
   try {
     await s.waitFor(args.length ? '.tab-label' : ".home", { timeout: 20000 });
@@ -789,6 +800,41 @@ await test("window close: Save copy… saves the annotations, then quits", async
   assert(/\/Subtype\s*\/Highlight\b/.test(readFileSync(out).toString("latin1")), "copy contains the highlight");
 });
 
+// Startup baseline (CLAUDE.md §6): the host logs ms from its entry point to UI ready and to the first
+// rendered page. Measured, not budgeted; the bound below only catches hangs.
+await test("startup timing: UI ready and first page logged by the host (baseline, 5 launches)", async () => {
+  const marks = [];
+  for (let i = 0; i < 5; i++) {
+    await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+      await pageLoaded(s, 0);
+      const dir = await s.execAsync("const done = arguments[arguments.length - 1]; window.__TAURI_INTERNALS__.invoke('log_dir').then(done, (e) => done('ERR ' + e))");
+      assert(!String(dir).startsWith("ERR"), `log dir: ${dir}`);
+      const log = join(dir, "pageweave.jsonl");
+      const read = () => (existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : []);
+      // Entries since this launch's startup event.
+      const run = () => {
+        const all = read();
+        const start = all.map((e) => e.event).lastIndexOf("startup");
+        return all.slice(start).filter((e) => e.event === "timing");
+      };
+      await s.waitUntil(() => run().some((e) => e.fields?.mark === "first_page"), "first_page mark logged");
+      const get = (m) => run().find((e) => e.fields?.mark === m);
+      const ms = (e) => e?.fields?.since_start_ms;
+      marks.push({ ui_ready: ms(get("ui_ready")), first_page: ms(get("first_page")) });
+    });
+  }
+  const pct = (xs, p) => [...xs].sort((a, b) => a - b)[Math.min(xs.length - 1, Math.floor(p * xs.length))];
+  const summary = {};
+  for (const k of ["ui_ready", "first_page"]) {
+    const xs = marks.map((m) => m[k]);
+    assert(xs.every((x) => Number.isFinite(x) && x > 0), `${k} recorded each launch (${xs})`);
+    summary[k] = { first: xs[0], p50: pct(xs, 0.5), max: Math.max(...xs), all: xs };
+  }
+  writeFileSync(join(ART, "perf-startup.json"), JSON.stringify({ platform: process.platform, ...summary }, null, 2));
+  console.log(`  startup: ui_ready p50 ${summary.ui_ready.p50} ms, first_page p50 ${summary.first_page.p50} ms (first launch ${summary.first_page.first} ms)`);
+  assert(summary.first_page.max < 20000, "first page appears (hang guard, not a budget)");
+});
+
 /* ------------------------------------------------------------------ */
 const summary = {
   app: APP,
@@ -796,8 +842,9 @@ const summary = {
   passed: results.filter((r) => r.status === "PASS").length,
   failed: results.filter((r) => r.status === "FAIL").length,
   skipped: results.filter((r) => r.status === "SKIP").length,
+  launch_retries: launchRetries,
   results,
 };
 writeFileSync(join(ART, "e2e-results.json"), JSON.stringify(summary, null, 2));
-console.log(`\n${summary.passed} passed, ${summary.failed} failed, ${summary.skipped} skipped`);
+console.log(`\n${summary.passed} passed, ${summary.failed} failed, ${summary.skipped} skipped, ${launchRetries.length} app launch retr${launchRetries.length === 1 ? "y" : "ies"}`);
 process.exit(summary.failed ? 1 : 0);

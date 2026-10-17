@@ -30,6 +30,7 @@ interface ViewerProps {
 
 const PAGE_GAP = 16;
 const NO_ANNOTATIONS: PendingAnnotation[] = [];
+let firstPageReported = false;
 
 export function Viewer({ doc, zoom, onZoomStep, onCurrentPage, scrollRequest, hits, currentHit, onPageContextMenu, annotations, onMeasured }: ViewerProps) {
   const ref = useRef<HTMLDivElement>(null);
@@ -218,7 +219,20 @@ const Page = memo(function Page({ docId, page, zoom, root, hits, currentHit, onC
       }}
     >
       {near && status !== "error" && (
-        <img src={src} alt="" draggable={false} onLoad={() => setStatus("loaded")} onError={() => setStatus("error")} />
+        <img
+          src={src}
+          alt=""
+          draggable={false}
+          onLoad={() => {
+            setStatus("loaded");
+            if (!firstPageReported) {
+              // Startup diagnostics: time to the first visible page, logged by the host once per run.
+              firstPageReported = true;
+              api.markTiming("first_page").catch(() => undefined);
+            }
+          }}
+          onError={() => setStatus("error")}
+        />
       )}
       {near && status === "loading" && <div className="loading" aria-hidden="true">Rendering page {page.index + 1}…</div>}
       {status === "error" && (

@@ -49,6 +49,8 @@ export interface Api {
   onCloseRequested(cb: () => void): Promise<UnlistenFn>;
   /** Close the window, discarding unsaved edits. */
   quitApp(): Promise<void>;
+  /** Report a startup milestone; the host logs time since start once per run. */
+  markTiming(name: "ui_ready" | "first_page"): Promise<number | null>;
 }
 
 export const tauriApi: Api = {
@@ -85,6 +87,7 @@ export const tauriApi: Api = {
   setUnsavedChanges: (count) => invoke("set_unsaved_changes", { count }),
   onCloseRequested: (cb) => listen("close-requested", () => cb()),
   quitApp: () => invoke("quit_app"),
+  markTiming: (name) => invoke("mark_timing", { name }),
   copyText: async (text) => {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(text);

@@ -131,6 +131,11 @@ export function App() {
 
   /* ---------- Startup ---------- */
   useEffect(() => {
+    // Diagnostics only; a failure here must not disturb the user.
+    api.markTiming("ui_ready").catch(() => undefined);
+  }, [api]);
+
+  useEffect(() => {
     api.appInfo().then(setInfo).catch((e) => notifyError("PageWeave could not start correctly", e));
     api.getSettings().then(setSettings).catch((e) => notifyError("Settings could not be loaded", e));
   }, [api, notifyError]);
