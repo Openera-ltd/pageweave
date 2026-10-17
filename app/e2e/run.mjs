@@ -1114,6 +1114,32 @@ await test("protect with password: AES-256 copy needs the password; wrong passwo
   }
 });
 
+await test("attachments: the sidebar lists embedded files; one is saved exactly as stored", async () => {
+  const src = join(FIX, "hidden-info.pdf");
+  const before = sha(src);
+  const out = join(work, "from-pdf.txt");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click("#sb-tab-attachments");
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-attachment=\"0\"] .name')?.textContent ?? null")) === "secret.txt", "embedded file listed");
+    await axeCheck(s, "attachments-panel");
+    await s.click('button[aria-label="Save secret.txt"]');
+    await s.waitFor("#attachment-output");
+    assert((await s.exec("return document.querySelector('#attachment-output').value")).endsWith("secret.txt"), "default name from the attachment");
+    await s.type("#attachment-output", out);
+    await axeCheck(s, "save-attachment-dialog");
+    await s.click('[data-testid="attachment-save"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved from-pdf.txt")), "saved notice", 30000);
+    const texts = await noticeTexts(s);
+    assert(texts.some((t) => t.includes("trust")), "warns to open only trusted files");
+    // A text file is not opened in PageWeave: the notice offers Show in folder, not Open.
+    const actions = await s.exec("return [...document.querySelectorAll('.notice')].filter(n => n.textContent.includes('from-pdf.txt')).flatMap(n => [...n.querySelectorAll('button')].map(b => b.textContent))");
+    assert(!actions.includes("Open") && actions.includes("Show in folder"), `notice actions: ${actions}`);
+  });
+  assert(sha(src) === before, "source PDF unchanged");
+  assert(readFileSync(out, "utf8") === "Embedded PWATTACH-DOC", "bytes exactly as stored");
+});
+
 await test("crop pages: margins in millimetres, shaded preview, rotated page cropped as displayed, verified", async () => {
   const src = join(FIX, "mixed-sizes-rotated.pdf");
   const before = sha(src);

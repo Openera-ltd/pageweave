@@ -146,6 +146,18 @@ enum Command {
         #[arg(long)]
         no_assemble: bool,
     },
+    /// List embedded files, save one (--save INDEX -o FILE), or attach files (--add FILE … -o OUT).
+    Attachments {
+        file: PathBuf,
+        /// Index (from the list) of the attachment to save.
+        #[arg(long, conflicts_with = "add")]
+        save: Option<u32>,
+        /// Files to attach (repeat).
+        #[arg(long)]
+        add: Vec<PathBuf>,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
     /// Crop pages by margins as displayed, in a new file (content outside is hidden, not removed).
     Crop {
         file: PathBuf,
@@ -279,7 +291,7 @@ fn capabilities() -> serde_json::Value {
     json!({
         "schema_version": pw_core::ops::SCHEMA_VERSION,
         "engine": pw_pdf::engine_version(),
-        "operations": ["inspect", "extract_text", "search", "render", "merge", "extract_pages", "delete_pages", "rotate_pages", "split", "annotate", "form_fields", "fill_form", "apply_edits", "organize_pages", "stamp_text", "export_images", "redaction_preview", "redact", "ocr_pages", "protect", "unprotect", "set_properties", "watermark", "crop_pages", "sanitize_inspect", "sanitize"],
+        "operations": ["inspect", "extract_text", "search", "render", "merge", "extract_pages", "delete_pages", "rotate_pages", "split", "annotate", "form_fields", "fill_form", "apply_edits", "organize_pages", "stamp_text", "export_images", "redaction_preview", "redact", "ocr_pages", "protect", "unprotect", "set_properties", "watermark", "crop_pages", "list_attachments", "extract_attachment", "add_attachments", "sanitize_inspect", "sanitize"],
         "collision_policies": ["fail", "rename", "replace"],
         "network": "none",
     })
@@ -354,6 +366,16 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
                 assemble: !no_assemble,
             },
             output: output.clone(),
+        },
+        Command::Attachments { file, save, add, output } => match (save, add.is_empty(), output) {
+            (None, true, _) => Operation::ListAttachments { input: file.clone() },
+            (Some(i), _, Some(out)) => {
+                Operation::ExtractAttachment { input: file.clone(), index: *i, output: out.clone() }
+            }
+            (None, false, Some(out)) => {
+                Operation::AddAttachments { input: file.clone(), files: add.clone(), output: out.clone() }
+            }
+            _ => return Err(PwError::invalid("attach.output", "Give -o with --save or --add.")),
         },
         Command::Crop { file, output, pages, top, right, bottom, left, unit } => {
             let k = match unit.as_str() {
@@ -541,6 +563,15 @@ fn print_human(r: &OperationResult) {
                 d["lines"],
                 d["mean_confidence"].as_f64().unwrap_or(0.0) * 100.0
             );
+        }
+        "list_attachments" => {
+            let list = r.data["attachments"].as_array().cloned().unwrap_or_default();
+            if list.is_empty() {
+                println!("No attachments.");
+            }
+            for a in list {
+                println!("{:>4}  {:>12} bytes  {}", a["index"], a["bytes"], a["name"].as_str().unwrap_or(""));
+            }
         }
         "sanitize_inspect" | "sanitize" => {
             for o in &r.outputs {

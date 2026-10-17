@@ -31,6 +31,9 @@ pub const MAX_ORGANIZE_PAGES: usize = 100_000;
 pub const MAX_STAMPS: usize = 6;
 pub const MAX_STAMP_CHARS: usize = 200;
 pub const MAX_REDACT_AREAS: usize = 10_000;
+/// Most files attached in one request, and the largest single attachment.
+pub const MAX_ATTACH_FILES: usize = 100;
+pub const MAX_ATTACH_BYTES: u64 = 256 * 1024 * 1024;
 /// Longest document property value (title, author, subject, keywords), in characters.
 pub const MAX_PROPERTY_CHARS: usize = 2_000;
 
@@ -385,6 +388,23 @@ pub enum Operation {
         permissions: ProtectPermissions,
         output: PathBuf,
     },
+    /// List the files embedded in the document (read-only).
+    ListAttachments {
+        input: PathBuf,
+    },
+    /// Save one embedded file (by its index in `ListAttachments`) to `output`. The bytes are written
+    /// as they are; nothing is opened or run.
+    ExtractAttachment {
+        input: PathBuf,
+        index: u32,
+        output: PathBuf,
+    },
+    /// Embed files in a new copy of the document.
+    AddAttachments {
+        input: PathBuf,
+        files: Vec<PathBuf>,
+        output: PathBuf,
+    },
     /// Crop pages (all when `pages` is absent) by margins as displayed, in a new file. Content outside
     /// the new page area is hidden, not removed.
     CropPages {
@@ -495,6 +515,9 @@ impl Operation {
             Operation::SetProperties { .. } => "set_properties",
             Operation::Watermark { .. } => "watermark",
             Operation::CropPages { .. } => "crop_pages",
+            Operation::ListAttachments { .. } => "list_attachments",
+            Operation::ExtractAttachment { .. } => "extract_attachment",
+            Operation::AddAttachments { .. } => "add_attachments",
             Operation::SanitizeInspect { .. } => "sanitize_inspect",
             Operation::Sanitize { .. } => "sanitize",
             Operation::Redact { .. } => "redact",
@@ -511,6 +534,7 @@ impl Operation {
                 | Operation::Search { .. }
                 | Operation::RedactionPreview { .. }
                 | Operation::SanitizeInspect { .. }
+                | Operation::ListAttachments { .. }
         )
     }
 
@@ -518,6 +542,10 @@ impl Operation {
     pub fn inputs(&self) -> Vec<PathBuf> {
         match self {
             Operation::Merge { inputs, .. } => inputs.clone(),
+            // Files being attached are inputs too: never overwritten by the output.
+            Operation::AddAttachments { input, files, .. } => {
+                std::iter::once(input.clone()).chain(files.iter().cloned()).collect()
+            }
             Operation::OrganizePages { input, extra_inputs, .. } => {
                 std::iter::once(input.clone()).chain(extra_inputs.iter().cloned()).collect()
             }
@@ -541,6 +569,8 @@ impl Operation {
             | Operation::SetProperties { input, .. }
             | Operation::Watermark { input, .. }
             | Operation::CropPages { input, .. }
+            | Operation::ListAttachments { input }
+            | Operation::ExtractAttachment { input, .. }
             | Operation::SanitizeInspect { input }
             | Operation::Sanitize { input, .. }
             | Operation::Redact { input, .. }
@@ -564,7 +594,8 @@ impl Operation {
             | Operation::ExtractText { .. }
             | Operation::Search { .. }
             | Operation::RedactionPreview { .. }
-            | Operation::SanitizeInspect { .. } => None,
+            | Operation::SanitizeInspect { .. }
+            | Operation::ListAttachments { .. } => None,
             Operation::Split { output_dir, .. } | Operation::ExportImages { output_dir, .. } => {
                 Some(output_dir.clone())
             }
@@ -584,6 +615,8 @@ impl Operation {
             | Operation::SetProperties { output, .. }
             | Operation::Watermark { output, .. }
             | Operation::CropPages { output, .. }
+            | Operation::ExtractAttachment { output, .. }
+            | Operation::AddAttachments { output, .. }
             | Operation::Sanitize { output, .. }
             | Operation::StampText { output, .. } => parent(output),
         }
@@ -700,6 +733,17 @@ impl Operation {
             }
             Operation::Redact { areas, .. } | Operation::RedactionPreview { areas, .. } => {
                 validate_redact_areas(areas)?
+            }
+            Operation::AddAttachments { files, .. } => {
+                if files.is_empty() {
+                    return Err(PwError::invalid("attach.none", "Choose at least one file to attach."));
+                }
+                if files.len() > MAX_ATTACH_FILES {
+                    return Err(PwError::invalid(
+                        "attach.too_many",
+                        format!("Attach at most {MAX_ATTACH_FILES} files at once."),
+                    ));
+                }
             }
             Operation::CropPages { margins: m, .. } => {
                 let all = [m.top, m.right, m.bottom, m.left];

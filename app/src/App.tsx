@@ -37,10 +37,10 @@ import {
 import { missingRequired, setEdit, toFieldValues, fieldLabel, type FormEdits } from "./forms";
 import { COMMAND_BY_ID, COMMANDS, commandForShortcut, effectiveBindings, type CommandHandlers, type CommandId } from "./commands";
 import { clampZoom, fitWidthZoom, nextZoom, pageOrigin, screenRectToPdf, ZOOM_PRESETS, CSS_PX_PER_PT, displaySizePt } from "./geometry";
-import { basename } from "./paths";
+import { basename, siblingOutput } from "./paths";
 import { eventToShortcut, isTextEntry } from "./shortcuts";
 import { applyAppearance } from "./theme";
-import { toPwError, type AppInfo, type FormField, type FormInfo, type FormValue, type JobSnapshot, type OpenedDoc, type Operation, type PwError, type RecoveredJob, type RedactArea, type SearchHit, type SearchRect, type Settings } from "./types";
+import { toPwError, type AppInfo, type AttachmentInfo, type CollisionPolicy, type FormField, type FormInfo, type FormValue, type JobSnapshot, type OpenedDoc, type Operation, type PwError, type RecoveredJob, type RedactArea, type SearchHit, type SearchRect, type Settings } from "./types";
 import { CommandButton, Menu, type MenuItemOrSeparator } from "./components/ui";
 import { Viewer, type ScrollRequest } from "./components/Viewer";
 import { Sidebar, type SidebarView } from "./components/Sidebar";
@@ -51,6 +51,7 @@ import { ProtectDialog } from "./components/ProtectDialog";
 import { SanitizeDialog } from "./components/SanitizeDialog";
 import { UnprotectDialog } from "./components/UnprotectDialog";
 import { EditPropertiesDialog } from "./components/EditPropertiesDialog";
+import { SaveAttachmentDialog } from "./components/SaveAttachmentDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { NoteDialog, UnsavedDialog } from "./components/AnnotationDialogs";
 import { CommandPalette, Home, Notices, PasswordDialog, PropertiesDialog, SearchBar, StatusBar, type Notice, type NoticeAction, type SearchState } from "./components/Panels";
@@ -75,6 +76,7 @@ type DialogState =
   | { kind: "sanitize" }
   | { kind: "unprotect" }
   | { kind: "editProperties" }
+  | { kind: "saveAttachment"; attachment: AttachmentInfo }
   | { kind: "unsaved"; reason: "tab"; docId: number }
   | { kind: "unsaved"; reason: "quit" }
   | null;
@@ -98,6 +100,8 @@ const OPERATION_TITLES: Partial<Record<Operation["op"], string>> = {
   sanitize: "Remove hidden information",
   unprotect: "Remove password",
   set_properties: "Edit document properties",
+  extract_attachment: "Save attached file",
+  add_attachments: "Attach files",
   watermark: "Add watermark",
   crop_pages: "Crop pages",
 };
@@ -150,7 +154,8 @@ export function App() {
   const [forms, setForms] = useState<Record<number, FormInfo | null>>({});
   const [formEdits, setFormEdits] = useState<Record<number, FormEdits>>({});
   /** Jobs started outside a dialog (e.g. "Run again"): their outcome is reported by a notice. */
-  const [watched, setWatched] = useState<string[]>([]);
+  /** Jobs started outside a dialog: their outcome is shown as a notice (failure title per job). */
+  const [watched, setWatched] = useState<Array<{ id: string; failTitle: string }>>([]);
   const afterSave = useRef<AfterSave>(null);
   const noticeId = useRef(1);
   const searchToken = useRef(0);
@@ -676,6 +681,7 @@ export function App() {
     "file.properties": { run: () => setDialog({ kind: "properties" }), available: all(needDoc, noDialog) },
     "file.protect": { run: () => setDialog({ kind: "protect" }), available: all(needDoc, noDialog) },
     "file.sanitize": { run: () => setDialog({ kind: "sanitize" }), available: all(needDoc, noDialog) },
+    "file.attachFiles": { run: () => active && attachFiles(active), available: all(needDoc, noDialog) },
     "file.editProperties": { run: () => setDialog({ kind: "editProperties" }), available: all(needDoc, () => (dialog && dialog.kind !== "properties" ? "Close the open dialog first." : true)) },
     "file.unprotect": {
       run: () => setDialog({ kind: "unprotect" }),
@@ -912,28 +918,45 @@ export function App() {
     const out = r.outputs[0];
     const title = r.outputs.length > 1 ? `Saved ${r.outputs.length} files` : out ? `Saved ${basename(out.path)}` : "Done";
     const actions: NoticeAction[] = [];
-    if (out && r.outputs.length === 1) actions.push({ label: "Open", run: () => openPath(out.path) });
+    // Only PDFs open in PageWeave (an exported image or a saved attachment does not).
+    if (out && r.outputs.length === 1 && out.path.toLowerCase().endsWith(".pdf")) actions.push({ label: "Open", run: () => openPath(out.path) });
     if (out) actions.push({ label: "Show in folder", run: () => api.revealInFolder(out.path).catch((e) => notifyError("Couldn’t show the file", e)) });
     notify({ kind: "success", title, detail: out?.pages != null && r.outputs.length === 1 ? `${out.pages} pages` : undefined, actions, persistent: false });
     for (const w of r.warnings) notify({ kind: "warning", title: "Please note", detail: w, persistent: true });
   };
 
+  /** Start a job for the active document outside any dialog; its outcome arrives as a notice. */
+  const runWatched = async (operation: Operation, docId: number, failTitle: string, collision: CollisionPolicy = "rename") => {
+    try {
+      const id = await api.startOperation({ schema_version: 1, operation, collision }, docId);
+      setWatched((w) => [...w, { id, failTitle }]);
+    } catch (e) {
+      notifyError(failTitle, e);
+    }
+  };
+
+
+  const attachFiles = async (doc: OpenedDoc) => {
+    const files = await api.pickAnyFiles();
+    if (files.length) await runWatched({ op: "add_attachments", input: doc.path, files, output: siblingOutput(doc.path, "attached") }, doc.doc_id, "Couldn’t attach the files");
+  };
+
   const runAgain = async (r: RecoveredJob) => {
     try {
       const id = await api.startOperation({ schema_version: 1, operation: r.operation, collision: r.collision });
-      setWatched((w) => [...w, id]);
+      setWatched((w) => [...w, { id, failTitle: "The task failed again" }]);
     } catch (e) {
       notifyError(`Couldn’t run ${OPERATION_TITLES[r.operation.op]?.toLowerCase() ?? "the task"} again`, e);
     }
   };
 
   useEffect(() => {
-    for (const id of watched) {
+    for (const { id, failTitle } of watched) {
       const j = jobs[id];
       if (!j || !["succeeded", "failed", "cancelled"].includes(j.state)) continue;
-      setWatched((w) => w.filter((x) => x !== id));
+      setWatched((w) => w.filter((x) => x.id !== id));
       if (j.state === "succeeded") onJobFinished(j);
-      else if (j.state === "failed") notifyError("The task failed again", j.error);
+      else if (j.state === "failed") notifyError(failTitle, j.error);
       else notify({ kind: "info", title: "Task cancelled", persistent: false });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1101,7 +1124,16 @@ export function App() {
         <main className="workspace" aria-label={active.name} style={showThumbs ? undefined : { gridTemplateColumns: "1fr" }}>
           <h1 className="sr-only">{active.name}</h1>
           {showThumbs && (
-            <Sidebar doc={active} view={sidebarView} onView={setSidebarView} currentPage={view.page} onSelectPage={goToPage} onPageContextMenu={pageMenu} />
+            <Sidebar
+              doc={active}
+              view={sidebarView}
+              onView={setSidebarView}
+              currentPage={view.page}
+              onSelectPage={goToPage}
+              onPageContextMenu={pageMenu}
+              onSaveAttachment={(a) => setDialog({ kind: "saveAttachment", attachment: a })}
+              onAttachFiles={() => attachFiles(active)}
+            />
           )}
           <div ref={viewerHost} style={{ display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0, minWidth: 0 }}>
             {searchOpen ? (
@@ -1231,6 +1263,7 @@ export function App() {
         />
       )}
       {dialog?.kind === "protect" && active && <ProtectDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
+      {dialog?.kind === "saveAttachment" && active && <SaveAttachmentDialog doc={active} attachment={dialog.attachment} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "editProperties" && active && <EditPropertiesDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "unprotect" && active && <UnprotectDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "sanitize" && active && <SanitizeDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}

@@ -1,0 +1,20 @@
+{
+  "run_id": "20261017T193938Z-env-probe",
+  "purpose": "probe on CPU: is the GPU queue the blocker; does the dataset mount",
+  "created_utc": "2026-10-17T19:39:40+00:00",
+  "kernel": "kuyamblaisetimchia/pageweave-env-probe",
+  "code_commit": "dc9753d32fdbdf4063fac8bcb925e03c34ba308d",
+  "kernel_files_sha256": "762604ac1f82bb764d54afa522bb7cc54faa2e02b8e74175cc9608e28d24f6bf",
+  "datasets": [
+    "kuyamblaisetimchia/pageweave-ocr-corpus-v1"
+  ],
+  "gpu_hours_ceiling": 0.25,
+  "accelerator": "none",
+  "status": "complete",
+  "outputs": {
+    "local_dir": "/home/user/pageweave/ml/out/runs/20261017T193938Z-env-probe",
+    "files": {
+      "probe.json": "8bbade01703141ef8a8eaee53183acd0de2361a2426ef1ca61ac4dedd8a49888"
+    }
+  }
+}

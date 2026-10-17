@@ -1,9 +1,11 @@
-import { useEffect, useRef } from "react";
-import { Bookmark, LayoutGrid } from "lucide-react";
-import type { OpenedDoc } from "../types";
+import { useEffect, useRef, useState } from "react";
+import { Bookmark, Download, LayoutGrid, Paperclip, Plus } from "lucide-react";
+import { useApi } from "../api";
+import { toPwError, type AttachmentInfo, type OpenedDoc, type PwError } from "../types";
+import { formatBytes } from "./Panels";
 import { Thumbnails } from "./Thumbnails";
 
-export type SidebarView = "pages" | "bookmarks";
+export type SidebarView = "pages" | "bookmarks" | "attachments";
 
 interface Props {
   doc: OpenedDoc;
@@ -12,17 +14,19 @@ interface Props {
   currentPage: number;
   onSelectPage: (page: number) => void;
   onPageContextMenu: (page: number, x: number, y: number) => void;
+  onSaveAttachment: (a: AttachmentInfo) => void;
+  onAttachFiles: () => void;
 }
 
 /** Left panel: page thumbnails or the document outline (bookmarks). */
-export function Sidebar({ doc, view, onView, currentPage, onSelectPage, onPageContextMenu }: Props) {
+export function Sidebar({ doc, view, onView, currentPage, onSelectPage, onPageContextMenu, onSaveAttachment, onAttachFiles }: Props) {
   const hasBookmarks = doc.info.bookmarks.length > 0;
-  const shown: SidebarView = view === "bookmarks" && hasBookmarks ? "bookmarks" : "pages";
+  const shown: SidebarView = view === "bookmarks" ? (hasBookmarks ? "bookmarks" : "pages") : view;
   return (
     <aside className="sidebar" aria-label="Navigation">
       <div className="sidebar-tabs" role="tablist" aria-label="Navigation views">
-        <button type="button" role="tab" id="sb-tab-pages" aria-controls="sb-panel" aria-selected={shown === "pages"} title="Pages" onClick={() => onView("pages")}>
-          <LayoutGrid aria-hidden="true" /> Pages
+        <button type="button" role="tab" id="sb-tab-pages" aria-controls="sb-panel" aria-selected={shown === "pages"} aria-label="Pages" title="Pages" onClick={() => onView("pages")}>
+          <LayoutGrid aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -31,17 +35,23 @@ export function Sidebar({ doc, view, onView, currentPage, onSelectPage, onPageCo
           aria-controls="sb-panel"
           aria-selected={shown === "bookmarks"}
           aria-disabled={hasBookmarks ? undefined : true}
+          aria-label="Bookmarks"
           title={hasBookmarks ? "Bookmarks" : "This document has no bookmarks"}
           onClick={() => hasBookmarks && onView("bookmarks")}
         >
-          <Bookmark aria-hidden="true" /> Bookmarks
+          <Bookmark aria-hidden="true" />
+        </button>
+        <button type="button" role="tab" id="sb-tab-attachments" aria-controls="sb-panel" aria-selected={shown === "attachments"} title="Attachments" aria-label="Attachments" onClick={() => onView("attachments")}>
+          <Paperclip aria-hidden="true" />
         </button>
       </div>
-      <div id="sb-panel" role="tabpanel" aria-labelledby={shown === "pages" ? "sb-tab-pages" : "sb-tab-bookmarks"} className="sidebar-panel">
+      <div id="sb-panel" role="tabpanel" aria-labelledby={`sb-tab-${shown}`} className="sidebar-panel">
         {shown === "pages" ? (
           <Thumbnails doc={doc} currentPage={currentPage} onSelect={onSelectPage} onContextMenu={onPageContextMenu} />
-        ) : (
+        ) : shown === "bookmarks" ? (
           <Bookmarks doc={doc} currentPage={currentPage} onSelect={onSelectPage} />
+        ) : (
+          <Attachments doc={doc} onSave={onSaveAttachment} onAttach={onAttachFiles} />
         )}
       </div>
     </aside>
@@ -91,5 +101,56 @@ function Bookmarks({ doc, currentPage, onSelect }: { doc: OpenedDoc; currentPage
         </li>
       ))}
     </ul>
+  );
+}
+
+/** Files embedded in the document: save one out, or attach files into a new copy. */
+function Attachments({ doc, onSave, onAttach }: { doc: OpenedDoc; onSave: (a: AttachmentInfo) => void; onAttach: () => void }) {
+  const api = useApi();
+  const [items, setItems] = useState<AttachmentInfo[] | null>(null);
+  const [error, setError] = useState<PwError | null>(null);
+  useEffect(() => {
+    let live = true;
+    setItems(null);
+    setError(null);
+    api
+      .listAttachments(doc.doc_id)
+      .then((l) => live && setItems(l))
+      .catch((e) => live && setError(toPwError(e)));
+    return () => {
+      live = false;
+    };
+  }, [api, doc.doc_id]);
+  return (
+    <div className="panel-scroll attachments" aria-busy={items === null && !error}>
+      {error ? (
+        <p className="error" role="alert">
+          {error.message}
+        </p>
+      ) : items === null ? (
+        <p className="hint">Loading…</p>
+      ) : items.length === 0 ? (
+        <p className="hint">No attached files.</p>
+      ) : (
+        <ul aria-label="Attached files">
+          {items.map((a) => (
+            <li key={a.index} className="attachment" data-attachment={a.index}>
+              <span className="name" title={a.name}>
+                {a.name}
+              </span>
+              <span className="hint">{formatBytes(a.bytes)}</span>
+              <button type="button" className="btn icon" aria-label={`Save ${a.name}`} title="Save a copy of this file…" onClick={() => onSave(a)}>
+                <Download />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="attach-actions">
+        <button type="button" className="btn outline" data-command="file.attachFiles" onClick={onAttach} title="Attach files to a new copy of this document">
+          <Plus /> Attach files…
+        </button>
+      </div>
+    </div>
   );
 }

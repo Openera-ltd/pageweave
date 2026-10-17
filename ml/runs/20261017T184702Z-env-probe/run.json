@@ -9,5 +9,6 @@
     "kuyamblaisetimchia/pageweave-ocr-corpus-v1"
   ],
   "gpu_hours_ceiling": 1,
-  "status": "queued"
+  "status": "superseded",
+  "superseded_utc": "2026-10-17T19:39:37+00:00"
 }

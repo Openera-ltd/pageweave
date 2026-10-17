@@ -440,3 +440,33 @@ fn crop_command_with_units() {
         .expect("run");
     assert_eq!(bad.status.code(), Some(2));
 }
+
+#[test]
+fn attachments_list_save_and_add() {
+    let r = bin().arg("attachments").arg(fixture("hidden-info.pdf")).output().expect("run");
+    assert!(String::from_utf8_lossy(&r.stdout).contains("secret.txt"), "{}", String::from_utf8_lossy(&r.stdout));
+    let dir = tempfile::tempdir().expect("tmp");
+    let saved = dir.path().join("s.txt");
+    let r = bin()
+        .args(["attachments", "--save", "0", "-o"])
+        .arg(&saved)
+        .arg(fixture("hidden-info.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert_eq!(std::fs::read(&saved).expect("read"), b"Embedded PWATTACH-DOC");
+    let out = dir.path().join("a.pdf");
+    let r = bin()
+        .args(["attachments", "--add"])
+        .arg(&saved)
+        .arg("-o")
+        .arg(&out)
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let v = json(&bin().args(["--json", "attachments"]).arg(&out).output().expect("run"));
+    assert_eq!(v["result"]["data"]["attachments"][0]["name"], "s.txt");
+    let r = bin().args(["attachments", "--save", "0"]).arg(fixture("hidden-info.pdf")).output().expect("run");
+    assert_eq!(r.status.code(), Some(2), "needs -o");
+}

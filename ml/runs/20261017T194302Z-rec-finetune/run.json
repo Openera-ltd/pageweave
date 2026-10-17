@@ -1,0 +1,14 @@
+{
+  "run_id": "20261017T194302Z-rec-finetune",
+  "purpose": "fine-tune PP-OCRv6 small recognizer on rights-clean synthetic line crops; select on val; target badscan errors",
+  "created_utc": "2026-10-17T19:43:05+00:00",
+  "kernel": "kuyamblaisetimchia/pageweave-rec-finetune",
+  "code_commit": "dc9753d32fdbdf4063fac8bcb925e03c34ba308d",
+  "kernel_files_sha256": "ca99b543058e26ab07d3fc59b1117599e8da6e24b788b76ee6b648559944a257",
+  "datasets": [
+    "kuyamblaisetimchia/pageweave-rec-finetune-v1"
+  ],
+  "gpu_hours_ceiling": 3.0,
+  "accelerator": "NvidiaTeslaT4",
+  "status": "queued"
+}

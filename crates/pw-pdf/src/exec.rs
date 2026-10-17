@@ -138,6 +138,23 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(w);
             (vec![out(&c, Some(n))], json!({ "page_count": n, "encryption": "AES-256" }))
         }
+        Operation::ListAttachments { input } => {
+            let (list, truncated) = crate::attachments::list_attachments(input, &opts)?;
+            if truncated {
+                warnings.push(format!("Showing the first {} attachments.", list.len()));
+            }
+            (vec![], json!({ "attachments": list, "truncated": truncated }))
+        }
+        Operation::ExtractAttachment { input, index, output } => {
+            let (c, info) = crate::attachments::extract_attachment(input, &opts, *index, output, policy)?;
+            warnings.push("Saved as stored in the document. Only open attached files you trust.".into());
+            (vec![out(&c, None)], json!({ "attachment": info }))
+        }
+        Operation::AddAttachments { input, files, output } => {
+            let (c, n, w) = crate::attachments::add_attachments(input, &opts, files, output, policy)?;
+            warnings.extend(w);
+            (vec![out(&c, Some(n))], json!({ "page_count": n, "added": files.len() }))
+        }
         Operation::CropPages { input, pages, margins, output } => {
             let (c, n, w) = edit::crop_pages(input, &opts, pages.as_deref(), margins, output, policy)?;
             warnings.extend(w);

@@ -8,6 +8,7 @@
 //! so multi-call sequences over PDFium's global state are atomic. The form module calls a few
 //! PDFium functions directly (pdfium-render does not expose its form-fill handle) under the same lock.
 
+mod attachments;
 mod content_ops;
 mod document;
 mod edit;
@@ -20,6 +21,7 @@ mod redact;
 mod sanitize;
 mod unprotect;
 
+pub use attachments::{add_attachments, clean_name, extract_attachment, list_attachments, AttachmentInfo};
 pub use document::{
     open_document, page_text_segments, render_page_png, search, BookmarkInfo, DocumentInfo, OpenOptions, PageInfo,
     PageText, SearchHit, SearchRect, TextSegment,

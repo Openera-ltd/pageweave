@@ -9,6 +9,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { createContext, useContext } from "react";
 import type {
   AppInfo,
+  AttachmentInfo,
   AreaPreview,
   JobSnapshot,
   RedactArea,
@@ -50,6 +51,12 @@ export interface Api {
   redactionPreview(docId: number, areas: RedactArea[]): Promise<AreaPreview[]>;
   /** What hidden information the document holds (read-only, runs in the engine). */
   sanitizeInspect(docId: number): Promise<SanitizeFindings>;
+  /** Files embedded in the document (read-only). */
+  listAttachments(docId: number): Promise<AttachmentInfo[]>;
+  /** Any files (no type filter), e.g. to attach. */
+  pickAnyFiles(): Promise<string[]>;
+  /** A save location for a file of any type. */
+  pickSaveAnyPath(defaultPath: string): Promise<string | null>;
   launchFiles(): Promise<string[]>;
   launchFileDone(path: string): Promise<void>;
   /** Documents the host has open as tabs (restored after a page reload). */
@@ -100,6 +107,13 @@ export const tauriApi: Api = {
   revealInFolder: (path) => revealItemInDir(path),
   redactionPreview: (docId, areas) => invoke("redaction_preview", { docId, areas }),
   sanitizeInspect: (docId) => invoke("sanitize_inspect", { docId }),
+  listAttachments: (docId) => invoke("list_attachments", { docId }),
+  pickAnyFiles: async () => {
+    const r = await openDialog({ multiple: true, directory: false });
+    if (r === null) return [];
+    return Array.isArray(r) ? r : [r];
+  },
+  pickSaveAnyPath: (defaultPath) => saveDialog({ defaultPath }),
   launchFiles: () => invoke("launch_files"),
   launchFileDone: (path) => invoke("launch_file_done", { path }),
   openDocuments: () => invoke("open_documents"),

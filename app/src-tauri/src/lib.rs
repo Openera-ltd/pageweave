@@ -144,6 +144,16 @@ async fn redaction_preview(
     .await
 }
 
+/// Files embedded in an open document (read-only). Runs on a worker thread.
+#[tauri::command]
+async fn list_attachments(state: State<'_, AppState>, doc_id: DocId) -> CmdResult<Vec<pw_pdf::AttachmentInfo>> {
+    let doc = state.doc(doc_id)?;
+    blocking(move || {
+        pw_pdf::list_attachments(&doc.path, &pw_pdf::OpenOptions { password: doc.password.as_deref() }).map(|(l, _)| l)
+    })
+    .await
+}
+
 /// What hidden information an open document holds (read-only). Runs on a worker thread.
 #[tauri::command]
 async fn sanitize_inspect(state: State<'_, AppState>, doc_id: DocId) -> CmdResult<pw_pdf::SanitizeFindings> {
@@ -378,6 +388,7 @@ pub fn run() {
             form_fields,
             redaction_preview,
             sanitize_inspect,
+            list_attachments,
             open_documents,
         ])
         .run(tauri::generate_context!())
