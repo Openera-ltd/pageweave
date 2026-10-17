@@ -297,6 +297,124 @@ def build_redaction_hard_document() -> bytes:
     return bytes(body)
 
 
+HIDDEN_IMAGE = bytes((i * 17 + 9) % 256 for i in range(4 * 4 * 3))
+THUMB_IMAGE = b"PWTHUMB2PWTH"
+
+
+def build_hidden_info_document() -> bytes:
+    """Every kind of hidden information sanitization removes, each carrying a marker tests search
+    for in the (decompressed) output: document properties, XMP (declaring PDF/A), private
+    application data, a thumbnail; document, page, field, outline and open-action scripts, a
+    Launch link and XFA; an embedded file and a file-attachment annotation; a hidden layer holding
+    text and an image, a hidden form XObject (via a membership dictionary) and a hidden annotation;
+    a note with popup and a highlight; a filled text field. Also kept content: a visible layer,
+    body text, a web link, a page link and an outline. An incremental update leaves an earlier
+    version of page 2 (PWOLD-REVISION) in the file."""
+    import zlib
+
+    w = PdfWriter()
+    catalog, pages_obj, p1, p2 = w.reserve(), w.reserve(), w.reserve(), w.reserve()
+    font = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    hidden = w.add("<< /Type /OCG /Name (Draft notes) >>")
+    shown = w.add("<< /Type /OCG /Name (Final) >>")
+    ocmd = w.add(f"<< /Type /OCMD /OCGs [{hidden} 0 R] /P /AllOn >>")
+    img = w.stream(HIDDEN_IMAGE, "/Type /XObject /Subtype /Image /Width 4 /Height 4 /ColorSpace /DeviceRGB /BitsPerComponent 8 ")
+    fx_ops = zlib.compress(b"BT /F1 12 Tf 0 0 Td (Hidden form PWLAYER-XOBJ) Tj ET", 9)
+    fx = w.add(b"<< /Type /XObject /Subtype /Form /BBox [0 0 300 20] /OC %d 0 R /Resources << /Font << /F1 %d 0 R >> >> "
+               b"/Filter /FlateDecode /Length %d >>\nstream\n" % (ocmd, font, len(fx_ops)) + fx_ops + b"\nendstream")
+    c1 = "\n".join([
+        text_page_content(["Visible body PWBODY"], x=72, y=740).decode(),
+        "/OC /L1 BDC",
+        text_page_content(["Draft remark PWLAYER-HIDDEN"], x=72, y=700).decode(),
+        "q 40 0 0 40 300 600 cm /Im2 Do Q",
+        "EMC",
+        "/OC /L2 BDC",
+        text_page_content(["Approved PWLAYER-SHOWN"], x=72, y=660).decode(),
+        "EMC",
+        "q 1 0 0 1 72 620 cm /Fx Do Q",
+    ]).encode("latin-1")
+
+    def js(code: str) -> int:
+        return w.add(f"<< /S /JavaScript /JS ({esc(code)}) >>")
+
+    def embedded(data: bytes, name: str) -> int:
+        ef = w.add(b"<< /Type /EmbeddedFile /Length %d >>\nstream\n" % len(data) + data + b"\nendstream")
+        return w.add(f"<< /Type /Filespec /F ({name}) /UF ({name}) /EF << /F {ef} 0 R >> >>")
+
+    note = w.reserve()
+    popup = w.add(f"<< /Type /Annot /Subtype /Popup /Rect [400 600 560 700] /Parent {note} 0 R >>")
+    w.set(note, f"<< /Type /Annot /Subtype /Text /Rect [500 740 520 760] /Contents (Reviewer note PWCOMMENT) /Popup {popup} 0 R >>")
+    highlight = w.add("<< /Type /Annot /Subtype /Highlight /Rect [72 736 200 754] /QuadPoints [72 754 200 754 72 736 200 736] "
+                      "/C [1 1 0] /Contents (PWHIGHLIGHT) >>")
+    launch = w.add("<< /Type /Annot /Subtype /Link /Rect [72 560 200 576] /Border [0 0 0] "
+                   "/A << /S /Launch /F (PWLAUNCH.exe) >> >>")
+    web = w.add("<< /Type /Annot /Subtype /Link /Rect [72 540 200 556] /Border [0 0 0] "
+                "/A << /S /URI /URI (http://example.invalid/PWWEB) >> >>")
+    goto = w.add(f"<< /Type /Annot /Subtype /Link /Rect [72 520 200 536] /Border [0 0 0] /Dest [{p2} 0 R /Fit] >>")
+    attach = w.add(f"<< /Type /Annot /Subtype /FileAttachment /Rect [540 500 556 520] /Name /Paperclip "
+                   f"/FS {embedded(b'Attached PWATTACH-ANNOT', 'notes.txt')} 0 R /Contents (notes.txt) >>")
+    hidden_annot = w.add(f"<< /Type /Annot /Subtype /Square /Rect [300 500 360 540] /OC {hidden} 0 R /C [1 0 0] "
+                         f"/Contents (PWLAYER-ANNOT) >>")
+    field_ap_ops = b"/Tx BMC BT /F1 12 Tf 2 5 Td (PWFORMVALUE) Tj ET EMC"
+    field_ap = w.add(b"<< /Type /XObject /Subtype /Form /BBox [0 0 200 20] /Resources << /Font << /F1 %d 0 R >> >> /Length %d >>\nstream\n"
+                     % (font, len(field_ap_ops)) + field_ap_ops + b"\nendstream")
+    field = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Tx /T (reference) /Rect [72 460 272 480] /F 4 /P {p1} 0 R "
+                  f"/DA (/F1 12 Tf 0 g) /V (PWFORMVALUE) /AP << /N {field_ap} 0 R >> "
+                  f"/AA << /K {js('PWJS-FIELD')} 0 R >> >>")
+    piece = "/PieceInfo << /PageWeaveFixture << /LastModified (D:20200101000000Z) /Private (PWPIECE) >> >>"
+    res1 = (f"/Resources << /Font << /F1 {font} 0 R >> /XObject << /Im2 {img} 0 R /Fx {fx} 0 R >> "
+            f"/Properties << /L1 {hidden} 0 R /L2 {shown} 0 R >> >>")
+    annots = " ".join(f"{a} 0 R" for a in [note, popup, highlight, launch, web, goto, attach, hidden_annot, field])
+    w.set(p1, f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] {res1} /Contents {w.stream(c1)} 0 R "
+              f"{piece} /AA << /O {js('PWJS-PAGE')} 0 R >> /Annots [{annots}] >>")
+
+    thumb = w.stream(THUMB_IMAGE, "/Width 2 /Height 2 /ColorSpace /DeviceRGB /BitsPerComponent 8 ")
+    old2 = w.stream(text_page_content(["Second page PWOLD-REVISION"], x=72, y=700))
+    new2 = text_page_content(["Second page PWPAGE2"], x=72, y=700)
+    res2 = f"/Resources << /Font << /F1 {font} 0 R >> >>"
+    w.set(p2, f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] {res2} /Contents {old2} 0 R /Thumb {thumb} 0 R >>")
+    w.set(pages_obj, f"<< /Type /Pages /Kids [{p1} 0 R {p2} 0 R] /Count 2 >>")
+
+    xmp_data = (b'<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?><x:xmpmeta xmlns:x="adobe:ns:meta/">'
+                b'<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description '
+                b'xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/" pdfaid:part="2" pdfaid:conformance="B" '
+                b'xmlns:dc="http://purl.org/dc/elements/1.1/" dc:creator="PWMETA-XMP"/></rdf:RDF></x:xmpmeta>'
+                b'<?xpacket end="w"?>')
+    xmp = w.add(b"<< /Type /Metadata /Subtype /XML /Length %d >>\nstream\n" % len(xmp_data) + xmp_data + b"\nendstream")
+    xfa = w.stream(b"<xdp:xdp xmlns:xdp='http://ns.adobe.com/xdp/'><script>PWXFA</script></xdp:xdp>")
+    outlines, item1, item2 = w.reserve(), w.reserve(), w.reserve()
+    w.set(item1, f"<< /Title (Chapter one) /Parent {outlines} 0 R /Next {item2} 0 R /A {js('PWJS-OUTLINE')} 0 R >>")
+    w.set(item2, f"<< /Title (Chapter two) /Parent {outlines} 0 R /Prev {item1} 0 R /Dest [{p2} 0 R /Fit] >>")
+    w.set(outlines, f"<< /Type /Outlines /First {item1} 0 R /Last {item2} 0 R /Count 2 >>")
+    names = (f"/Names << /JavaScript << /Names [(init) {js('PWJS-DOC')} 0 R] >> "
+             f"/EmbeddedFiles << /Names [(secret.txt) {embedded(b'Embedded PWATTACH-DOC', 'secret.txt')} 0 R] >> >>")
+    ocp = (f"/OCProperties << /OCGs [{hidden} 0 R {shown} 0 R] /D << /Order [{hidden} 0 R {shown} 0 R] "
+           f"/ON [{shown} 0 R] /OFF [{hidden} 0 R] >> >>")
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R /Metadata {xmp} 0 R {names} {ocp} "
+                   f"/OpenAction {js('PWJS-OPEN')} 0 R /Outlines {outlines} 0 R "
+                   f"/AcroForm << /Fields [{field} 0 R] /DA (/F1 0 Tf 0 g) /DR << /Font << /F1 {font} 0 R >> >> /XFA {xfa} 0 R >> >>")
+    info = w.add("<< /Title (Hidden info PWMETA-TITLE) /Author (PWMETA-AUTHOR) /Department (PWMETA-CUSTOM) "
+                 "/Producer (gen_fixtures.py) >>")
+    base = w.render(catalog, info)
+
+    # Incremental update: page 2 gets new content; the old stream stays in the file's bytes.
+    content = b"<< /Length %d >>\nstream\n" % len(new2) + new2 + b"\nendstream"
+    new_num = len(w.objects) + 1
+    page2 = (f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] {res2} /Contents {new_num} 0 R "
+             f"/Thumb {thumb} 0 R >>").encode()
+    prev_xref = int(base.rsplit(b"startxref\n", 1)[1].split(b"\n")[0])
+    body = bytearray(base)
+    off_page = len(body)
+    body += b"%d 0 obj\n" % p2 + page2 + b"\nendobj\n"
+    off_content = len(body)
+    body += b"%d 0 obj\n" % new_num + content + b"\nendobj\n"
+    xref = len(body)
+    body += b"xref\n0 1\n0000000000 65535 f \n%d 1\n%010d 00000 n \n%d 1\n%010d 00000 n \n" % (p2, off_page, new_num, off_content)
+    body += (b"trailer\n<< /Size %d /Root %d 0 R /Info %d 0 R /Prev %d /ID [<70616765776561766566697874757265> <70616765776561766566697874757265>] >>\n"
+             b"startxref\n%d\n%%%%EOF\n" % (new_num + 1, catalog, info, prev_xref, xref))
+    return bytes(body)
+
+
 def numbered_pages(n: int, size=LETTER) -> list[dict]:
     return [{"lines": [f"PageWeave fixture page {i}", f"Marker token PWMARK{i:03d}",
                        "The quick brown fox jumps over the lazy dog."], "size": size}
@@ -330,6 +448,7 @@ def main() -> int:
     files["form-fields.pdf"] = build_form_document()
     files["redaction.pdf"] = build_redaction_document()
     files["redaction-hard.pdf"] = build_redaction_hard_document()
+    files["hidden-info.pdf"] = build_hidden_info_document()
 
     good = files["five-pages.pdf"]
     files["corrupt-truncated.pdf"] = good[: len(good) // 2]

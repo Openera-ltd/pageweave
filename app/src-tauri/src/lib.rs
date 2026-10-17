@@ -144,6 +144,14 @@ async fn redaction_preview(
     .await
 }
 
+/// What hidden information an open document holds (read-only). Runs on a worker thread.
+#[tauri::command]
+async fn sanitize_inspect(state: State<'_, AppState>, doc_id: DocId) -> CmdResult<pw_pdf::SanitizeFindings> {
+    let doc = state.doc(doc_id)?;
+    blocking(move || pw_pdf::sanitize_inspect(&doc.path, &pw_pdf::OpenOptions { password: doc.password.as_deref() }))
+        .await
+}
+
 /// Start an operation as a job. When `doc_id` is given, its password is supplied by the host so
 /// the UI never has to hold it. Returns the job ID; progress arrives as `job-update` events.
 #[tauri::command]
@@ -369,6 +377,7 @@ pub fn run() {
             recovered_jobs,
             form_fields,
             redaction_preview,
+            sanitize_inspect,
             open_documents,
         ])
         .run(tauri::generate_context!())

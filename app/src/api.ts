@@ -17,6 +17,7 @@ import type {
   FormInfo,
   PageText,
   RecoveredJob,
+  SanitizeFindings,
   SearchHit,
   Settings,
 } from "./types";
@@ -47,6 +48,8 @@ export interface Api {
   /** Command-line files the UI has not handled yet; `launchFileDone` marks one handled. */
   /** What redacting `areas` would remove (read-only, runs in the engine). */
   redactionPreview(docId: number, areas: RedactArea[]): Promise<AreaPreview[]>;
+  /** What hidden information the document holds (read-only, runs in the engine). */
+  sanitizeInspect(docId: number): Promise<SanitizeFindings>;
   launchFiles(): Promise<string[]>;
   launchFileDone(path: string): Promise<void>;
   /** Documents the host has open as tabs (restored after a page reload). */
@@ -96,6 +99,7 @@ export const tauriApi: Api = {
   },
   revealInFolder: (path) => revealItemInDir(path),
   redactionPreview: (docId, areas) => invoke("redaction_preview", { docId, areas }),
+  sanitizeInspect: (docId) => invoke("sanitize_inspect", { docId }),
   launchFiles: () => invoke("launch_files"),
   launchFileDone: (path) => invoke("launch_file_done", { path }),
   openDocuments: () => invoke("open_documents"),

@@ -30,7 +30,9 @@
 
   --z-menu: 50;
   --z-dialog: 40;
-  --z-toast: 60;
+  /* Below the modal layer: notices must never cover a dialog's buttons (found by E2E: two XFA
+     notices intercepted the Remove button of the sanitize dialog). */
+  --z-toast: 35;
 
   /* Light theme */
   --bg: #f4f5f7;
@@ -304,6 +306,25 @@ textarea {
 
 .row > .grow {
   flex: 1;
+}
+
+/* Fieldsets default to min-content width; let long findings truncate instead of widening the dialog. */
+.sanitize-kinds {
+  min-width: 0;
+}
+
+.sanitize-row {
+  min-width: 0;
+}
+
+.sanitize-finding {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
 }
 
 /* ---------- Tabs ---------- */

@@ -75,6 +75,7 @@ Maintain a single documented shortcut registry. Include common system convention
 - On closing a modified document/window, explain the options to save, discard, or cancel. Default focus should avoid accidental destructive action.
 - Escape closes the topmost dismissible surface or cancels the active operation according to a defined priority. It must not silently cancel data edits or close the document unexpectedly.
 - Dialogs have initial focus, focus trapping when modal, a safe default action, keyboard shortcuts, screen-reader semantics, and correct restoration of focus on close.
+- Notices (toasts) sit beneath the modal layer: while a modal dialog is open they are dimmed with the page and never cover or intercept the dialog's controls. Errors that belong to a dialog are shown inside it.
 - Support multiple monitors, varied window sizes, high-DPI scaling, mixed display scaling, and display edge placement without clipped menus/dialogs.
 
 ## Theme and settings behavior

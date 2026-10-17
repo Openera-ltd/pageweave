@@ -158,6 +158,21 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(w);
             (vec![out(&c, Some(n))], serde_json::to_value(&summary).unwrap_or_default())
         }
+        Operation::SanitizeInspect { input } => {
+            let found = crate::sanitize::sanitize_inspect(input, &opts)?;
+            (vec![], serde_json::to_value(&found).unwrap_or_default())
+        }
+        Operation::Sanitize { input, options, output } => {
+            let page_progress = |done: u64, total: u64| {
+                if let Some(c) = ctx {
+                    c.set_progress(done, total, "pages");
+                }
+            };
+            let (c, n, removed, w) =
+                crate::sanitize::sanitize(input, &opts, options, output, policy, &cancelled, &page_progress)?;
+            warnings.extend(w);
+            (vec![out(&c, Some(n))], json!({ "page_count": n, "removed": removed }))
+        }
         Operation::RedactionPreview { input, areas } => {
             let previews = crate::redact::redaction_preview(input, &opts, areas)?;
             (vec![], json!({ "areas": previews }))

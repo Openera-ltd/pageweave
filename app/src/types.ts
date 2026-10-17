@@ -190,7 +190,33 @@ export type Operation =
   | { op: "organize_pages"; input: string; extra_inputs: string[]; pages: Array<{ source: number; page: number; rotate: number }>; output: string }
   | { op: "redact"; input: string; areas: RedactArea[]; output: string }
   | { op: "ocr_pages"; input: string; pages: string | null; skip_text_pages: boolean; dpi: number; output: string }
-  | { op: "protect"; input: string; permissions: ProtectPermissions; output: string };
+  | { op: "protect"; input: string; permissions: ProtectPermissions; output: string }
+  | { op: "sanitize"; input: string; options: SanitizeOptions; output: string };
+
+/** What a sanitized copy leaves out (pw-core `SanitizeOptions`). */
+export interface SanitizeOptions {
+  metadata: boolean;
+  scripts: boolean;
+  attachments: boolean;
+  hidden_layers: boolean;
+  comments: boolean;
+  form_fields: boolean;
+  web_links: boolean;
+}
+
+/** Hidden information found in a file (engine `sanitize_inspect`). */
+export interface SanitizeFindings {
+  metadata: string[];
+  scripts: number;
+  attachments: number;
+  attachment_names: string[];
+  layers: number;
+  hidden_layers: string[];
+  comments: number;
+  form_fields: number;
+  web_links: number;
+  earlier_versions: boolean;
+}
 
 /** An area to redact, in PDF user space of a 0-based page. */
 export interface RedactArea {

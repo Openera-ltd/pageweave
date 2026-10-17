@@ -1114,6 +1114,67 @@ await test("protect with password: AES-256 copy needs the password; wrong passwo
   }
 });
 
+await test("remove hidden information: findings listed, verified copy has none, kept content stays; protected files refused with a reason", async () => {
+  const src = join(FIX, "hidden-info.pdf");
+  const before = sha(src);
+  const out = join(work, "cleaned.pdf");
+  // Null until the dialog has rendered (the palette closes first), so waitUntil keeps polling.
+  const finding = (s, k) => s.exec(`return document.querySelector('[data-finding=${k}]')?.textContent ?? null`);
+  await withApp([src, join(FIX, "encrypted-rc4-user-password.pdf")], async (s) => {
+    // The protected file opens with its password first; the dialog refuses it with a reason.
+    await s.waitFor("#pdf-password");
+    await s.type("#pdf-password", "pw-user-test");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label .name').length")) === 2, "both open");
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Remove hidden");
+    await s.click('[role="option"][data-command="file.sanitize"]');
+    await s.waitUntil(async () => ((await s.attr('[data-testid="sanitize-start"]', "title")) ?? "").includes("Password-protected"), "protected file refused with a reason");
+    await s.keys(["Escape"]);
+    // Switch to the file with hidden information.
+    await s.exec("[...document.querySelectorAll('.tab-label .name')].find(n => n.textContent === 'hidden-info.pdf').click(); return 1");
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Remove hidden");
+    await s.click('[role="option"][data-command="file.sanitize"]');
+    await s.waitUntil(async () => (await finding(s, "scripts")) === "7 found", "findings listed");
+    assert((await finding(s, "metadata")).startsWith("Title, Author"), "metadata kinds listed");
+    assert((await finding(s, "attachments")) === "2 found: notes.txt, secret.txt", "attachment names");
+    assert((await finding(s, "hidden_layers")) === "Draft notes", "hidden layer named");
+    assert((await finding(s, "form_fields")) === "1 found", "field found");
+    assert((await s.exec("return document.querySelector('input[data-kind=form_fields]').checked")) === false, "fields kept by default");
+    assert((await s.text('[data-testid="sanitize-always"]')).includes("were found"), "earlier versions reported");
+    assert((await s.exec("return document.querySelector('#sanitize-output').value")).endsWith("hidden-info-cleaned.pdf"), "default output name");
+    await s.click("input[data-kind=web_links]");
+    await s.type("#sanitize-output", out);
+    await axeCheck(s, "sanitize-dialog");
+    writeFileSync(join(ART, "sanitize-dialog.png"), await s.screenshot());
+    await s.click('[data-testid="sanitize-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved cleaned.pdf")), "saved notice", 30000);
+    // Open the copy and inspect it again: nothing selected is left.
+    await s.exec("[...document.querySelectorAll('.notice button')].find(b => b.textContent === 'Open').click(); return 1");
+    await s.waitUntil(async () => (await s.exec("return [...document.querySelectorAll('.tab-label .name')].map(n => n.textContent)")).includes("cleaned.pdf"), "copy opened");
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Remove hidden");
+    await s.click('[role="option"][data-command="file.sanitize"]');
+    await s.waitUntil(async () => (await finding(s, "scripts")) === "None found", "copy re-inspected");
+    for (const k of ["metadata", "attachments", "hidden_layers", "comments", "web_links"]) {
+      assert((await finding(s, k)) === "None found", `${k} gone`);
+    }
+    assert((await finding(s, "form_fields")) === "1 found", "field kept");
+    await s.keys(["Escape"]);
+  });
+  assert(sha(src) === before, "source PDF unchanged");
+  if (CLI) {
+    const t = JSON.parse(execFileSync(CLI, ["--json", "text", "--pages", "1", out], { encoding: "utf8" })).result.data.pages[0].text;
+    assert(t.includes("PWBODY") && t.includes("PWLAYER-SHOWN") && !t.includes("PWLAYER-HIDDEN"), `independent text check: ${t.slice(0, 200)}`);
+    const f = JSON.parse(execFileSync(CLI, ["--json", "sanitize", "--inspect", out], { encoding: "utf8" })).result.data;
+    assert(f.scripts === 0 && f.attachments === 0 && f.comments === 0 && f.web_links === 0 && !f.earlier_versions && f.metadata.length === 0, `independent inspection: ${JSON.stringify(f)}`);
+  }
+});
+
 await test("OCR: a scanned file becomes searchable from the Pages menu; the copy opens with selectable text", async () => {
   const src = join(FIX, "scanned.pdf");
   const before = sha(src);

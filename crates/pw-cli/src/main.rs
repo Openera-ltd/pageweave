@@ -174,6 +174,33 @@ enum Command {
         #[arg(short, long, required_unless_present = "preview")]
         output: Option<PathBuf>,
     },
+    /// Remove hidden information in a new, verified file: metadata, scripts and actions, attachments,
+    /// hidden layers and comments by default; earlier saved versions always. Use --inspect to list
+    /// what the file holds.
+    Sanitize {
+        file: PathBuf,
+        /// Only list the hidden information found; write nothing.
+        #[arg(long)]
+        inspect: bool,
+        #[arg(short, long, required_unless_present = "inspect")]
+        output: Option<PathBuf>,
+        #[arg(long)]
+        keep_metadata: bool,
+        #[arg(long)]
+        keep_scripts: bool,
+        #[arg(long)]
+        keep_attachments: bool,
+        #[arg(long)]
+        keep_hidden_layers: bool,
+        #[arg(long)]
+        keep_comments: bool,
+        /// Also remove form fields and their data.
+        #[arg(long)]
+        remove_form_fields: bool,
+        /// Also remove links to websites.
+        #[arg(long)]
+        remove_web_links: bool,
+    },
     /// Run a typed JSON request (the same schema the local API and MCP use) from a file or "-" for stdin.
     Run { request: PathBuf },
     /// List the operations this build supports.
@@ -184,7 +211,7 @@ fn capabilities() -> serde_json::Value {
     json!({
         "schema_version": pw_core::ops::SCHEMA_VERSION,
         "engine": pw_pdf::engine_version(),
-        "operations": ["inspect", "extract_text", "search", "render", "merge", "extract_pages", "delete_pages", "rotate_pages", "split", "annotate", "form_fields", "fill_form", "apply_edits", "organize_pages", "stamp_text", "export_images", "redaction_preview", "redact", "ocr_pages", "protect"],
+        "operations": ["inspect", "extract_text", "search", "render", "merge", "extract_pages", "delete_pages", "rotate_pages", "split", "annotate", "form_fields", "fill_form", "apply_edits", "organize_pages", "stamp_text", "export_images", "redaction_preview", "redact", "ocr_pages", "protect", "sanitize_inspect", "sanitize"],
         "collision_policies": ["fail", "rename", "replace"],
         "network": "none",
     })
@@ -274,6 +301,33 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
                 _ => Operation::RedactionPreview { input: file.clone(), areas },
             }
         }
+        Command::Sanitize {
+            file,
+            inspect,
+            output,
+            keep_metadata,
+            keep_scripts,
+            keep_attachments,
+            keep_hidden_layers,
+            keep_comments,
+            remove_form_fields,
+            remove_web_links,
+        } => match (inspect, output) {
+            (false, Some(out)) => Operation::Sanitize {
+                input: file.clone(),
+                options: pw_core::ops::SanitizeOptions {
+                    metadata: !keep_metadata,
+                    scripts: !keep_scripts,
+                    attachments: !keep_attachments,
+                    hidden_layers: !keep_hidden_layers,
+                    comments: !keep_comments,
+                    form_fields: *remove_form_fields,
+                    web_links: *remove_web_links,
+                },
+                output: out.clone(),
+            },
+            _ => Operation::SanitizeInspect { input: file.clone() },
+        },
         Command::Images { file, pages, dpi, out_dir } => Operation::ExportImages {
             input: file.clone(),
             pages: pages.clone(),
@@ -383,6 +437,35 @@ fn print_human(r: &OperationResult) {
                 d["lines"],
                 d["mean_confidence"].as_f64().unwrap_or(0.0) * 100.0
             );
+        }
+        "sanitize_inspect" | "sanitize" => {
+            for o in &r.outputs {
+                println!("Wrote {} ({} bytes)", o.path.display(), o.bytes);
+            }
+            let d = if r.operation == "sanitize" { &r.data["removed"] } else { &r.data };
+            let list = |v: &serde_json::Value| -> String {
+                let items: Vec<&str> = v.as_array().into_iter().flatten().filter_map(|x| x.as_str()).collect();
+                if items.is_empty() {
+                    "none".into()
+                } else {
+                    items.join(", ")
+                }
+            };
+            let count = |v: &serde_json::Value| v.as_u64().unwrap_or(0);
+            if r.operation == "sanitize" {
+                println!("Removed:");
+            }
+            println!("  Metadata:            {}", list(&d["metadata"]));
+            println!("  Scripts and actions: {}", count(&d["scripts"]));
+            let names = list(&d["attachment_names"]);
+            let names = if names == "none" { String::new() } else { format!(" ({names})") };
+            println!("  Attachments:         {}{names}", count(&d["attachments"]));
+            println!("  Hidden layers:       {} (of {} layers)", list(&d["hidden_layers"]), count(&d["layers"]));
+            println!("  Comments:            {}", count(&d["comments"]));
+            println!("  Form fields:         {}", count(&d["form_fields"]));
+            println!("  Web links:           {}", count(&d["web_links"]));
+            let earlier = if d["earlier_versions"] == true { "yes" } else { "none" };
+            println!("  Earlier versions:    {earlier}");
         }
         "redaction_preview" => {
             for a in r.data["areas"].as_array().into_iter().flatten() {

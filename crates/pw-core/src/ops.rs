@@ -160,6 +160,48 @@ impl Default for ProtectPermissions {
     }
 }
 
+/// What a sanitized copy leaves out (PRD 05 "sanitization"). Earlier saved versions of the file
+/// (incremental updates) are always removed, because the copy is written from scratch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SanitizeOptions {
+    /// Document properties, XMP metadata, private application data and page thumbnails.
+    #[serde(default = "default_true")]
+    pub metadata: bool,
+    /// JavaScript, automatic actions, and actions that launch programs, open other files, submit or
+    /// import data; also XFA form scripts. Links to pages and websites stay.
+    #[serde(default = "default_true")]
+    pub scripts: bool,
+    /// Embedded files, file attachments and embedded media.
+    #[serde(default = "default_true")]
+    pub attachments: bool,
+    /// Content in layers that are hidden; the remaining layers become ordinary page content.
+    #[serde(default = "default_true")]
+    pub hidden_layers: bool,
+    /// Comments and markups (notes, highlights, drawings, stamps), including pending redaction marks.
+    #[serde(default = "default_true")]
+    pub comments: bool,
+    /// Form fields and the data typed into them.
+    #[serde(default)]
+    pub form_fields: bool,
+    /// Links to websites.
+    #[serde(default)]
+    pub web_links: bool,
+}
+
+impl Default for SanitizeOptions {
+    fn default() -> Self {
+        SanitizeOptions {
+            metadata: true,
+            scripts: true,
+            attachments: true,
+            hidden_layers: true,
+            comments: true,
+            form_fields: false,
+            web_links: false,
+        }
+    }
+}
+
 /// An area to redact: everything under it is removed and it is painted black.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct RedactArea {
@@ -300,6 +342,17 @@ pub enum Operation {
         dpi: u32,
         output: PathBuf,
     },
+    /// What hidden information the file holds, per sanitize category (read-only).
+    SanitizeInspect {
+        input: PathBuf,
+    },
+    /// Write a copy without the chosen kinds of hidden information, verified independently.
+    Sanitize {
+        input: PathBuf,
+        #[serde(default)]
+        options: SanitizeOptions,
+        output: PathBuf,
+    },
     /// What redacting `areas` would remove (read-only; shown before applying).
     RedactionPreview {
         input: PathBuf,
@@ -344,6 +397,8 @@ impl Operation {
             Operation::RedactionPreview { .. } => "redaction_preview",
             Operation::OcrPages { .. } => "ocr_pages",
             Operation::Protect { .. } => "protect",
+            Operation::SanitizeInspect { .. } => "sanitize_inspect",
+            Operation::Sanitize { .. } => "sanitize",
             Operation::Redact { .. } => "redact",
         }
     }
@@ -357,6 +412,7 @@ impl Operation {
                 | Operation::ExtractText { .. }
                 | Operation::Search { .. }
                 | Operation::RedactionPreview { .. }
+                | Operation::SanitizeInspect { .. }
         )
     }
 
@@ -383,6 +439,8 @@ impl Operation {
             | Operation::RedactionPreview { input, .. }
             | Operation::OcrPages { input, .. }
             | Operation::Protect { input, .. }
+            | Operation::SanitizeInspect { input }
+            | Operation::Sanitize { input, .. }
             | Operation::Redact { input, .. }
             | Operation::ApplyEdits { input, .. } => vec![input.clone()],
         }
@@ -403,7 +461,8 @@ impl Operation {
             | Operation::FormFields { .. }
             | Operation::ExtractText { .. }
             | Operation::Search { .. }
-            | Operation::RedactionPreview { .. } => None,
+            | Operation::RedactionPreview { .. }
+            | Operation::SanitizeInspect { .. } => None,
             Operation::Split { output_dir, .. } | Operation::ExportImages { output_dir, .. } => {
                 Some(output_dir.clone())
             }
@@ -419,6 +478,7 @@ impl Operation {
             | Operation::Redact { output, .. }
             | Operation::OcrPages { output, .. }
             | Operation::Protect { output, .. }
+            | Operation::Sanitize { output, .. }
             | Operation::StampText { output, .. } => parent(output),
         }
     }
