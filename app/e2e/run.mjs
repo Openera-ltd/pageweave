@@ -1000,6 +1000,19 @@ await test("page numbers: template preview, validation, saved numbers verified b
   }
 });
 
+await test("page reload: open documents come back as tabs and render", async () => {
+  await withApp([join(FIX, "single-page.pdf"), join(FIX, "five-pages.pdf")], async (s) => {
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label').length")) === 2, "two tabs");
+    await pageLoaded(s, 0);
+    await s.exec("location.reload(); return 1");
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label').length").catch(() => 0)) === 2, "both tabs restored after reload", 20000);
+    const names = await s.exec("return [...document.querySelectorAll('.tab-label .name')].map(n => n.textContent)");
+    assert(JSON.stringify(names) === JSON.stringify(["single-page.pdf", "five-pages.pdf"]), `tab order kept (${names})`);
+    await pageLoaded(s, 0);
+    assert((await s.exec("return document.querySelector('.tab-label[aria-current=page] .name').textContent")) === "five-pages.pdf", "last document active");
+  });
+});
+
 /* ------------------------------------------------------------------ */
 const summary = {
   app: APP,

@@ -43,6 +43,8 @@ export interface Api {
   pickFolder(defaultPath?: string): Promise<string | null>;
   revealInFolder(path: string): Promise<void>;
   launchFiles(): Promise<string[]>;
+  /** Documents the host has open as tabs (restored after a page reload). */
+  openDocuments(): Promise<OpenedDoc[]>;
   logDir(): Promise<string>;
   pageText(docId: number, page: number): Promise<PageText>;
   copyText(text: string): Promise<void>;
@@ -88,6 +90,7 @@ export const tauriApi: Api = {
   },
   revealInFolder: (path) => revealItemInDir(path),
   launchFiles: () => invoke("launch_files"),
+  openDocuments: () => invoke("open_documents"),
   logDir: () => invoke("log_dir"),
   pageText: (docId, page) => invoke("page_text", { docId, page }),
   setUnsavedChanges: (count) => invoke("set_unsaved_changes", { count }),

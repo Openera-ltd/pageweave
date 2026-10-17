@@ -20,6 +20,8 @@ pub struct DocEntry {
     pub path: PathBuf,
     pub password: Option<String>,
     pub info: DocumentInfo,
+    /// Opened only to preview pages (e.g. for insertion); never shown as a tab.
+    pub preview: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -211,7 +213,7 @@ impl AppState {
             .docs
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .insert(id, DocEntry { path: canonical.clone(), password, info: info.clone() });
+            .insert(id, DocEntry { path: canonical.clone(), password, info: info.clone(), preview: !remember });
         if remember {
             let mut s = self.inner.settings.lock().unwrap_or_else(|p| p.into_inner());
             s.touch_recent(&canonical.to_string_lossy());
@@ -232,6 +234,24 @@ impl AppState {
     /// Returns command-line files once, so a UI reload does not reopen them.
     pub fn take_launch_files(&self) -> Vec<String> {
         std::mem::take(&mut *self.inner.launch_files.lock().unwrap_or_else(|p| p.into_inner()))
+    }
+
+    /// Documents shown as tabs, in the order they were opened (lets the UI recover after a reload).
+    pub fn open_documents(&self) -> Vec<OpenedDoc> {
+        let docs = self.inner.docs.lock().unwrap_or_else(|p| p.into_inner());
+        let mut list: Vec<OpenedDoc> = docs
+            .iter()
+            .filter(|(_, d)| !d.preview)
+            .map(|(id, d)| OpenedDoc {
+                doc_id: *id,
+                path: d.path.clone(),
+                name: display_name(&d.path),
+                info: d.info.clone(),
+                already_open: true,
+            })
+            .collect();
+        list.sort_by_key(|d| d.doc_id);
+        list
     }
 
     pub fn close(&self, id: DocId) -> bool {
@@ -340,6 +360,18 @@ mod tests {
         let a = crate::webview2_browser_args(Some("--remote-debugging-port=9222")).expect("args");
         assert!(a.starts_with("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection"));
         assert!(a.ends_with(" --remote-debugging-port=9222"));
+    }
+
+    #[test]
+    fn open_documents_lists_tabs_in_order_without_previews() {
+        let (s, _d) = state();
+        let a = s.open(fixture("five-pages.pdf"), None).expect("open");
+        s.open_with(fixture("single-page.pdf"), None, false).expect("preview");
+        let b = s.open(fixture("twenty-pages.pdf"), None).expect("open");
+        let ids: Vec<_> = s.open_documents().iter().map(|d| d.doc_id).collect();
+        assert_eq!(ids, vec![a.doc_id, b.doc_id]);
+        s.close(a.doc_id);
+        assert_eq!(s.open_documents().len(), 1);
     }
 
     #[test]

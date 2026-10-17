@@ -223,6 +223,10 @@ export function App() {
           setTabs((ts) => [...ts, doc]);
           setViews((v) => ({ ...v, [doc.doc_id]: { zoom: 1, page: 0, fitPending: true } }));
           for (const w of doc.info.warnings) notify({ kind: "warning", title: doc.name, detail: w, persistent: true });
+        } else {
+          // Open in the host but not shown (e.g. after the page was reloaded): show it again.
+          setTabs((ts) => (ts.some((t) => t.doc_id === doc.doc_id) ? ts : [...ts, doc]));
+          setViews((v) => (v[doc.doc_id] ? v : { ...v, [doc.doc_id]: { zoom: 1, page: 0, fitPending: true } }));
         }
         setActiveId(doc.doc_id);
         api.getSettings().then(setSettings).catch(() => undefined);
@@ -333,11 +337,20 @@ export function App() {
   }, [api]);
 
   useEffect(() => {
-    // Open in order so the last file listed ends up as the active tab.
+    // Restore tabs the host still has open (the page may have been reloaded), then open files from
+    // the command line in order so the last one listed ends up active.
     api
-      .launchFiles()
+      .openDocuments()
+      .then((docs) => {
+        if (!docs.length) return;
+        setTabs((ts) => [...ts, ...docs.filter((d) => !ts.some((t) => t.doc_id === d.doc_id))]);
+        setViews((v) => Object.fromEntries([...Object.entries(v), ...docs.filter((d) => !v[d.doc_id]).map((d) => [d.doc_id, { zoom: 1, page: 0, fitPending: true }])]));
+        setActiveId((id) => id ?? docs[docs.length - 1]!.doc_id);
+      })
+      .catch(() => undefined)
+      .then(() => api.launchFiles())
       .then(async (files) => {
-        for (const f of files) await openPath(f);
+        for (const f of files ?? []) await openPath(f);
       })
       .catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -197,6 +197,12 @@ fn recovered_jobs(state: State<'_, AppState>) -> Vec<pw_core::journal::Recovered
     state.take_recovered()
 }
 
+/// Documents currently open as tabs, so the UI can restore them after its page is reloaded.
+#[tauri::command]
+fn open_documents(state: State<'_, AppState>) -> Vec<OpenedDoc> {
+    state.open_documents()
+}
+
 /// PDF paths passed on the command line (file association / "Open with"), consumed once.
 #[tauri::command]
 fn launch_files(state: State<'_, AppState>) -> Vec<String> {
@@ -336,6 +342,7 @@ pub fn run() {
             mark_timing,
             recovered_jobs,
             form_fields,
+            open_documents,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PageWeave");
