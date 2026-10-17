@@ -202,6 +202,22 @@ fn optimize_image_flags_resample_and_bad_values_are_usage_errors() {
 }
 
 #[test]
+fn compare_lists_differences_in_both_forms() {
+    let (old, new) = (fixture("compare-old.pdf"), fixture("compare-new.pdf"));
+    let r = bin().args(["--json", "compare"]).arg(&old).arg(&new).output().expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let v = json(&r);
+    assert_eq!(v["result"]["operation"], "compare");
+    assert_eq!(v["result"]["data"]["summary"]["pages_inserted"], 1);
+    assert!(v["result"]["outputs"].as_array().expect("outputs").is_empty(), "read-only");
+    let human = bin().arg("compare").arg(&old).arg(&new).output().expect("run");
+    let text = String::from_utf8_lossy(&human.stdout);
+    assert!(text.contains("replaced: \"quarterly\" -> \"annual\""), "{text}");
+    assert!(text.contains("page 3 -> -: deleted") && text.contains("page - -> 3: inserted"), "{text}");
+    assert!(text.contains("Title: \"Report v1\" -> \"Report v2\""), "{text}");
+}
+
+#[test]
 fn text_saves_a_file_with_output_and_prints_without() {
     let dir = tempfile::tempdir().expect("tmp");
     let out = dir.path().join("five.txt");

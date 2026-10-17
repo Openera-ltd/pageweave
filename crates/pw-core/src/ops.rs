@@ -545,6 +545,11 @@ pub enum Operation {
         images: Option<ImageReduce>,
         output: PathBuf,
     },
+    /// Differences between two documents (read-only): aligned pages, text, format and visual changes.
+    Compare {
+        old: PathBuf,
+        new: PathBuf,
+    },
     /// What redacting `areas` would remove (read-only; shown before applying).
     RedactionPreview {
         input: PathBuf,
@@ -596,6 +601,7 @@ pub const OPERATION_IDS: &[&str] = &[
     "images_to_pdf",
     "export_text",
     "optimize",
+    "compare",
     "list_attachments",
     "extract_attachment",
     "add_attachments",
@@ -634,6 +640,7 @@ impl Operation {
             Operation::ImagesToPdf { .. } => "images_to_pdf",
             Operation::ExportText { .. } => "export_text",
             Operation::Optimize { .. } => "optimize",
+            Operation::Compare { .. } => "compare",
             Operation::ListAttachments { .. } => "list_attachments",
             Operation::ExtractAttachment { .. } => "extract_attachment",
             Operation::AddAttachments { .. } => "add_attachments",
@@ -654,6 +661,7 @@ impl Operation {
                 | Operation::RedactionPreview { .. }
                 | Operation::SanitizeInspect { .. }
                 | Operation::ListAttachments { .. }
+                | Operation::Compare { .. }
         )
     }
 
@@ -661,6 +669,7 @@ impl Operation {
     pub fn inputs(&self) -> Vec<PathBuf> {
         match self {
             Operation::Merge { inputs, .. } | Operation::ImagesToPdf { inputs, .. } => inputs.clone(),
+            Operation::Compare { old, new } => vec![old.clone(), new.clone()],
             // Files being attached are inputs too: never overwritten by the output.
             Operation::AddAttachments { input, files, .. } => {
                 std::iter::once(input.clone()).chain(files.iter().cloned()).collect()
@@ -717,7 +726,8 @@ impl Operation {
             | Operation::Search { .. }
             | Operation::RedactionPreview { .. }
             | Operation::SanitizeInspect { .. }
-            | Operation::ListAttachments { .. } => None,
+            | Operation::ListAttachments { .. }
+            | Operation::Compare { .. } => None,
             Operation::Split { output_dir, .. } | Operation::ExportImages { output_dir, .. } => {
                 Some(output_dir.clone())
             }

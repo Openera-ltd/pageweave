@@ -192,6 +192,8 @@ enum Command {
         #[arg(long, default_value = "pt")]
         unit: String,
     },
+    /// List the differences between two documents (pages, text, format, visual).
+    Compare { old: PathBuf, new: PathBuf },
     /// Save a smaller copy with the same content (lossless; images unchanged), verified page by page.
     Optimize {
         file: PathBuf,
@@ -419,6 +421,7 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
             }
             _ => return Err(PwError::invalid("attach.output", "Give -o with --save or --add.")),
         },
+        Command::Compare { old, new } => Operation::Compare { old: old.clone(), new: new.clone() },
         Command::Optimize { file, output, image_dpi, image_quality } => Operation::Optimize {
             input: file.clone(),
             images: image_dpi.map(|max_dpi| pw_core::ops::ImageReduce { max_dpi, quality: *image_quality }),
@@ -590,6 +593,49 @@ fn print_human(r: &OperationResult) {
                     line += " (read-only)";
                 }
                 println!("{line}");
+            }
+        }
+        "compare" => {
+            let d = &r.data;
+            let s = &d["summary"];
+            println!(
+                "Old: {} pages, new: {} pages. Pages changed: {}, inserted: {}, deleted: {}, moved: {}.",
+                d["old_pages"],
+                d["new_pages"],
+                s["pages_changed"],
+                s["pages_inserted"],
+                s["pages_deleted"],
+                s["pages_moved"]
+            );
+            let page = |v: &serde_json::Value| v.as_u64().map(|n| (n + 1).to_string()).unwrap_or_else(|| "-".into());
+            for p in d["pairs"].as_array().into_iter().flatten() {
+                let status = p["status"].as_str().unwrap_or("?");
+                if status == "same" {
+                    continue;
+                }
+                println!("page {} -> {}: {status}", page(&p["old"]), page(&p["new"]));
+                for c in p["changes"].as_array().into_iter().flatten() {
+                    let kind = c["kind"].as_str().unwrap_or("?");
+                    let text = c["text"].as_str().unwrap_or("");
+                    let mut line = format!("  {kind}");
+                    if let Some(n) = c["new_text"].as_str() {
+                        line += &format!(": \"{text}\" -> \"{n}\"");
+                    } else if !text.is_empty() {
+                        line += &format!(": \"{text}\"");
+                    }
+                    if let Some(x) = c["detail"].as_str() {
+                        line += &format!(" ({x})");
+                    }
+                    println!("{line}");
+                }
+            }
+            for m in d["metadata"].as_array().into_iter().flatten() {
+                println!(
+                    "{}: {:?} -> {:?}",
+                    m["field"].as_str().unwrap_or("?"),
+                    m["old"].as_str().unwrap_or(""),
+                    m["new"].as_str().unwrap_or("")
+                );
             }
         }
         "extract_text" => {

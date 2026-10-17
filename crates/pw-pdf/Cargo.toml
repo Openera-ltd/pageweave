@@ -21,6 +21,7 @@ parking_lot.workspace = true
 lopdf.workspace = true
 getrandom.workspace = true
 flate2.workspace = true
+similar.workspace = true
 time.workspace = true
 
 [dev-dependencies]

@@ -9,6 +9,7 @@
 //! PDFium functions directly (pdfium-render does not expose its form-fill handle) under the same lock.
 
 mod attachments;
+mod compare;
 mod content_ops;
 mod document;
 mod downsample;
@@ -26,6 +27,7 @@ mod sanitize;
 mod unprotect;
 
 pub use attachments::{add_attachments, clean_name, extract_attachment, list_attachments, AttachmentInfo};
+pub use compare::{compare, ChangeKind, CompareReport, PairStatus, MAX_COMPARE_PAGES};
 pub use document::{
     open_document, page_text_segments, render_page_png, search, BookmarkInfo, DocumentInfo, OpenOptions, PageInfo,
     PageText, SearchHit, SearchRect, TextSegment,

@@ -462,6 +462,62 @@ def build_uncompressed_report() -> bytes:
     return w.render(catalog, info)
 
 
+def build_compare_document(pages: list[dict], title: str) -> bytes:
+    """Pages of (font, text) lines with optional extra drawing, for the compare-old/new pair."""
+    w = PdfWriter()
+    catalog = w.reserve()
+    pages_obj = w.reserve()
+    f1 = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    f2 = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>")
+    kids = []
+    for pg in pages:
+        parts = ["BT", "/F1 12 Tf", "18 TL", "72 720 Td"]
+        for i, (font, line) in enumerate(pg["lines"]):
+            parts.append(f"/{font} 12 Tf")
+            parts.append(f"({esc(line)}) Tj" if i == 0 else f"T* ({esc(line)}) Tj")
+        parts.append("ET")
+        if pg.get("draw"):
+            parts.append(pg["draw"])
+        content = w.stream("\n".join(parts).encode("latin-1"))
+        mw, mh = pg.get("size", LETTER)
+        kids.append(w.add(
+            f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 {mw} {mh}] "
+            f"/Resources << /Font << /F1 {f1} 0 R /F2 {f2} 0 R >> >> /Contents {content} 0 R >>"))
+    w.set(pages_obj, "<< /Type /Pages /Kids [%s] /Count %d >>" % (" ".join(f"{k} 0 R" for k in kids), len(kids)))
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R >>")
+    info = w.add(f"<< /Title ({esc(title)}) >>")
+    return w.render(catalog, info)
+
+
+def compare_pair() -> tuple[bytes, bytes]:
+    """Old and new versions of a report. Changes (new vs old): page 1 same; page 2 one word replaced,
+    words inserted, a line deleted and a line set in bold; a page inserted after page 2; old page 3
+    deleted; a paragraph moved from page 4 to page 5; page 5 gains a drawn box (visual only); page 6
+    changes from Letter to A4; the title changes."""
+    n = lambda *lines: [("F1", t) for t in lines]
+    moving = "This paragraph moves to another page entirely PWMOVE"
+    old = [
+        {"lines": n("Annual report PWSAME", "Nothing on this page changes at all.")},
+        {"lines": n("Results PWRESULTS", "The quarterly figures were reviewed by the board.",
+                    "This line will be deleted PWGONE", "Revenue grew in every region.")},
+        {"lines": n("Appendix PWAPPENDIX", "This whole page is removed in the new version.")},
+        {"lines": n("Outlook PWOUTLOOK", moving, "Plans for next year are ambitious.")},
+        {"lines": n("Risks PWRISKS", "Currency moves remain the main risk.")},
+        {"lines": n("Contacts PWSIZE", "Questions go to the investor team.")},
+    ]
+    new = [
+        old[0],
+        {"lines": [("F1", "Results PWRESULTS"), ("F1", "The annual figures were reviewed by the full board."),
+                   ("F2", "Revenue grew in every region.")]},
+        {"lines": n("New section PWINSERTED", "This page did not exist before.")},
+        {"lines": n("Outlook PWOUTLOOK", "Plans for next year are ambitious.")},
+        {"lines": n("Risks PWRISKS", "Currency moves remain the main risk.", moving),
+         "draw": "q 0.8 0.1 0.1 RG 4 w 300 300 150 100 re S Q"},
+        {"lines": n("Contacts PWSIZE", "Questions go to the investor team."), "size": A4},
+    ]
+    return build_compare_document(old, "Report v1"), build_compare_document(new, "Report v2")
+
+
 def main() -> int:
     if len(sys.argv) == 4 and sys.argv[1] == "--big":
         # Large document for benchmarks (not committed): gen_fixtures.py --big PAGES OUT.pdf
@@ -492,6 +548,7 @@ def main() -> int:
     files["hidden-info.pdf"] = build_hidden_info_document()
     files["signature-structure.pdf"] = build_signature_structure_document()
     files["uncompressed-report.pdf"] = build_uncompressed_report()
+    files["compare-old.pdf"], files["compare-new.pdf"] = compare_pair()
 
     good = files["five-pages.pdf"]
     files["corrupt-truncated.pdf"] = good[: len(good) // 2]

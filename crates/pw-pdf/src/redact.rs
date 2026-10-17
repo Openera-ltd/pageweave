@@ -45,15 +45,15 @@ const MAX_CHANNEL_DELTA: u8 = 48;
 const MAX_CHANGED_SHARE: f64 = 0.0005;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct R {
-    l: f32,
-    b: f32,
-    r: f32,
-    t: f32,
+pub(crate) struct R {
+    pub(crate) l: f32,
+    pub(crate) b: f32,
+    pub(crate) r: f32,
+    pub(crate) t: f32,
 }
 
 impl R {
-    fn from_pdf(r: &PdfRect) -> Self {
+    pub(crate) fn from_pdf(r: &PdfRect) -> Self {
         R { l: r.left().value, b: r.bottom().value, r: r.right().value, t: r.top().value }
     }
     fn from_area(a: &RedactArea) -> Self {
@@ -420,7 +420,7 @@ fn paint_boxes(img: &mut RgbaImage, boxes: &[R], bbox: &R, rot: u32, scale: f32,
 }
 
 /// Pixel rectangle (x0, y0, x1, y1) of a page-space box in a render of the page.
-fn box_to_px(b: &R, bbox: &R, rot: u32, s: f32) -> (f32, f32, f32, f32) {
+pub(crate) fn box_to_px(b: &R, bbox: &R, rot: u32, s: f32) -> (f32, f32, f32, f32) {
     let w = (bbox.r - bbox.l) * s;
     let h = (bbox.t - bbox.b) * s;
     let map = |x: f32, y: f32| {
@@ -437,7 +437,7 @@ fn box_to_px(b: &R, bbox: &R, rot: u32, s: f32) -> (f32, f32, f32, f32) {
     (ax.min(bx), ay.min(by), ax.max(bx), ay.max(by))
 }
 
-fn rotation_degrees(page: &PdfPage) -> u32 {
+pub(crate) fn rotation_degrees(page: &PdfPage) -> u32 {
     match page.rotation() {
         Ok(PdfPageRenderRotation::Degrees90) => 90,
         Ok(PdfPageRenderRotation::Degrees180) => 180,
@@ -446,7 +446,7 @@ fn rotation_degrees(page: &PdfPage) -> u32 {
     }
 }
 
-fn displayed_box(page: &PdfPage) -> R {
+pub(crate) fn displayed_box(page: &PdfPage) -> R {
     page.boundaries().bounding().map(|b| R::from_pdf(&b.bounds)).unwrap_or(R {
         l: 0.0,
         b: 0.0,
