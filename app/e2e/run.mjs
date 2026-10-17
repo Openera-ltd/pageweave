@@ -774,8 +774,9 @@ await test("unsaved annotations: closing the tab asks (Save focused); Cancel kee
 
 /** Send the window a real close request (title-bar X). Linux/X11 only; see e2e/wm_close.py. */
 function wmClose() {
-  if (process.platform !== "linux" || !process.env.DISPLAY) throw new Skip("needs an X11 display to send a window close request");
-  execFileSync("python3", ["-I", fileURLToPath(new URL("./wm_close.py", import.meta.url)), "PageWeave"], { stdio: "inherit" });
+  const win = process.platform === "win32";
+  if (!win && (process.platform !== "linux" || !process.env.DISPLAY)) throw new Skip("needs an X11 display or Windows to send a window close request");
+  execFileSync(win ? "python" : "python3", ["-I", fileURLToPath(new URL("./wm_close.py", import.meta.url)), "PageWeave"], { stdio: "inherit" });
 }
 /** Click a control that quits the app: the driver may lose the session before it can reply. */
 const clickThatQuits = (s, css) =>
