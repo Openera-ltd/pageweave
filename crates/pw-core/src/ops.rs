@@ -552,6 +552,14 @@ pub enum Operation {
         images: Option<ImageReduce>,
         output: PathBuf,
     },
+    /// Save the images embedded in the chosen (or all) pages into a folder: JPEG as stored, others
+    /// as PNG; repeated images once.
+    ExtractImages {
+        input: PathBuf,
+        #[serde(default)]
+        pages: Option<String>,
+        output_dir: PathBuf,
+    },
     /// Which pages are blank (read-only): no visible text or annotations and an ink share of at
     /// most `max_ink` (0–0.05).
     FindBlankPages {
@@ -630,6 +638,7 @@ pub const OPERATION_IDS: &[&str] = &[
     "verify_signatures",
     "deskew",
     "find_blank_pages",
+    "extract_images",
     "list_attachments",
     "extract_attachment",
     "add_attachments",
@@ -672,6 +681,7 @@ impl Operation {
             Operation::VerifySignatures { .. } => "verify_signatures",
             Operation::Deskew { .. } => "deskew",
             Operation::FindBlankPages { .. } => "find_blank_pages",
+            Operation::ExtractImages { .. } => "extract_images",
             Operation::ListAttachments { .. } => "list_attachments",
             Operation::ExtractAttachment { .. } => "extract_attachment",
             Operation::AddAttachments { .. } => "add_attachments",
@@ -734,6 +744,7 @@ impl Operation {
             | Operation::VerifySignatures { input }
             | Operation::Deskew { input, .. }
             | Operation::FindBlankPages { input, .. }
+            | Operation::ExtractImages { input, .. }
             | Operation::SetBookmarks { input, .. }
             | Operation::ExportText { input, .. }
             | Operation::Optimize { input, .. }
@@ -766,9 +777,9 @@ impl Operation {
             | Operation::Compare { .. }
             | Operation::VerifySignatures { .. }
             | Operation::FindBlankPages { .. } => None,
-            Operation::Split { output_dir, .. } | Operation::ExportImages { output_dir, .. } => {
-                Some(output_dir.clone())
-            }
+            Operation::Split { output_dir, .. }
+            | Operation::ExportImages { output_dir, .. }
+            | Operation::ExtractImages { output_dir, .. } => Some(output_dir.clone()),
             Operation::Render { output, .. }
             | Operation::Merge { output, .. }
             | Operation::ExtractPages { output, .. }

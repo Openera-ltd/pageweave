@@ -192,6 +192,15 @@ enum Command {
         #[arg(long, default_value = "pt")]
         unit: String,
     },
+    /// Save the images embedded in a document into a folder (JPEG as stored, others as PNG).
+    ExtractImages {
+        file: PathBuf,
+        #[arg(short, long)]
+        output_dir: PathBuf,
+        /// Pages (range syntax); all pages when absent.
+        #[arg(long)]
+        pages: Option<String>,
+    },
     /// List blank pages (no text, comments or ink beyond a threshold); remove them with `delete`.
     BlankPages {
         file: PathBuf,
@@ -439,6 +448,9 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
             }
             _ => return Err(PwError::invalid("attach.output", "Give -o with --save or --add.")),
         },
+        Command::ExtractImages { file, output_dir, pages } => {
+            Operation::ExtractImages { input: file.clone(), pages: pages.clone(), output_dir: output_dir.clone() }
+        }
         Command::BlankPages { file, max_ink } => {
             Operation::FindBlankPages { input: file.clone(), max_ink: max_ink / 100.0 }
         }

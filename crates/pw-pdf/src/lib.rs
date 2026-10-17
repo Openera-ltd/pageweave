@@ -17,6 +17,7 @@ mod document;
 mod downsample;
 mod edit;
 mod exec;
+mod extract;
 mod forms;
 mod images;
 mod ocr;
@@ -40,6 +41,7 @@ pub use edit::{
     annotate, crop_pages, delete_pages, extract_pages, merge, organize_pages, rotate_pages, split, watermark,
 };
 pub use exec::execute;
+pub use extract::{extract_images, ExtractedImage};
 pub use forms::{apply_edits, fill_form, form_fields, FieldKind, FormField, FormInfo, FormWidget};
 pub use images::images_to_pdf;
 pub use ocr::{ocr_pages, OcrSummary};

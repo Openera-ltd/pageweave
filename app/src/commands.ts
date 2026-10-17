@@ -62,6 +62,7 @@ export type CommandId =
   | "pages.exportText"
   | "pages.deskew"
   | "pages.removeBlank"
+  | "pages.extractImages"
   | "pages.ocr"
   | "pages.watermark"
   | "pages.crop"
@@ -139,6 +140,7 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "pages.exportText", label: "Export as text…", category: "Pages", shortcuts: [] },
   { id: "pages.deskew", label: "Straighten pages…", category: "Pages", shortcuts: [] },
   { id: "pages.removeBlank", label: "Remove blank pages…", category: "Pages", shortcuts: [] },
+  { id: "pages.extractImages", label: "Extract images…", category: "Pages", shortcuts: [] },
   { id: "pages.ocr", label: "Recognize text (OCR)…", category: "Pages", shortcuts: [] },
   { id: "pages.watermark", label: "Watermark…", category: "Pages", shortcuts: [] },
   { id: "pages.crop", label: "Crop pages…", category: "Pages", shortcuts: [] },

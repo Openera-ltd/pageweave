@@ -5,7 +5,7 @@ import { basename, dirname, join, siblingOutput, stem } from "../paths";
 import { toPwError, type AnnotationSpec, type CollisionPolicy, type FieldValue, type StampPosition, type JobSnapshot, type WatermarkLayer, type OpenedDoc, type Operation, type PwError } from "../types";
 import { Dialog, useDebounced } from "./ui";
 
-export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop" | "text" | "optimize" | "deskew";
+export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop" | "text" | "optimize" | "deskew" | "extractImages";
 
 const TITLES: Record<PageTool, string> = {
   extract: "Extract pages",
@@ -22,10 +22,11 @@ const TITLES: Record<PageTool, string> = {
   text: "Export as text",
   optimize: "Reduce file size",
   deskew: "Straighten pages",
+  extractImages: "Extract images",
 };
 
 /** Start-button label (the title's first word does not fit every tool). */
-const START: Partial<Record<PageTool, string>> = { ocr: "Recognize", watermark: "Add watermark", crop: "Crop", text: "Export", optimize: "Reduce size", deskew: "Straighten" };
+const START: Partial<Record<PageTool, string>> = { ocr: "Recognize", watermark: "Add watermark", crop: "Crop", text: "Export", optimize: "Reduce size", deskew: "Straighten", extractImages: "Extract" };
 
 const SUFFIX: Record<PageTool, string> = {
   extract: "extract",
@@ -42,10 +43,11 @@ const SUFFIX: Record<PageTool, string> = {
   text: "",
   optimize: "smaller",
   deskew: "straightened",
+  extractImages: "",
 };
 
 /** Tools that offer "All pages" (on by default unless pages were preselected). */
-const ALL_PAGES_TOOLS: PageTool[] = ["rotate", "stamp", "images", "ocr", "watermark", "crop", "text", "deskew"];
+const ALL_PAGES_TOOLS: PageTool[] = ["rotate", "stamp", "images", "ocr", "watermark", "crop", "text", "deskew", "extractImages"];
 
 export type CropUnit = "mm" | "in" | "pt";
 /** Points per unit. */
@@ -141,7 +143,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   const [reduceImages, setReduceImages] = useState(false);
   const [imagePreset, setImagePreset] = useState("standard");
   /** Tools that write several files into a folder rather than one new PDF. */
-  const toFolder = tool === "split" || tool === "images";
+  const toFolder = tool === "split" || tool === "images" || tool === "extractImages";
   const [stampText, setStampText] = useState("Page {page} of {total}");
   const [position, setPosition] = useState<StampPosition>("bottom_center");
   const [fontSize, setFontSize] = useState("10");
@@ -264,6 +266,8 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
           digits: digitsN,
           output,
         };
+      case "extractImages":
+        return { op: "extract_images", input: doc.path, pages: allPages ? null : pages, output_dir: output };
       case "deskew":
         return { op: "deskew", input: doc.path, pages: allPages ? null : pages, output };
       case "optimize": {
@@ -671,7 +675,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
       )}
 
       <div className="field">
-        <label htmlFor="output">{tool === "split" ? "Save parts in folder" : tool === "images" ? "Save images in folder" : "Save as"}</label>
+        <label htmlFor="output">{tool === "split" ? "Save parts in folder" : tool === "images" || tool === "extractImages" ? "Save images in folder" : "Save as"}</label>
         <div className="row">
           <input id="output" className="input grow" value={output} onChange={(e) => setOutput(e.target.value)} spellCheck={false} />
           <button type="button" className="btn outline" onClick={browse}>
@@ -679,6 +683,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
           </button>
         </div>
         {tool === "split" && <span className="hint">Files are named “{doc.name.replace(/\.pdf$/i, "")}_part01.pdf”, …</span>}
+        {tool === "extractImages" && <span className="hint">JPEG images are saved exactly as stored; others as PNG. Repeated images are saved once.</span>}
         {tool === "text" && <span className="hint">UTF-8 text, one section per page. Scanned pages need text recognition first.</span>}
         {tool === "images" && <span className="hint">PNG files named “{doc.name.replace(/\.pdf$/i, "")}_p001.png”, …</span>}
       </div>

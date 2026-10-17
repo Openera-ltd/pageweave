@@ -5,7 +5,7 @@
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1414,6 +1414,34 @@ await test("remove blank pages: found with thumbnails; sensitivity; untick one; 
     await s.click('[role="option"][data-command="pages.removeBlank"]');
     await s.waitFor('[data-testid="blank-none"]');
     assert((await s.attr('[data-testid="blank-remove"]', "title")) === "No blank pages found.", "disabled with a reason");
+  });
+});
+
+await test("extract images: Pages menu; JPEG saved exactly, others as PNG, repeats once; none found explained", async () => {
+  const dir = mkdtempSync(join(work, "extract-"));
+  await withApp([join(FIX, "photo-heavy.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Extract images");
+    await s.click('[role="option"][data-command="pages.extractImages"]');
+    await s.waitFor("#output");
+    await s.type("#output", dir);
+    await axeCheck(s, "extract-images-dialog");
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved 4 files")), "saved notice");
+  });
+  const files = readdirSync(dir).sort();
+  assert(JSON.stringify(files) === JSON.stringify(["photo-heavy_p001_01.jpg", "photo-heavy_p002_01.png", "photo-heavy_p003_01.png", "photo-heavy_p003_02.png"]), `files: ${files}`);
+  assert(readFileSync(join(dir, files[0])).subarray(0, 2).toString("hex") === "ffd8", "a JPEG file");
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Extract images");
+    await s.click('[role="option"][data-command="pages.extractImages"]');
+    await s.waitFor("#output");
+    await s.type("#output", dir);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => ((await s.exec("return document.querySelector('[role=dialog] [role=alert]')?.textContent ?? null")) ?? "").includes("no embedded images"), "explained");
   });
 });
 

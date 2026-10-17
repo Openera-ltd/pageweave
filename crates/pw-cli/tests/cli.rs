@@ -259,6 +259,26 @@ fn blank_pages_lists_pages_and_how_to_remove_them() {
 }
 
 #[test]
+fn extract_images_writes_files_and_reports_none() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let r = bin()
+        .args(["--json", "extract-images", "-o"])
+        .arg(dir.path())
+        .arg(fixture("photo-heavy.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert_eq!(json(&r)["result"]["outputs"].as_array().expect("outputs").len(), 4);
+    let none = bin()
+        .args(["--json", "extract-images", "-o"])
+        .arg(dir.path())
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert_eq!(json(&none)["error"]["code"], "extract.none");
+}
+
+#[test]
 fn text_saves_a_file_with_output_and_prints_without() {
     let dir = tempfile::tempdir().expect("tmp");
     let out = dir.path().join("five.txt");

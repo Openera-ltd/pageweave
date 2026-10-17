@@ -306,6 +306,29 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
                 }),
             )
         }
+        Operation::ExtractImages { input, pages, output_dir } => {
+            let page_progress = |done: u64, total: u64| {
+                if let Some(c) = ctx {
+                    c.set_progress(done, total, "pages");
+                }
+            };
+            let chosen = match pages {
+                Some(spec) => Some(parse_page_ranges(spec, page_count(input, &opts)?)?),
+                None => None,
+            };
+            let (files, report, w) = crate::extract::extract_images(
+                input,
+                &opts,
+                chosen.as_deref(),
+                output_dir,
+                policy,
+                &cancelled,
+                &page_progress,
+            )?;
+            warnings.extend(w);
+            let outs: Vec<OutputInfo> = files.iter().map(|c| out(c, None)).collect();
+            (outs, json!({ "images": report }))
+        }
         Operation::FindBlankPages { input, max_ink } => {
             let page_progress = |done: u64, total: u64| {
                 if let Some(c) = ctx {
