@@ -68,6 +68,11 @@ export interface DocumentInfo {
   pdf_version: string;
   title: string | null;
   author: string | null;
+  subject?: string | null;
+  keywords?: string | null;
+  creator?: string | null;
+  producer?: string | null;
+  signature_count?: number;
   encrypted: boolean;
   has_xfa: boolean;
   /** "none", "acrobat", "xfa_full", "xfa_foreground". */
@@ -192,6 +197,7 @@ export type Operation =
   | { op: "ocr_pages"; input: string; pages: string | null; skip_text_pages: boolean; dpi: number; output: string }
   | { op: "protect"; input: string; permissions: ProtectPermissions; output: string }
   | { op: "unprotect"; input: string; output: string }
+  | { op: "set_properties"; input: string; title?: string; author?: string; subject?: string; keywords?: string; output: string }
   | { op: "sanitize"; input: string; options: SanitizeOptions; output: string };
 
 /** What a sanitized copy leaves out (pw-core `SanitizeOptions`). */

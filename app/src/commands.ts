@@ -10,6 +10,7 @@ export type CommandId =
   | "file.reveal"
   | "file.properties"
   | "file.protect"
+  | "file.editProperties"
   | "file.unprotect"
   | "file.sanitize"
   | "edit.copy"
@@ -73,6 +74,7 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "file.reveal", label: "Show in folder", category: "File", shortcuts: [] },
   { id: "file.properties", label: "Document properties", category: "File", shortcuts: ["Ctrl+D"] },
   { id: "file.protect", label: "Protect with password…", category: "File", shortcuts: [] },
+  { id: "file.editProperties", label: "Edit document properties…", category: "File", shortcuts: [] },
   { id: "file.unprotect", label: "Remove password…", category: "File", shortcuts: [] },
   { id: "file.sanitize", label: "Remove hidden information…", category: "File", shortcuts: [] },
   // Ctrl+C is handled natively by the text layer; this command backs the context-menu entry.

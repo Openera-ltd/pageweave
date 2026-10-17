@@ -138,6 +138,23 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(w);
             (vec![out(&c, Some(n))], json!({ "page_count": n, "encryption": "AES-256" }))
         }
+        Operation::SetProperties { input, title, author, subject, keywords, output } => {
+            let page_progress = |done: u64, total: u64| {
+                if let Some(c) = ctx {
+                    c.set_progress(done, total, "pages");
+                }
+            };
+            let changes = crate::properties::PropertyChanges {
+                title: title.clone(),
+                author: author.clone(),
+                subject: subject.clone(),
+                keywords: keywords.clone(),
+            };
+            let (c, n, w) =
+                crate::properties::set_properties(input, &opts, &changes, output, policy, &cancelled, &page_progress)?;
+            warnings.extend(w);
+            (vec![out(&c, Some(n))], json!({ "page_count": n }))
+        }
         Operation::Unprotect { input, output } => {
             let (c, n, w) = crate::unprotect::unprotect(input, &opts, output, policy)?;
             warnings.extend(w);

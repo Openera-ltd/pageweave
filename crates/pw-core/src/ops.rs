@@ -31,6 +31,8 @@ pub const MAX_ORGANIZE_PAGES: usize = 100_000;
 pub const MAX_STAMPS: usize = 6;
 pub const MAX_STAMP_CHARS: usize = 200;
 pub const MAX_REDACT_AREAS: usize = 10_000;
+/// Longest document property value (title, author, subject, keywords), in characters.
+pub const MAX_PROPERTY_CHARS: usize = 2_000;
 
 /// Where a stamp sits on the page as displayed (after the page's own rotation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -327,6 +329,19 @@ pub enum Operation {
         permissions: ProtectPermissions,
         output: PathBuf,
     },
+    /// Change document properties in a new file. `None` keeps a property, an empty string removes it.
+    SetProperties {
+        input: PathBuf,
+        #[serde(default)]
+        title: Option<String>,
+        #[serde(default)]
+        author: Option<String>,
+        #[serde(default)]
+        subject: Option<String>,
+        #[serde(default)]
+        keywords: Option<String>,
+        output: PathBuf,
+    },
     /// Save a copy without password protection. The file must be opened with a password that
     /// grants full rights: lifting an owner's restrictions needs the permissions password.
     Unprotect {
@@ -404,6 +419,7 @@ impl Operation {
             Operation::OcrPages { .. } => "ocr_pages",
             Operation::Protect { .. } => "protect",
             Operation::Unprotect { .. } => "unprotect",
+            Operation::SetProperties { .. } => "set_properties",
             Operation::SanitizeInspect { .. } => "sanitize_inspect",
             Operation::Sanitize { .. } => "sanitize",
             Operation::Redact { .. } => "redact",
@@ -447,6 +463,7 @@ impl Operation {
             | Operation::OcrPages { input, .. }
             | Operation::Protect { input, .. }
             | Operation::Unprotect { input, .. }
+            | Operation::SetProperties { input, .. }
             | Operation::SanitizeInspect { input }
             | Operation::Sanitize { input, .. }
             | Operation::Redact { input, .. }
@@ -487,6 +504,7 @@ impl Operation {
             | Operation::OcrPages { output, .. }
             | Operation::Protect { output, .. }
             | Operation::Unprotect { output, .. }
+            | Operation::SetProperties { output, .. }
             | Operation::Sanitize { output, .. }
             | Operation::StampText { output, .. } => parent(output),
         }
@@ -603,6 +621,26 @@ impl Operation {
             }
             Operation::Redact { areas, .. } | Operation::RedactionPreview { areas, .. } => {
                 validate_redact_areas(areas)?
+            }
+            Operation::SetProperties { title, author, subject, keywords, .. } => {
+                let fields = [title, author, subject, keywords];
+                if fields.iter().all(|f| f.is_none()) {
+                    return Err(PwError::invalid("properties.empty", "There are no property changes to save."));
+                }
+                for v in fields.into_iter().flatten() {
+                    if v.chars().count() > MAX_PROPERTY_CHARS {
+                        return Err(PwError::invalid(
+                            "properties.too_long",
+                            format!("Properties can be at most {MAX_PROPERTY_CHARS} characters long."),
+                        ));
+                    }
+                    if v.chars().any(|c| c.is_control() && c != '\t') {
+                        return Err(PwError::invalid(
+                            "properties.control_chars",
+                            "Properties cannot contain line breaks or control characters.",
+                        ));
+                    }
+                }
             }
             Operation::OcrPages { dpi, .. } => {
                 if !(100..=400).contains(dpi) {

@@ -456,7 +456,7 @@ export function PasswordDialog({ name, error, onSubmit, onCancel }: { name: stri
 
 /* ---------------- Properties ---------------- */
 
-export function PropertiesDialog({ doc, onClose }: { doc: OpenedDoc; onClose: () => void }) {
+export function PropertiesDialog({ doc, onClose, onEdit }: { doc: OpenedDoc; onClose: () => void; onEdit: () => void }) {
   const i = doc.info;
   const first = i.pages[0];
   const rows: Array<[string, string]> = [
@@ -466,13 +466,31 @@ export function PropertiesDialog({ doc, onClose }: { doc: OpenedDoc; onClose: ()
     ["PDF version", i.pdf_version],
     ["Title", i.title ?? "—"],
     ["Author", i.author ?? "—"],
+    ["Subject", i.subject ?? "—"],
+    ["Keywords", i.keywords ?? "—"],
+    ["Created with", i.creator ?? "—"],
+    ["PDF producer", i.producer ?? "—"],
     ["First page size", first ? `${(first.width_pt / 72).toFixed(2)} × ${(first.height_pt / 72).toFixed(2)} in` : "—"],
     ["Password protected", i.encrypted ? "Yes" : "No"],
     ["Bookmarks", String(i.bookmarks.length)],
     ["SHA-256", i.sha256],
   ];
   return (
-    <Dialog title="Document properties" onClose={onClose} wide footer={<button type="button" className="btn primary" onClick={onClose}>Close</button>}>
+    <Dialog
+      title="Document properties"
+      onClose={onClose}
+      wide
+      footer={
+        <>
+          <button type="button" className="btn outline" data-command="file.editProperties" onClick={onEdit}>
+            Edit…
+          </button>
+          <button type="button" className="btn primary" onClick={onClose}>
+            Close
+          </button>
+        </>
+      }
+    >
       <table className="shortcut-table">
         <tbody>
           {rows.map(([k, v]) => (

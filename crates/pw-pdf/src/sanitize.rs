@@ -163,7 +163,7 @@ fn name<'a>(d: &'a Dictionary, key: &[u8]) -> Option<&'a [u8]> {
     d.get(key).ok().and_then(|o| o.as_name().ok())
 }
 
-fn dict_of<'a>(doc: &'a Document, o: &'a Object) -> Option<&'a Dictionary> {
+pub(crate) fn dict_of<'a>(doc: &'a Document, o: &'a Object) -> Option<&'a Dictionary> {
     match doc.dereference(o).ok()?.1 {
         Object::Dictionary(d) => Some(d),
         Object::Stream(s) => Some(&s.dict),
@@ -179,7 +179,7 @@ fn dict_ref(o: &Object) -> Option<&Dictionary> {
     }
 }
 
-fn catalog(doc: &Document) -> Option<&Dictionary> {
+pub(crate) fn catalog(doc: &Document) -> Option<&Dictionary> {
     doc.trailer.get(b"Root").ok().and_then(|r| dict_of(doc, r))
 }
 
@@ -218,7 +218,7 @@ fn decode_name(tok: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-fn stream_data(s: &Stream) -> Option<Vec<u8>> {
+pub(crate) fn stream_data(s: &Stream) -> Option<Vec<u8>> {
     if s.dict.has(b"Filter") {
         s.decompressed_content_with_limit(MAX_STREAM_BYTES).ok()
     } else {
@@ -648,7 +648,7 @@ fn strip_layers(doc: &mut Document, layers: &Layers) -> PwResult<(HashSet<Object
 
 /// Earlier saved versions: more than one end-of-file marker, unless the file is linearized (which
 /// has two cross-reference sections in one version).
-fn has_earlier_versions(raw: &[u8]) -> bool {
+pub(crate) fn has_earlier_versions(raw: &[u8]) -> bool {
     let eofs = raw.windows(5).filter(|w| w == b"%%EOF").count();
     let head = &raw[..raw.len().min(1024)];
     let linearized = head.windows(11).any(|w| w == b"/Linearized");
@@ -1022,7 +1022,7 @@ fn render(page: &PdfPage) -> PwResult<RgbaImage> {
 }
 
 /// Every page of the copy looks exactly like the original's page (annotations not drawn).
-fn check_pages(
+pub(crate) fn check_pages(
     pdfium: &Pdfium,
     source: &PdfDocument,
     bytes: &[u8],
@@ -1053,7 +1053,7 @@ fn check_pages(
 // ---- entry points ---------------------------------------------------------------------------
 
 /// The source as a lopdf document (normalised by PDFium when lopdf cannot parse it) and its bytes.
-fn load_plain<'p>(
+pub(crate) fn load_plain<'p>(
     pdfium: &'p Pdfium,
     input: &Path,
     opts: &OpenOptions,
@@ -1135,6 +1135,10 @@ pub fn sanitize(
         check_file(&back, options)
     })?;
     let mut warnings = Vec::new();
+    let signatures = source.signatures().len();
+    if signatures > 0 {
+        warnings.push(crate::properties::signature_warning(signatures));
+    }
     if pdfa {
         warnings.push("The copy no longer declares PDF/A conformance, because that is stated in its metadata.".into());
     }

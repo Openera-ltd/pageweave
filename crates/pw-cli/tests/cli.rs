@@ -373,3 +373,24 @@ fn sanitize_inspects_and_cleans() {
     let r = bin().arg("sanitize").arg(fixture("hidden-info.pdf")).output().expect("run");
     assert_eq!(r.status.code(), Some(1));
 }
+
+#[test]
+fn properties_set_keep_and_remove() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("p.pdf");
+    let r = bin()
+        .args(["properties", "--title", "CLI title", "--author", "", "-o"])
+        .arg(&out)
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let v = json(&bin().args(["--json", "inspect"]).arg(&out).output().expect("run"));
+    assert_eq!(v["result"]["data"]["title"], "CLI title");
+    assert_eq!(v["result"]["data"]["author"], serde_json::Value::Null);
+    // Nothing to change: invalid input (exit 2), nothing written.
+    let none = dir.path().join("none.pdf");
+    let r = bin().args(["properties", "-o"]).arg(&none).arg(fixture("five-pages.pdf")).output().expect("run");
+    assert_eq!(r.status.code(), Some(2));
+    assert!(!none.exists());
+}

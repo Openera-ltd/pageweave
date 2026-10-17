@@ -50,6 +50,7 @@ import { RedactDialog } from "./components/RedactDialog";
 import { ProtectDialog } from "./components/ProtectDialog";
 import { SanitizeDialog } from "./components/SanitizeDialog";
 import { UnprotectDialog } from "./components/UnprotectDialog";
+import { EditPropertiesDialog } from "./components/EditPropertiesDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { NoteDialog, UnsavedDialog } from "./components/AnnotationDialogs";
 import { CommandPalette, Home, Notices, PasswordDialog, PropertiesDialog, SearchBar, StatusBar, type Notice, type NoticeAction, type SearchState } from "./components/Panels";
@@ -73,6 +74,7 @@ type DialogState =
   | { kind: "protect" }
   | { kind: "sanitize" }
   | { kind: "unprotect" }
+  | { kind: "editProperties" }
   | { kind: "unsaved"; reason: "tab"; docId: number }
   | { kind: "unsaved"; reason: "quit" }
   | null;
@@ -95,6 +97,7 @@ const OPERATION_TITLES: Partial<Record<Operation["op"], string>> = {
   protect: "Protect with password",
   sanitize: "Remove hidden information",
   unprotect: "Remove password",
+  set_properties: "Edit document properties",
 };
 
 function operationTarget(op: Operation): string {
@@ -671,6 +674,7 @@ export function App() {
     "file.properties": { run: () => setDialog({ kind: "properties" }), available: all(needDoc, noDialog) },
     "file.protect": { run: () => setDialog({ kind: "protect" }), available: all(needDoc, noDialog) },
     "file.sanitize": { run: () => setDialog({ kind: "sanitize" }), available: all(needDoc, noDialog) },
+    "file.editProperties": { run: () => setDialog({ kind: "editProperties" }), available: all(needDoc, () => (dialog && dialog.kind !== "properties" ? "Close the open dialog first." : true)) },
     "file.unprotect": {
       run: () => setDialog({ kind: "unprotect" }),
       available: all(needDoc, noDialog, () => (active?.info.encrypted ? true : "This file is not password protected.")),
@@ -1205,7 +1209,7 @@ export function App() {
         />
       )}
       {dialog?.kind === "palette" && <CommandPalette handlers={handlers} bindings={bindings} onClose={() => setDialog(null)} />}
-      {dialog?.kind === "properties" && active && <PropertiesDialog doc={active} onClose={() => setDialog(null)} />}
+      {dialog?.kind === "properties" && active && <PropertiesDialog doc={active} onClose={() => setDialog(null)} onEdit={() => setDialog({ kind: "editProperties" })} />}
       {dialog?.kind === "password" && (
         <PasswordDialog name={basename(dialog.path)} error={dialog.error} onSubmit={(pw) => openPath(dialog.path, pw)} onCancel={() => setDialog(null)} />
       )}
@@ -1223,6 +1227,7 @@ export function App() {
         />
       )}
       {dialog?.kind === "protect" && active && <ProtectDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
+      {dialog?.kind === "editProperties" && active && <EditPropertiesDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "unprotect" && active && <UnprotectDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "sanitize" && active && <SanitizeDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "organize" && active && <OrganizeDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}

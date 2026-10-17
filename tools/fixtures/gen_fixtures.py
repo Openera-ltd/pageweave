@@ -415,6 +415,26 @@ def build_hidden_info_document() -> bytes:
     return bytes(body)
 
 
+def build_signature_structure_document() -> bytes:
+    """One page with a signed signature field: the structure PDF readers count as a digital
+    signature (/Sig value with /ByteRange and /Contents). The signature bytes are a placeholder, not
+    a valid cryptographic signature; tests use it to check that rewritten copies warn that
+    signatures no longer hold."""
+    w = PdfWriter()
+    catalog, pages_obj, page = w.reserve(), w.reserve(), w.reserve()
+    font = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    content = w.stream(text_page_content(["Signed agreement PWSIGNED"], x=72, y=700))
+    sig = w.add("<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached "
+                "/ByteRange [0 100 200 300] /Contents <" + "00" * 64 + "> /M (D:20260101000000Z) /Name (Fixture signer) >>")
+    field = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Sig /T (Signature1) /Rect [0 0 0 0] /F 132 /P {page} 0 R /V {sig} 0 R >>")
+    w.set(page, f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 {font} 0 R >> >> "
+                f"/Contents {content} 0 R /Annots [{field} 0 R] >>")
+    w.set(pages_obj, f"<< /Type /Pages /Kids [{page} 0 R] /Count 1 >>")
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R /AcroForm << /Fields [{field} 0 R] /SigFlags 3 >> >>")
+    info = w.add("<< /Title (Signed fixture) /Producer (gen_fixtures.py) >>")
+    return w.render(catalog, info)
+
+
 def numbered_pages(n: int, size=LETTER) -> list[dict]:
     return [{"lines": [f"PageWeave fixture page {i}", f"Marker token PWMARK{i:03d}",
                        "The quick brown fox jumps over the lazy dog."], "size": size}
@@ -449,6 +469,7 @@ def main() -> int:
     files["redaction.pdf"] = build_redaction_document()
     files["redaction-hard.pdf"] = build_redaction_hard_document()
     files["hidden-info.pdf"] = build_hidden_info_document()
+    files["signature-structure.pdf"] = build_signature_structure_document()
 
     good = files["five-pages.pdf"]
     files["corrupt-truncated.pdf"] = good[: len(good) // 2]

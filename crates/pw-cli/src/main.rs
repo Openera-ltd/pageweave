@@ -146,6 +146,21 @@ enum Command {
         #[arg(long)]
         no_assemble: bool,
     },
+    /// Change document properties in a new file. Options not given keep their value; an empty
+    /// value (--author "") removes the property.
+    Properties {
+        file: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long)]
+        author: Option<String>,
+        #[arg(long)]
+        subject: Option<String>,
+        #[arg(long)]
+        keywords: Option<String>,
+    },
     /// Save a copy without password protection (give the current password with --password-stdin).
     /// A file whose owner restricted it needs its permissions password.
     Unprotect {
@@ -218,7 +233,7 @@ fn capabilities() -> serde_json::Value {
     json!({
         "schema_version": pw_core::ops::SCHEMA_VERSION,
         "engine": pw_pdf::engine_version(),
-        "operations": ["inspect", "extract_text", "search", "render", "merge", "extract_pages", "delete_pages", "rotate_pages", "split", "annotate", "form_fields", "fill_form", "apply_edits", "organize_pages", "stamp_text", "export_images", "redaction_preview", "redact", "ocr_pages", "protect", "unprotect", "sanitize_inspect", "sanitize"],
+        "operations": ["inspect", "extract_text", "search", "render", "merge", "extract_pages", "delete_pages", "rotate_pages", "split", "annotate", "form_fields", "fill_form", "apply_edits", "organize_pages", "stamp_text", "export_images", "redaction_preview", "redact", "ocr_pages", "protect", "unprotect", "set_properties", "sanitize_inspect", "sanitize"],
         "collision_policies": ["fail", "rename", "replace"],
         "network": "none",
     })
@@ -292,6 +307,14 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
                 fill_forms: !no_fill_forms,
                 assemble: !no_assemble,
             },
+            output: output.clone(),
+        },
+        Command::Properties { file, output, title, author, subject, keywords } => Operation::SetProperties {
+            input: file.clone(),
+            title: title.clone(),
+            author: author.clone(),
+            subject: subject.clone(),
+            keywords: keywords.clone(),
             output: output.clone(),
         },
         Command::Unprotect { file, output } => Operation::Unprotect { input: file.clone(), output: output.clone() },

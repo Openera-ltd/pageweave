@@ -1,0 +1,8 @@
+{
+  "id_suffix": "rec-finetune",
+  "code_file": "train.py",
+  "enable_gpu": true,
+  "enable_internet": false,
+  "accelerator": "NvidiaTeslaT4",
+  "dataset_sources": ["{user}/pageweave-rec-finetune-v1"]
+}

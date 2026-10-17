@@ -1114,6 +1114,49 @@ await test("protect with password: AES-256 copy needs the password; wrong passwo
   }
 });
 
+await test("document properties: edit from the properties dialog; saved copy shows the new values; unchanged values kept", async () => {
+  const src = join(FIX, "five-pages.pdf");
+  const before = sha(src);
+  const out = join(work, "retitled.pdf");
+  const title = "Retitled — Überblick";
+  const propRows = (s) => s.exec("return Object.fromEntries([...document.querySelectorAll('[role=dialog] tr')].map(r => [r.querySelector('th').textContent, r.querySelector('td').textContent]))");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "d"]);
+    await s.waitFor('[data-command="file.editProperties"]');
+    await s.click('[data-command="file.editProperties"]');
+    await s.waitFor("#prop-title");
+    assert((await s.exec("return document.querySelector('#prop-title').value")) === "Five pages", "prefilled from the file");
+    assert((await s.attr('[data-testid="props-start"]', "title")) === "Change a property first.", "disabled until something changes");
+    await s.type("#prop-title", title);
+    // Empty the author field with real keys (select all, delete).
+    await s.click("#prop-author");
+    await s.keys(["Control", "a"]);
+    await s.keys(["Backspace"]);
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('#prop-author').value")) === "", "author emptied");
+    await s.type("#prop-subject", "Quarterly");
+    await s.type("#props-output", out);
+    await axeCheck(s, "edit-properties-dialog");
+    writeFileSync(join(ART, "edit-properties-dialog.png"), await s.screenshot());
+    await s.waitUntil(async () => (await s.attr('[data-testid="props-start"]', "aria-disabled")) === null, "ready");
+    await s.click('[data-testid="props-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved retitled.pdf")), "saved notice", 30000);
+    await s.exec("[...document.querySelectorAll('.notice button')].find(b => b.textContent === 'Open').click(); return 1");
+    await s.waitUntil(async () => (await s.exec("return [...document.querySelectorAll('.tab-label .name')].map(n => n.textContent)")).includes("retitled.pdf"), "copy opened");
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "d"]);
+    await s.waitFor('[role="dialog"] tr');
+    const rows = await propRows(s);
+    assert(rows.Title === title && rows.Author === "—" && rows.Subject === "Quarterly" && rows.Bookmarks === "5", `properties of the copy: ${JSON.stringify(rows)}`);
+    await s.keys(["Escape"]);
+  });
+  assert(sha(src) === before, "source PDF unchanged");
+  if (CLI) {
+    const v = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data;
+    assert(v.title === title && v.author === null && v.subject === "Quarterly" && v.page_count === 5, `independent check: ${JSON.stringify(v).slice(0, 200)}`);
+  }
+});
+
 await test("remove password: copy opens without a password; unavailable with a reason on unprotected files; owner restrictions honoured", async () => {
   const src = join(FIX, "encrypted-rc4-user-password.pdf");
   const before = sha(src);
