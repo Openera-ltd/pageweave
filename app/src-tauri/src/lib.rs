@@ -203,10 +203,16 @@ fn open_documents(state: State<'_, AppState>) -> Vec<OpenedDoc> {
     state.open_documents()
 }
 
-/// PDF paths passed on the command line (file association / "Open with"), consumed once.
+/// PDF paths passed on the command line (file association / "Open with") not yet handled by the UI.
 #[tauri::command]
 fn launch_files(state: State<'_, AppState>) -> Vec<String> {
-    state.take_launch_files()
+    state.pending_launch_files()
+}
+
+/// The UI has handled one command-line file; it is not offered again (e.g. after a page reload).
+#[tauri::command]
+fn launch_file_done(state: State<'_, AppState>, path: String) {
+    state.launch_file_done(&path);
 }
 
 #[tauri::command]
@@ -289,7 +295,9 @@ pub fn run() {
             let data_dir = app.path().app_local_data_dir()?;
             let engine_dir = app.path().resource_dir().ok();
             let state = AppState::new(&config_dir, &data_dir, engine_dir);
-            state.set_launch_files(state::launch_args(std::env::args_os().skip(1)));
+            let launch = state::launch_args(std::env::args_os().skip(1));
+            let launch_count = launch.len();
+            state.set_launch_files(launch);
             let handle = app.handle().clone();
             state.jobs.subscribe(move |snap| {
                 let _ = handle.emit("job-update", snap);
@@ -299,7 +307,7 @@ pub fn run() {
                 "app",
                 "startup",
                 None,
-                fields! {"version" => env!("CARGO_PKG_VERSION")},
+                fields! {"version" => env!("CARGO_PKG_VERSION"), "launch_files" => launch_count},
             );
             app.manage(state);
             // The main window is created here (config has `create: false`) so WebView2 arguments
@@ -337,6 +345,7 @@ pub fn run() {
             list_jobs,
             log_dir,
             launch_files,
+            launch_file_done,
             set_unsaved_changes,
             quit_app,
             mark_timing,

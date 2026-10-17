@@ -347,12 +347,17 @@ export function App() {
         setViews((v) => Object.fromEntries([...Object.entries(v), ...docs.filter((d) => !v[d.doc_id]).map((d) => [d.doc_id, { zoom: 1, page: 0, fitPending: true }])]));
         setActiveId((id) => id ?? docs[docs.length - 1]!.doc_id);
       })
-      .catch(() => undefined)
+      .catch((e) => notifyError("Couldn’t restore open tabs", e))
       .then(() => api.launchFiles())
       .then(async (files) => {
-        for (const f of files ?? []) await openPath(f);
+        // openPath reports its own failures; each file is marked handled only afterwards, so a
+        // reload part-way through offers the rest again.
+        for (const f of files) {
+          await openPath(f);
+          await api.launchFileDone(f);
+        }
       })
-      .catch(() => undefined);
+      .catch((e) => notifyError("Couldn’t open the files given at startup", e));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

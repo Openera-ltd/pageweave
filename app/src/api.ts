@@ -42,7 +42,9 @@ export interface Api {
   pickSavePath(defaultPath: string): Promise<string | null>;
   pickFolder(defaultPath?: string): Promise<string | null>;
   revealInFolder(path: string): Promise<void>;
+  /** Command-line files the UI has not handled yet; `launchFileDone` marks one handled. */
   launchFiles(): Promise<string[]>;
+  launchFileDone(path: string): Promise<void>;
   /** Documents the host has open as tabs (restored after a page reload). */
   openDocuments(): Promise<OpenedDoc[]>;
   logDir(): Promise<string>;
@@ -90,6 +92,7 @@ export const tauriApi: Api = {
   },
   revealInFolder: (path) => revealItemInDir(path),
   launchFiles: () => invoke("launch_files"),
+  launchFileDone: (path) => invoke("launch_file_done", { path }),
   openDocuments: () => invoke("open_documents"),
   logDir: () => invoke("log_dir"),
   pageText: (docId, page) => invoke("page_text", { docId, page }),

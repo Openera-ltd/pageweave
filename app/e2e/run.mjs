@@ -44,6 +44,18 @@ async function captureFailure(s) {
   } catch {
     /* best effort */
   }
+  try {
+    // The host log since this launch started (paths are redacted, no document content).
+    const dir = await s.execAsync("const done = arguments[arguments.length - 1]; window.__TAURI_INTERNALS__.invoke('log_dir').then(done, (e) => done('ERR ' + e))");
+    const log = join(String(dir), "pageweave.jsonl");
+    if (!String(dir).startsWith("ERR") && existsSync(log)) {
+      const lines = readFileSync(log, "utf8").trim().split("\n");
+      const start = lines.map((l) => l.includes('"event":"startup"')).lastIndexOf(true);
+      writeFileSync(join(ART, `FAIL-${slug}.log.jsonl`), lines.slice(Math.max(0, start)).slice(-200).join("\n") + "\n");
+    }
+  } catch {
+    /* best effort */
+  }
 }
 
 const phase = { create: 0, teardown: 0 };

@@ -168,7 +168,9 @@ impl AppState {
     /// only to preview pages for insertion).
     pub fn open_with(&self, path: PathBuf, password: Option<String>, remember: bool) -> PwResult<OpenedDoc> {
         pw_pdf::init(self.engine_dir.as_deref())?;
-        let canonical = path.canonicalize().map_err(|e| PwError::from_io(&e, "file"))?;
+        // `dunce` drops Windows' `\\?\` prefix where the plain form is equivalent, so paths shown to
+        // the user (recent files, tabs) read normally; std's canonicalize always adds it.
+        let canonical = dunce::canonicalize(&path).map_err(|e| PwError::from_io(&e, "file"))?;
         {
             let docs = self.inner.docs.lock().unwrap_or_else(|p| p.into_inner());
             if let Some((id, d)) = docs.iter().find(|(_, d)| d.path == canonical) {
@@ -231,9 +233,19 @@ impl AppState {
         *self.inner.launch_files.lock().unwrap_or_else(|p| p.into_inner()) = files;
     }
 
-    /// Returns command-line files once, so a UI reload does not reopen them.
-    pub fn take_launch_files(&self) -> Vec<String> {
-        std::mem::take(&mut *self.inner.launch_files.lock().unwrap_or_else(|p| p.into_inner()))
+    /// Command-line files the UI has not finished opening yet. They stay pending until
+    /// `launch_file_done`, so a page reload in between (WebView2 can reload while starting) does not
+    /// lose them; files already opened are restored as tabs instead.
+    pub fn pending_launch_files(&self) -> Vec<String> {
+        self.inner.launch_files.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    /// The UI has handled (opened, or reported failing to open) a command-line file.
+    pub fn launch_file_done(&self, path: &str) {
+        let mut files = self.inner.launch_files.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(i) = files.iter().position(|f| f == path) {
+            files.remove(i);
+        }
     }
 
     /// Documents shown as tabs, in the order they were opened (lets the UI recover after a reload).
@@ -321,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn launch_args_keep_existing_files_only_and_are_taken_once() {
+    fn launch_args_keep_existing_files_only_and_stay_pending_until_handled() {
         let (s, _d) = state();
         let f = fixture("single-page.pdf");
         let args = vec!["--flag".into(), f.clone().into_os_string(), "/no/such/file.pdf".into()];
@@ -349,9 +361,13 @@ mod tests {
             vec![g.to_string_lossy().into_owned(), f.to_string_lossy().into_owned()],
             "numbered switches keep their order; malformed ones are ignored"
         );
-        s.set_launch_files(files);
-        assert_eq!(s.take_launch_files().len(), 1);
-        assert!(s.take_launch_files().is_empty());
+        s.set_launch_files(vec![g.to_string_lossy().into_owned(), f.to_string_lossy().into_owned()]);
+        assert_eq!(s.pending_launch_files().len(), 2, "offered again until handled (survives a page reload)");
+        s.launch_file_done(&g.to_string_lossy());
+        assert_eq!(s.pending_launch_files(), vec![f.to_string_lossy().into_owned()]);
+        s.launch_file_done("not a launch file");
+        s.launch_file_done(&f.to_string_lossy());
+        assert!(s.pending_launch_files().is_empty());
     }
 
     #[test]

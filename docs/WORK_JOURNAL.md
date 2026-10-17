@@ -113,3 +113,11 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
   3. Edge WebDriver passes app arguments as Chromium switches (`--d:\…\file.pdf`) → app accepts `--open=<path>`; Windows E2E uses it.
 - Also fixed on the way: UI tab recovery after a page reload (`42ce9e3`); per-operation engine lock (concurrency bug found by Windows CI); organize copies page runs in one call (95 ms typical for 1,000 pages).
 - Open: debug-build UI not loading on the Windows runner (does not affect shipping builds); confirm the full Windows E2E pass on `5554072`.
+
+## 2026-10-17 — Session 1, checkpoint 22: Windows E2E 37/40; startup-file hardening
+- Windows E2E on `7be5447`: 37 passed, 1 failed, 2 skipped (window-close scenarios had no Windows close request yet; `77d0673` adds WM_CLOSE).
+- The failure: second launch of the settings scenario showed the saved dark theme but no document tab, and the next launch took 19 s (others ~1 s). No app log was captured, so the cause is not proven. Changes made from what the code allowed:
+  - startup files were consumed on the first `launch_files` call and any IPC failure was swallowed (`catch(() => undefined)`) — a silent failure. Files now stay pending until the UI reports each handled (`launch_file_done`), so a reload part-way re-offers the rest; failures show an error notice; the startup log records the number of files received.
+  - E2E failure capture now saves the host log since the failing launch (`FAIL-*.log.jsonl`) so the next occurrence can be diagnosed.
+- Found in the failure screenshot: recent files on Windows showed `\\?\D:\…` paths (std canonicalize). Paths now use `dunce::canonicalize` (plain form where equivalent; unchanged elsewhere).
+- Local: gate passes; Linux E2E 40/40. Next: read the Windows run for this push.
