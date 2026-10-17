@@ -57,9 +57,13 @@ def kaggle(*args: str, timeout: int = 600) -> str:
     if shutil.which("kaggle") is None:
         raise KaggleError("The Kaggle CLI is not installed (pip install kaggle).")
     p = subprocess.run(["kaggle", *args], capture_output=True, text=True, timeout=timeout)
-    if p.returncode != 0:
-        msg = (p.stderr or p.stdout).strip().splitlines()[-1:] or ["(no output)"]
-        raise KaggleError(f"kaggle {args[0]} {args[1] if len(args) > 1 else ''} failed: {msg[0][:300]}")
+    lines = (p.stdout + "\n" + p.stderr).strip().splitlines()
+    # The CLI reports some failures on stdout (sometimes with exit code 0, sometimes followed by an
+    # unrelated parse error on stderr); prefer its own "error" line over the last line.
+    reported = [l for l in lines if "error" in l.lower() and "Expecting value" not in l]
+    if p.returncode != 0 or any(l.startswith(("Dataset creation error", "Dataset version error")) for l in lines):
+        msg = (reported or lines[-1:] or ["(no output)"])[0]
+        raise KaggleError(f"kaggle {args[0]} {args[1] if len(args) > 1 else ''} failed: {msg[:300]}")
     return p.stdout
 
 
@@ -279,7 +283,7 @@ def main() -> int:
     p = sub.add_parser("publish-dataset")
     p.add_argument("dir", type=Path)
     p.add_argument("--slug", required=True)
-    p.add_argument("--title", default="PageWeave synthetic OCR corpus")
+    p.add_argument("--title", help="dataset title (Kaggle titles must be unique); default: from the slug")
     p = sub.add_parser("push")
     p.add_argument("kernel_dir", type=Path)
     p.add_argument("--purpose", required=True)
@@ -294,7 +298,7 @@ def main() -> int:
         if a.cmd == "preflight":
             r = preflight()
         elif a.cmd == "publish-dataset":
-            r = publish_dataset(a.dir, a.slug, a.title)
+            r = publish_dataset(a.dir, a.slug, a.title or a.slug.replace("-", " "))
         elif a.cmd == "push":
             r = push(a.kernel_dir, a.purpose, a.gpu_hours)
         elif a.cmd == "wait":
