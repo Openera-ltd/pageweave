@@ -274,6 +274,11 @@ jobs:
           for ($i = 0; $i -lt 40; $i++) { try { $r = Invoke-WebRequest http://127.0.0.1:9333/json/version -UseBasicParsing -TimeoutSec 2; "DevTools reachable: $($r.Content)"; $ok = $true; break } catch { Start-Sleep -Milliseconds 500 } }
           if (-not $ok) { "DevTools endpoint NOT reachable after 20 s" }
           "App still running: $(-not $p.HasExited)"
+          # Did the WebView2 browser process receive the debugging flag? Are policies blocking it?
+          Get-CimInstance Win32_Process -Filter "name='msedgewebview2.exe'" | Where-Object { $_.CommandLine -notmatch '--type=' } | ForEach-Object { "WebView2 browser process: $($_.CommandLine)" }
+          foreach ($k in "HKLM:\SOFTWARE\Policies\Microsoft\Edge", "HKLM:\SOFTWARE\Policies\Microsoft\Edge\WebView2", "HKCU:\SOFTWARE\Policies\Microsoft\Edge") {
+            if (Test-Path $k) { "Policy key $k:"; Get-ItemProperty $k | Format-List | Out-String }
+          }
           Get-ChildItem "$env:LOCALAPPDATA\io.github.kuyamcliff.pageweave\logs\*.jsonl" -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Tail 10 }
           Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
           Remove-Item Env:\WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
