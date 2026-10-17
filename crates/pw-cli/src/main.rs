@@ -124,6 +124,28 @@ enum Command {
         #[arg(long)]
         out_dir: PathBuf,
     },
+    /// Encrypt a copy with AES-256. The new open password is read from standard input (after the
+    /// current password, if --password-stdin is also given); never pass passwords as arguments.
+    Protect {
+        file: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Also read a permissions password from the next line of standard input.
+        #[arg(long)]
+        owner_password_stdin: bool,
+        #[arg(long)]
+        no_print: bool,
+        #[arg(long)]
+        no_copy: bool,
+        #[arg(long)]
+        no_modify: bool,
+        #[arg(long)]
+        no_annotate: bool,
+        #[arg(long)]
+        no_fill_forms: bool,
+        #[arg(long)]
+        no_assemble: bool,
+    },
     /// Recognise text on scanned pages and add it as an invisible, searchable layer in a new file.
     Ocr {
         file: PathBuf,
@@ -162,7 +184,7 @@ fn capabilities() -> serde_json::Value {
     json!({
         "schema_version": pw_core::ops::SCHEMA_VERSION,
         "engine": pw_pdf::engine_version(),
-        "operations": ["inspect", "extract_text", "search", "render", "merge", "extract_pages", "delete_pages", "rotate_pages", "split", "annotate", "form_fields", "fill_form", "apply_edits", "organize_pages", "stamp_text", "export_images", "redaction_preview", "redact", "ocr_pages"],
+        "operations": ["inspect", "extract_text", "search", "render", "merge", "extract_pages", "delete_pages", "rotate_pages", "split", "annotate", "form_fields", "fill_form", "apply_edits", "organize_pages", "stamp_text", "export_images", "redaction_preview", "redact", "ocr_pages", "protect"],
         "collision_policies": ["fail", "rename", "replace"],
         "network": "none",
     })
@@ -216,6 +238,28 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
             };
             Operation::Split { input: file.clone(), split, output_dir: out_dir.clone() }
         }
+        Command::Protect {
+            file,
+            output,
+            no_print,
+            no_copy,
+            no_modify,
+            no_annotate,
+            no_fill_forms,
+            no_assemble,
+            ..
+        } => Operation::Protect {
+            input: file.clone(),
+            permissions: pw_core::ops::ProtectPermissions {
+                print: !no_print,
+                copy: !no_copy,
+                modify: !no_modify,
+                annotate: !no_annotate,
+                fill_forms: !no_fill_forms,
+                assemble: !no_assemble,
+            },
+            output: output.clone(),
+        },
         Command::Ocr { file, pages, all_pages, dpi, output } => Operation::OcrPages {
             input: file.clone(),
             pages: pages.clone(),
@@ -384,10 +428,22 @@ fn main() -> ExitCode {
         let Some(mut req) = build_request(&cli)? else {
             return Ok(capabilities());
         };
-        if cli.password_stdin {
+        // Passwords come only from standard input, one per line, in this order: current document
+        // password (--password-stdin), new open password (protect), permissions password.
+        let read_line = || -> Result<String, PwError> {
             let mut line = String::new();
             std::io::stdin().read_line(&mut line).map_err(|e| PwError::from_io(&e, "password"))?;
-            req.password = Some(line.trim_end_matches(['\r', '\n']).to_string());
+            Ok(line.trim_end_matches(['\r', '\n']).to_string())
+        };
+        if cli.password_stdin {
+            req.password = Some(read_line()?);
+        }
+        if let Command::Protect { owner_password_stdin, .. } = &cli.command {
+            req.new_password = Some(read_line()?);
+            if *owner_password_stdin {
+                req.new_owner_password = Some(read_line()?);
+            }
+            req.validate()?;
         }
         let result = pw_pdf::execute(&req, None)?;
         if !cli.json {

@@ -13,6 +13,7 @@ mod edit;
 mod exec;
 mod forms;
 mod ocr;
+mod protect;
 mod redact;
 
 pub use document::{
@@ -23,6 +24,7 @@ pub use edit::{annotate, delete_pages, extract_pages, merge, organize_pages, rot
 pub use exec::execute;
 pub use forms::{apply_edits, fill_form, form_fields, FieldKind, FormField, FormInfo, FormWidget};
 pub use ocr::{ocr_pages, OcrSummary};
+pub use protect::protect;
 pub use redact::{redact, redaction_preview, AreaPreview};
 
 use pdfium_render::prelude::*;

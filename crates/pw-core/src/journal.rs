@@ -203,6 +203,8 @@ mod tests {
             operation: Operation::ExtractPages { input: "in.pdf".into(), pages: "1".into(), output: out.to_path_buf() },
             collision: CollisionPolicy::Fail,
             password: Some("secret-pw".into()),
+            new_password: Some("new-secret-pw".into()),
+            new_owner_password: Some("owner-secret-pw".into()),
         }
     }
 
@@ -225,7 +227,10 @@ mod tests {
         let j = Journal::open(&d.path().join("jobs")).expect("open");
         let g = j.begin("a1", "extract_pages", &request(&d.path().join("o.pdf"))).expect("begin");
         let text = fs::read_to_string(d.path().join("jobs/job-a1.json")).expect("entry");
-        assert!(text.contains("extract_pages") && !text.contains("secret-pw"));
+        assert!(
+            text.contains("extract_pages") && !text.contains("secret-pw"),
+            "no password of any kind on disk: {text}"
+        );
         drop(g);
         assert!(!d.path().join("jobs/job-a1.json").exists());
         assert!(j.recover().is_empty());

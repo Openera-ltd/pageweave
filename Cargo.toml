@@ -19,6 +19,8 @@ time = { version = "0.3", features = ["formatting", "macros"] }
 sha2 = "0.10"
 pdfium-render = { version = "=0.9.4", default-features = false, features = ["pdfium_7881", "thread_safe", "image_025"] }
 lopdf = { version = "0.45", default-features = false }
+# OS random source for encryption keys (already in the dependency graph via lopdf).
+getrandom = "0.3"
 # Both already in the dependency graph (pdfium-render / Tauri); pinned to those versions.
 libloading = "=0.9.0"
 parking_lot = "0.12"

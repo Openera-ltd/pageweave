@@ -47,6 +47,7 @@ import { Sidebar, type SidebarView } from "./components/Sidebar";
 import { PageToolsDialog, type PageTool } from "./components/PageToolsDialog";
 import { OrganizeDialog } from "./components/OrganizeDialog";
 import { RedactDialog } from "./components/RedactDialog";
+import { ProtectDialog } from "./components/ProtectDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { NoteDialog, UnsavedDialog } from "./components/AnnotationDialogs";
 import { CommandPalette, Home, Notices, PasswordDialog, PropertiesDialog, SearchBar, StatusBar, type Notice, type NoticeAction, type SearchState } from "./components/Panels";
@@ -67,6 +68,7 @@ type DialogState =
   | { kind: "note"; page: number; rect: SearchRect }
   | { kind: "organize" }
   | { kind: "redact"; areas: RedactArea[] }
+  | { kind: "protect" }
   | { kind: "unsaved"; reason: "tab"; docId: number }
   | { kind: "unsaved"; reason: "quit" }
   | null;
@@ -86,6 +88,7 @@ const OPERATION_TITLES: Partial<Record<Operation["op"], string>> = {
   annotate: "Save annotated copy",
   redact: "Apply redactions",
   ocr_pages: "Recognize text",
+  protect: "Protect with password",
 };
 
 function operationTarget(op: Operation): string {
@@ -660,6 +663,7 @@ export function App() {
     "file.close": { run: () => active && closeTab(active.doc_id), available: needDoc },
     "file.reveal": { run: () => active && api.revealInFolder(active.path).catch((e) => notifyError("Couldn’t show the file", e)), available: needDoc },
     "file.properties": { run: () => setDialog({ kind: "properties" }), available: all(needDoc, noDialog) },
+    "file.protect": { run: () => setDialog({ kind: "protect" }), available: all(needDoc, noDialog) },
     "tab.next": {
       run: () => {
         const i = tabs.findIndex((t) => t.doc_id === activeId);
@@ -862,6 +866,10 @@ export function App() {
         item("file.close", "Close other tabs", () => closeOthers(doc.doc_id), tabs.length > 1 ? true : "No other tabs are open."),
         "separator",
         item("file.reveal", "Show in folder", () => api.revealInFolder(doc.path).catch((e) => notifyError("Couldn’t show the file", e)), true),
+        item("file.protect", "Protect with password…", () => {
+          setActiveId(doc.doc_id);
+          setDialog({ kind: "protect" });
+        }, dialog ? "Close the open dialog first." : true),
       ],
     });
 
@@ -1195,6 +1203,7 @@ export function App() {
           }}
         />
       )}
+      {dialog?.kind === "protect" && active && <ProtectDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "organize" && active && <OrganizeDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "note" && active && (
         <NoteDialog

@@ -3,7 +3,7 @@
 //
 // Usage: node e2e/run.mjs <app-binary> <artifact-dir>   (run via e2e/run.sh, which starts the display + driver)
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1064,6 +1064,54 @@ await test("export pages as images: page range and resolution; PNG files written
     assert(b.readUInt32BE(16) === 612 && b.readUInt32BE(20) === 792, `page ${n} is 612×792 at 72 dpi (got ${b.readUInt32BE(16)}×${b.readUInt32BE(20)})`);
   }
   assert(!existsSync(join(dir, "five-pages_p001.png")), "only the chosen pages");
+});
+
+await test("protect with password: AES-256 copy needs the password; wrong password refused; content intact", async () => {
+  const src = join(FIX, "five-pages.pdf");
+  const before = sha(src);
+  const out = join(work, "locked.pdf");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Protect with password");
+    await s.click('[role="option"][data-command="file.protect"]');
+    await s.waitFor("#protect-pw");
+    const reason = () => s.attr('[data-testid="protect-start"]', "title");
+    assert((await reason()) === "Enter a password.", "disabled with a reason until a password is entered");
+    await s.type("#protect-pw", "E2e-pw 1");
+    await s.type("#protect-confirm", "E2e-pw 2");
+    await s.waitUntil(async () => (await reason()) === "The passwords do not match.", "mismatch explained");
+    assert((await s.attr("#protect-pw", "type")) === "password", "hidden by default");
+    await s.click('button[aria-label="Show passwords"]');
+    assert((await s.attr("#protect-pw", "type")) === "text", "show toggle reveals");
+    await s.click('button[aria-label="Hide passwords"]');
+    await s.type("#protect-confirm", "E2e-pw 1");
+    await s.click('input[data-perm="print"]');
+    await s.waitFor("#protect-owner");
+    await s.type("#protect-output", out);
+    await axeCheck(s, "protect-dialog");
+    await s.waitUntil(async () => (await s.attr('[data-testid="protect-start"]', "aria-disabled")) === null, "ready");
+    await s.click('[data-testid="protect-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved locked.pdf")), "saved notice", 30000);
+    // Open the copy: it asks for the password; a wrong one is refused.
+    await s.exec("[...document.querySelectorAll('.notice button')].find(b => b.textContent === 'Open').click(); return 1");
+    await s.waitFor("#pdf-password");
+    await s.type("#pdf-password", "wrong");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => (await s.text("#pw-err")).length > 0, "wrong password message");
+    await s.type("#pdf-password", "E2e-pw 1");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => (await s.exec("return [...document.querySelectorAll('.tab-label .name')].map(n => n.textContent)")).includes("locked.pdf"), "opens with the password");
+    await pageLoaded(s, 0);
+  });
+  assert(sha(src) === before, "source PDF unchanged");
+  assert(!readFileSync(out).toString("latin1").includes("PWMARK"), "content not readable without decrypting");
+  if (CLI) {
+    const locked = spawnSync(CLI, ["inspect", out]);
+    assert(locked.status === 5, `CLI needs the password (exit ${locked.status})`);
+    const r = spawnSync(CLI, ["--json", "--password-stdin", "text", "--pages", "4", out], { input: "E2e-pw 1\n", encoding: "utf8" });
+    assert(r.status === 0 && JSON.parse(r.stdout).result.data.pages[0].text.includes("PWMARK004"), `independent text check: ${r.stdout.slice(0, 200)}`);
+  }
 });
 
 await test("OCR: a scanned file becomes searchable from the Pages menu; the copy opens with selectable text", async () => {

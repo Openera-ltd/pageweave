@@ -19,6 +19,7 @@ libloading.workspace = true
 parking_lot.workspace = true
 # Cleaning pass and whole-file checks of redacted output (independent of PDFium).
 lopdf.workspace = true
+getrandom.workspace = true
 
 [dev-dependencies]
 image.workspace = true

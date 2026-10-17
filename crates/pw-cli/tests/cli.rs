@@ -261,6 +261,52 @@ fn ocr_makes_a_scanned_file_searchable() {
 }
 
 #[test]
+fn protect_reads_passwords_from_stdin_only() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("locked.pdf");
+    let mut child = bin()
+        .args(["--json", "protect", "--no-print", "--owner-password-stdin", "-o"])
+        .arg(&out)
+        .arg(fixture("five-pages.pdf"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    child.stdin.take().expect("stdin").write_all(b"cli-open\ncli-owner\n").expect("write");
+    let r = child.wait_with_output().expect("wait");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stdout));
+    assert!(!String::from_utf8_lossy(&r.stdout).contains("cli-open"), "passwords never echoed");
+    // Needs the password now: inspect without it fails with the password exit code (5).
+    let locked = bin().args(["inspect"]).arg(&out).output().expect("run");
+    assert_eq!(locked.status.code(), Some(5));
+    let mut child = bin()
+        .args(["--json", "--password-stdin", "inspect"])
+        .arg(&out)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    child.stdin.take().expect("stdin").write_all(b"cli-open\n").expect("write");
+    let r = child.wait_with_output().expect("wait");
+    assert_eq!(json(&r)["result"]["data"]["encrypted"], true);
+    // An empty new password is refused before anything is written.
+    let bad = dir.path().join("bad.pdf");
+    let mut child = bin()
+        .args(["protect", "-o"])
+        .arg(&bad)
+        .arg(fixture("five-pages.pdf"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    child.stdin.take().expect("stdin").write_all(b"\n").expect("write");
+    let r = child.wait_with_output().expect("wait");
+    assert_eq!(r.status.code(), Some(2));
+    assert!(!bad.exists());
+}
+
+#[test]
 fn unicode_and_space_paths() {
     let dir = tempfile::tempdir().expect("tmp");
     let src = dir.path().join("Résumé – 文件 copy.pdf");

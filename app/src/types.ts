@@ -189,7 +189,8 @@ export type Operation =
   | { op: "export_images"; input: string; pages: string | null; dpi: number; output_dir: string }
   | { op: "organize_pages"; input: string; extra_inputs: string[]; pages: Array<{ source: number; page: number; rotate: number }>; output: string }
   | { op: "redact"; input: string; areas: RedactArea[]; output: string }
-  | { op: "ocr_pages"; input: string; pages: string | null; skip_text_pages: boolean; dpi: number; output: string };
+  | { op: "ocr_pages"; input: string; pages: string | null; skip_text_pages: boolean; dpi: number; output: string }
+  | { op: "protect"; input: string; permissions: ProtectPermissions; output: string };
 
 /** An area to redact, in PDF user space of a 0-based page. */
 export interface RedactArea {
@@ -220,6 +221,18 @@ export interface OperationRequest {
   schema_version: number;
   operation: Operation;
   collision: CollisionPolicy;
+  /** `protect` only. Sent to the engine but never stored or logged by it. */
+  new_password?: string;
+  new_owner_password?: string | null;
+}
+
+export interface ProtectPermissions {
+  print: boolean;
+  copy: boolean;
+  modify: boolean;
+  annotate: boolean;
+  fill_forms: boolean;
+  assemble: boolean;
 }
 
 export interface OutputInfo {

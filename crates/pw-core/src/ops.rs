@@ -136,6 +136,30 @@ pub struct RectPt {
     pub top: f32,
 }
 
+/// What readers that honour PDF permissions allow once the file is opened with the open password.
+/// Permissions are not security: they rely on the reader's cooperation (PRD 05).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProtectPermissions {
+    #[serde(default = "default_true")]
+    pub print: bool,
+    #[serde(default = "default_true")]
+    pub copy: bool,
+    #[serde(default = "default_true")]
+    pub modify: bool,
+    #[serde(default = "default_true")]
+    pub annotate: bool,
+    #[serde(default = "default_true")]
+    pub fill_forms: bool,
+    #[serde(default = "default_true")]
+    pub assemble: bool,
+}
+
+impl Default for ProtectPermissions {
+    fn default() -> Self {
+        ProtectPermissions { print: true, copy: true, modify: true, annotate: true, fill_forms: true, assemble: true }
+    }
+}
+
 /// An area to redact: everything under it is removed and it is painted black.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct RedactArea {
@@ -253,6 +277,14 @@ pub enum Operation {
         digits: u8,
         output: PathBuf,
     },
+    /// Encrypt a copy with AES-256: an open password (from the request, never serialized) and
+    /// permissions for readers that honour them.
+    Protect {
+        input: PathBuf,
+        #[serde(default)]
+        permissions: ProtectPermissions,
+        output: PathBuf,
+    },
     /// Recognise text on page images and add it as an invisible, searchable text layer in a new
     /// file; the pages look exactly as before.
     OcrPages {
@@ -311,6 +343,7 @@ impl Operation {
             Operation::ExportImages { .. } => "export_images",
             Operation::RedactionPreview { .. } => "redaction_preview",
             Operation::OcrPages { .. } => "ocr_pages",
+            Operation::Protect { .. } => "protect",
             Operation::Redact { .. } => "redact",
         }
     }
@@ -349,6 +382,7 @@ impl Operation {
             | Operation::ExportImages { input, .. }
             | Operation::RedactionPreview { input, .. }
             | Operation::OcrPages { input, .. }
+            | Operation::Protect { input, .. }
             | Operation::Redact { input, .. }
             | Operation::ApplyEdits { input, .. } => vec![input.clone()],
         }
@@ -384,6 +418,7 @@ impl Operation {
             | Operation::OrganizePages { output, .. }
             | Operation::Redact { output, .. }
             | Operation::OcrPages { output, .. }
+            | Operation::Protect { output, .. }
             | Operation::StampText { output, .. } => parent(output),
         }
     }
@@ -605,6 +640,13 @@ pub struct OperationRequest {
     /// results, logs or diagnostics.
     #[serde(default, skip_serializing)]
     pub password: Option<String>,
+    /// For `protect`: the new open password. Never serialized (not in the job journal or logs),
+    /// so an interrupted protect job must be given the password again to re-run.
+    #[serde(default, skip_serializing)]
+    pub new_password: Option<String>,
+    /// For `protect`: the permissions password; a random one is generated when absent.
+    #[serde(default, skip_serializing)]
+    pub new_owner_password: Option<String>,
 }
 
 impl OperationRequest {
@@ -615,6 +657,8 @@ impl OperationRequest {
             operation,
             collision: CollisionPolicy::Fail,
             password: None,
+            new_password: None,
+            new_owner_password: None,
         }
     }
 
@@ -626,7 +670,26 @@ impl OperationRequest {
                 format!("Unsupported request schema version {} (expected {SCHEMA_VERSION}).", self.schema_version),
             ));
         }
-        self.operation.validate()
+        self.operation.validate()?;
+        if let Operation::Protect { .. } = self.operation {
+            let pw = self.new_password.as_deref().unwrap_or("");
+            if pw.is_empty() {
+                return Err(PwError::invalid("protect.password_empty", "Enter a password to protect the file with."));
+            }
+            for p in [Some(pw), self.new_owner_password.as_deref()].into_iter().flatten() {
+                // AES-256 (revision 6) uses at most 127 bytes of a password.
+                if p.len() > 127 {
+                    return Err(PwError::invalid("protect.password_long", "Passwords can be at most 127 bytes long."));
+                }
+            }
+            if self.new_owner_password.as_deref() == Some(pw) {
+                return Err(PwError::invalid(
+                    "protect.same_passwords",
+                    "Use a different permissions password from the open password, or leave it empty.",
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -666,6 +729,33 @@ mod tests {
         assert_eq!(v["collision"], "fail");
         let back: OperationRequest = serde_json::from_value(v).expect("de");
         assert_eq!(back, req);
+    }
+
+    #[test]
+    fn protect_passwords_are_validated_and_never_serialized() {
+        let mut req = OperationRequest::new(Operation::Protect {
+            input: "a.pdf".into(),
+            permissions: ProtectPermissions::default(),
+            output: "o.pdf".into(),
+        });
+        assert_eq!(req.validate().err().map(|e| e.code).as_deref(), Some("protect.password_empty"));
+        req.new_password = Some("open-sesame".into());
+        req.new_owner_password = Some("open-sesame".into());
+        assert_eq!(req.validate().err().map(|e| e.code).as_deref(), Some("protect.same_passwords"));
+        req.new_owner_password = Some("x".repeat(128));
+        assert_eq!(req.validate().err().map(|e| e.code).as_deref(), Some("protect.password_long"));
+        req.new_owner_password = Some("owner-secret".into());
+        assert!(req.validate().is_ok());
+        let out = serde_json::to_string(&req).expect("json");
+        assert!(!out.contains("open-sesame") && !out.contains("owner-secret"), "{out}");
+        let back: OperationRequest = serde_json::from_str(
+            r#"{"schema_version":1,"operation":{"op":"protect","input":"a.pdf","output":"o.pdf"},"new_password":"pw"}"#,
+        )
+        .expect("parse");
+        assert_eq!(back.new_password.as_deref(), Some("pw"));
+        assert!(
+            matches!(back.operation, Operation::Protect { permissions, .. } if permissions == ProtectPermissions::default())
+        );
     }
 
     #[test]
