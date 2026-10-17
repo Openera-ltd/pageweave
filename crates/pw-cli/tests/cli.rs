@@ -188,6 +188,22 @@ fn fields_lists_and_run_fills_a_form() {
 }
 
 #[test]
+fn images_command_exports_pngs() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = bin()
+        .args(["--json", "images", "--pages", "1-2", "--dpi", "72", "--out-dir"])
+        .arg(dir.path())
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
+    let v = json(&out);
+    assert_eq!(v["result"]["outputs"].as_array().map(Vec::len), Some(2));
+    assert!(dir.path().join("five-pages_p001.png").is_file());
+    assert!(dir.path().join("five-pages_p002.png").is_file());
+}
+
+#[test]
 fn unicode_and_space_paths() {
     let dir = tempfile::tempdir().expect("tmp");
     let src = dir.path().join("Résumé – 文件 copy.pdf");

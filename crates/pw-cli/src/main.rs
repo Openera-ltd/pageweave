@@ -113,6 +113,17 @@ enum Command {
         #[arg(long)]
         out_dir: PathBuf,
     },
+    /// Save pages as PNG images in a folder.
+    Images {
+        file: PathBuf,
+        #[arg(long)]
+        pages: Option<String>,
+        /// Resolution in dots per inch (36–600).
+        #[arg(long, default_value_t = 150)]
+        dpi: u32,
+        #[arg(long)]
+        out_dir: PathBuf,
+    },
     /// Run a typed JSON request (the same schema the local API and MCP use) from a file or "-" for stdin.
     Run { request: PathBuf },
     /// List the operations this build supports.
@@ -123,7 +134,7 @@ fn capabilities() -> serde_json::Value {
     json!({
         "schema_version": pw_core::ops::SCHEMA_VERSION,
         "engine": pw_pdf::engine_version(),
-        "operations": ["inspect", "extract_text", "search", "render", "merge", "extract_pages", "delete_pages", "rotate_pages", "split", "annotate", "form_fields", "fill_form", "apply_edits", "organize_pages"],
+        "operations": ["inspect", "extract_text", "search", "render", "merge", "extract_pages", "delete_pages", "rotate_pages", "split", "annotate", "form_fields", "fill_form", "apply_edits", "organize_pages", "stamp_text", "export_images"],
         "collision_policies": ["fail", "rename", "replace"],
         "network": "none",
     })
@@ -177,6 +188,12 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
             };
             Operation::Split { input: file.clone(), split, output_dir: out_dir.clone() }
         }
+        Command::Images { file, pages, dpi, out_dir } => Operation::ExportImages {
+            input: file.clone(),
+            pages: pages.clone(),
+            dpi: *dpi,
+            output_dir: out_dir.clone(),
+        },
     };
     let mut req = OperationRequest::new(op);
     req.collision = match cli.on_conflict {

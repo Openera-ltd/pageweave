@@ -183,6 +183,7 @@ export type Operation =
       digits: number;
       output: string;
     }
+  | { op: "export_images"; input: string; pages: string | null; dpi: number; output_dir: string }
   | { op: "organize_pages"; input: string; extra_inputs: string[]; pages: Array<{ source: number; page: number; rotate: number }>; output: string };
 
 export interface RecoveredJob {

@@ -1015,6 +1015,33 @@ await test("page reload: open documents come back as tabs and render", async () 
   });
 });
 
+await test("export pages as images: page range and resolution; PNG files written with the right size", async () => {
+  const dir = mkdtempSync(join(work, "images-"));
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Export pages");
+    await s.click('[role="option"][data-command="pages.exportImages"]');
+    await s.waitFor("#export-dpi");
+    await s.click('[role="dialog"] input[type="checkbox"]'); // untick "All pages"
+    await s.type("#pages", "2-3");
+    await s.waitUntil(async () => (await s.text("#pages-msg")) === "2 pages selected", "range validated");
+    await s.click('#export-dpi option[value="72"]');
+    await s.type("#output", dir);
+    await axeCheck(s, "export-images-dialog");
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved 2 files")), "saved notice");
+  });
+  const png = (n) => readFileSync(join(dir, `five-pages_p00${n}.png`));
+  for (const n of [2, 3]) {
+    const b = png(n);
+    assert(b.subarray(1, 4).toString() === "PNG", `page ${n} is a PNG`);
+    assert(b.readUInt32BE(16) === 612 && b.readUInt32BE(20) === 792, `page ${n} is 612×792 at 72 dpi (got ${b.readUInt32BE(16)}×${b.readUInt32BE(20)})`);
+  }
+  assert(!existsSync(join(dir, "five-pages_p001.png")), "only the chosen pages");
+});
+
 /* ------------------------------------------------------------------ */
 const summary = {
   app: APP,

@@ -441,6 +441,62 @@ pub fn stamp_text(
     Ok((c, total, protection_warnings(src_encrypted, encrypted)))
 }
 
+/// Save pages as PNG files `<stem>_p<NNN>.png` in `output_dir` at `dpi`. Every file is decoded
+/// again and its pixel size checked before it is committed. All or nothing: if any page fails or the
+/// job is cancelled, files already written by this call are removed.
+#[allow(clippy::too_many_arguments)]
+pub fn export_images(
+    input: &Path,
+    opts: &OpenOptions,
+    pages: Option<&str>,
+    dpi: u32,
+    output_dir: &Path,
+    policy: CollisionPolicy,
+    cancelled: &dyn Fn() -> bool,
+    progress: &dyn Fn(u64, u64),
+) -> PwResult<(Vec<CommittedOutput>, Vec<String>)> {
+    let total = crate::document::page_count(input, opts)?;
+    let indices = match pages {
+        Some(spec) => parse_page_ranges(spec, total)?,
+        None => (0..total).collect(),
+    };
+    let stem = input.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "page".into());
+    let width = total.to_string().len().max(3);
+    let scale = dpi as f32 / 72.0;
+    let mut written: Vec<CommittedOutput> = Vec::new();
+    let result = (|| -> PwResult<()> {
+        for (k, &i) in indices.iter().enumerate() {
+            if cancelled() {
+                return Err(PwError::cancelled());
+            }
+            // One page per engine operation, so page rendering in the app can interleave.
+            let (png, w, h) = crate::document::render_page_png(input, opts, i, scale)?;
+            let name = output_dir.join(format!("{stem}_p{:0width$}.png", i + 1));
+            let c = write_atomic_bytes(&name, policy, &[input.to_path_buf()], &png, |staged| {
+                let back = std::fs::read(staged).map_err(|e| PwError::from_io(&e, "output file"))?;
+                match image::load_from_memory_with_format(&back, image::ImageFormat::Png) {
+                    Ok(img) if img.width() == w && img.height() == h => Ok(()),
+                    _ => Err(PwError::new(
+                        ErrorCategory::ValidationFailed,
+                        "output.verify",
+                        "An exported image failed verification and was not saved.",
+                    )),
+                }
+            })?;
+            written.push(c);
+            progress(k as u64 + 1, indices.len() as u64);
+        }
+        Ok(())
+    })();
+    if let Err(e) = result {
+        for c in &written {
+            let _ = std::fs::remove_file(&c.path);
+        }
+        return Err(e);
+    }
+    Ok((written, Vec::new()))
+}
+
 /// Split into several files. All parts are built in memory first; if committing any part fails,
 /// parts already written by this call are removed so the result is all-or-nothing.
 pub fn split(

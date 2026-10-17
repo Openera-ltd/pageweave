@@ -5,7 +5,7 @@ import { basename, dirname, siblingOutput } from "../paths";
 import { toPwError, type AnnotationSpec, type CollisionPolicy, type FieldValue, type StampPosition, type JobSnapshot, type OpenedDoc, type Operation, type PwError } from "../types";
 import { Dialog, useDebounced } from "./ui";
 
-export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp";
+export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images";
 
 const TITLES: Record<PageTool, string> = {
   extract: "Extract pages",
@@ -15,6 +15,7 @@ const TITLES: Record<PageTool, string> = {
   merge: "Combine files",
   save: "Save a copy with your changes",
   stamp: "Page numbers and stamps",
+  images: "Export pages as images",
 };
 
 const SUFFIX: Record<PageTool, string> = {
@@ -25,7 +26,10 @@ const SUFFIX: Record<PageTool, string> = {
   merge: "combined",
   save: "edited",
   stamp: "numbered",
+  images: "",
 };
+
+const DPI_CHOICES = [72, 96, 150, 300, 600];
 
 const POSITIONS: Array<[StampPosition, string]> = [
   ["bottom_center", "Bottom center"],
@@ -89,14 +93,17 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   const suffix = tool === "save" ? (nFields === 0 ? "annotated" : nAnnots === 0 ? "filled" : "edited") : SUFFIX[tool];
   const api = useApi();
   const [pages, setPages] = useState(initialPages ?? (tool === "rotate" ? "" : ""));
-  const [allPages, setAllPages] = useState((tool === "rotate" || tool === "stamp") && !initialPages);
+  const [allPages, setAllPages] = useState((tool === "rotate" || tool === "stamp" || tool === "images") && !initialPages);
+  const [dpi, setDpi] = useState(150);
+  /** Tools that write several files into a folder rather than one new PDF. */
+  const toFolder = tool === "split" || tool === "images";
   const [stampText, setStampText] = useState("Page {page} of {total}");
   const [position, setPosition] = useState<StampPosition>("bottom_center");
   const [fontSize, setFontSize] = useState("10");
   const [startAt, setStartAt] = useState("1");
   const [digits, setDigits] = useState("0");
   const [degrees, setDegrees] = useState(90);
-  const [output, setOutput] = useState(tool === "split" ? dirname(doc.path) : siblingOutput(doc.path, suffix));
+  const [output, setOutput] = useState(tool === "split" || tool === "images" ? dirname(doc.path) : siblingOutput(doc.path, suffix));
   const [splitMode, setSplitMode] = useState<"every_n" | "ranges">("every_n");
   const [everyN, setEveryN] = useState("1");
   const [ranges, setRanges] = useState("");
@@ -105,7 +112,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   const [error, setError] = useState<PwError | null>(null);
   const [conflict, setConflict] = useState(false);
 
-  const needsRange = tool === "extract" || tool === "delete" || ((tool === "rotate" || tool === "stamp") && !allPages);
+  const needsRange = tool === "extract" || tool === "delete" || ((tool === "rotate" || tool === "stamp" || tool === "images") && !allPages);
   const sizeN = Number(fontSize);
   const startN = Number(startAt);
   const digitsN = Number(digits);
@@ -147,7 +154,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
       if (!Number.isInteger(startN) || startN < 0) return "Start at must be a whole number.";
       if (!Number.isInteger(digitsN) || digitsN < 0 || digitsN > 12) return "Digits must be 0 to 12.";
     }
-    if (!output.trim()) return tool === "split" ? "Choose an output folder." : "Choose where to save the new file.";
+    if (!output.trim()) return toFolder ? "Choose an output folder." : "Choose where to save the new file.";
     return null;
   })();
 
@@ -168,6 +175,8 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         };
       case "merge":
         return { op: "merge", inputs: files, output };
+      case "images":
+        return { op: "export_images", input: doc.path, pages: allPages ? null : pages, dpi, output_dir: output };
       case "stamp":
         return {
           op: "stamp_text",
@@ -203,7 +212,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   };
 
   const browse = async () => {
-    if (tool === "split") {
+    if (toFolder) {
       const dir = await api.pickFolder(output || dirname(doc.path));
       if (dir) setOutput(dir);
     } else {
@@ -305,7 +314,20 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         </>
       )}
 
-      {(tool === "rotate" || tool === "stamp") && (
+      {tool === "images" && (
+        <div className="field">
+          <label htmlFor="export-dpi">Resolution</label>
+          <select id="export-dpi" className="select" value={dpi} onChange={(e) => setDpi(Number(e.target.value))}>
+            {DPI_CHOICES.map((d) => (
+              <option key={d} value={d}>
+                {d} dpi{d === 72 ? " (100%)" : d === 150 ? " (screen)" : d === 300 ? " (print)" : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {(tool === "rotate" || tool === "stamp" || tool === "images") && (
         <div className="field">
           <label className="row">
             <input type="checkbox" checked={allPages} onChange={(e) => setAllPages(e.target.checked)} /> All pages
@@ -398,7 +420,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
       )}
 
       <div className="field">
-        <label htmlFor="output">{tool === "split" ? "Save parts in folder" : "Save as"}</label>
+        <label htmlFor="output">{tool === "split" ? "Save parts in folder" : tool === "images" ? "Save images in folder" : "Save as"}</label>
         <div className="row">
           <input id="output" className="input grow" value={output} onChange={(e) => setOutput(e.target.value)} spellCheck={false} />
           <button type="button" className="btn outline" onClick={browse}>
@@ -406,6 +428,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
           </button>
         </div>
         {tool === "split" && <span className="hint">Files are named “{doc.name.replace(/\.pdf$/i, "")}_part01.pdf”, …</span>}
+        {tool === "images" && <span className="hint">PNG files named “{doc.name.replace(/\.pdf$/i, "")}_p001.png”, …</span>}
       </div>
 
       {busy && progress && (

@@ -112,6 +112,13 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(w);
             (vec![out(&c, Some(n))], json!({ "page_count": n }))
         }
+        Operation::ExportImages { input, pages, dpi, output_dir } => {
+            let (files, w) =
+                edit::export_images(input, &opts, pages.as_deref(), *dpi, output_dir, policy, &cancelled, &progress)?;
+            warnings.extend(w);
+            let n = files.len();
+            (files.iter().map(|c| out(c, None)).collect(), json!({ "images": n }))
+        }
         Operation::StampText { input, pages, stamps, start, digits, output } => {
             let (c, n, w) = edit::stamp_text(input, &opts, pages.as_deref(), stamps, *start, *digits, output, policy)?;
             warnings.extend(w);

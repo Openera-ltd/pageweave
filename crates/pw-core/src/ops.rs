@@ -211,6 +211,16 @@ pub enum Operation {
         pages: Vec<PageRef>,
         output: PathBuf,
     },
+    /// Save pages as PNG images (`<name>_p001.png`, …) in a folder.
+    ExportImages {
+        input: PathBuf,
+        /// Pages to export (range syntax); all pages when absent.
+        #[serde(default)]
+        pages: Option<String>,
+        /// Resolution in dots per inch (72 = 100%).
+        dpi: u32,
+        output_dir: PathBuf,
+    },
     /// Add page numbers, headers/footers or Bates-style numbers to a copy.
     StampText {
         input: PathBuf,
@@ -253,6 +263,7 @@ impl Operation {
             Operation::ApplyEdits { .. } => "apply_edits",
             Operation::OrganizePages { .. } => "organize_pages",
             Operation::StampText { .. } => "stamp_text",
+            Operation::ExportImages { .. } => "export_images",
         }
     }
 
@@ -286,6 +297,7 @@ impl Operation {
             | Operation::Annotate { input, .. }
             | Operation::FillForm { input, .. }
             | Operation::StampText { input, .. }
+            | Operation::ExportImages { input, .. }
             | Operation::ApplyEdits { input, .. } => vec![input.clone()],
         }
     }
@@ -305,7 +317,9 @@ impl Operation {
             | Operation::FormFields { .. }
             | Operation::ExtractText { .. }
             | Operation::Search { .. } => None,
-            Operation::Split { output_dir, .. } => Some(output_dir.clone()),
+            Operation::Split { output_dir, .. } | Operation::ExportImages { output_dir, .. } => {
+                Some(output_dir.clone())
+            }
             Operation::Render { output, .. }
             | Operation::Merge { output, .. }
             | Operation::ExtractPages { output, .. }
@@ -366,6 +380,11 @@ impl Operation {
             }
             Operation::Annotate { annotations, .. } => validate_annotations(annotations)?,
             Operation::FillForm { values, .. } => validate_form_values(values)?,
+            Operation::ExportImages { dpi, .. } => {
+                if !(36..=600).contains(dpi) {
+                    return Err(PwError::invalid("export.dpi", "Choose a resolution from 36 to 600 dpi."));
+                }
+            }
             Operation::StampText { stamps, start, digits, .. } => {
                 if stamps.is_empty() || stamps.len() > MAX_STAMPS {
                     return Err(PwError::invalid("stamp.count", format!("Add between 1 and {MAX_STAMPS} stamps.")));

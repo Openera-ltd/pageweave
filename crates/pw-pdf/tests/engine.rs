@@ -689,3 +689,35 @@ fn stamp_numbers_follow_start_digits_and_page_selection() {
     });
     assert_eq!(execute(&bad, None).expect_err("charset").code, "stamp.charset");
 }
+
+#[test]
+fn export_images_names_sizes_and_all_or_nothing() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let req = |pages: Option<&str>, dpi: u32| {
+        let mut r = OperationRequest::new(Operation::ExportImages {
+            input: fixture("mixed-sizes-rotated.pdf"),
+            pages: pages.map(String::from),
+            dpi,
+            output_dir: dir.path().to_path_buf(),
+        });
+        r.collision = CollisionPolicy::Fail;
+        r
+    };
+    let r = execute(&req(Some("2-3"), 144), None).expect("export");
+    let names: Vec<String> =
+        r.outputs.iter().map(|o| o.path.file_name().expect("name").to_string_lossy().into_owned()).collect();
+    assert_eq!(names, ["mixed-sizes-rotated_p002.png", "mixed-sizes-rotated_p003.png"]);
+    let dims = |p: &Path| {
+        let img = image::open(p).expect("png");
+        (img.width(), img.height())
+    };
+    assert_eq!(dims(&r.outputs[0].path), (1190, 1684), "A4 at 144 dpi");
+    assert_eq!(dims(&r.outputs[1].path), (1584, 1224), "rotated Letter page is exported as displayed (landscape)");
+
+    // Page 3 exists now: with the Fail policy the whole export fails and leaves nothing new behind.
+    let again = execute(&req(Some("1-3"), 72), None).expect_err("conflict");
+    assert_eq!(again.category, ErrorCategory::OutputConflict);
+    assert!(!dir.path().join("mixed-sizes-rotated_p001.png").exists(), "partial export removed");
+
+    assert_eq!(execute(&req(None, 2000), None).expect_err("dpi").code, "export.dpi");
+}
