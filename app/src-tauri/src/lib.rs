@@ -154,6 +154,14 @@ async fn list_attachments(state: State<'_, AppState>, doc_id: DocId) -> CmdResul
     .await
 }
 
+/// The open document's digital signatures, checked (read-only). Runs on a worker thread.
+#[tauri::command]
+async fn verify_signatures(state: State<'_, AppState>, doc_id: DocId) -> CmdResult<pw_pdf::SignatureReport> {
+    let doc = state.doc(doc_id)?;
+    blocking(move || pw_pdf::verify_signatures(&doc.path, &pw_pdf::OpenOptions { password: doc.password.as_deref() }))
+        .await
+}
+
 /// What hidden information an open document holds (read-only). Runs on a worker thread.
 #[tauri::command]
 async fn sanitize_inspect(state: State<'_, AppState>, doc_id: DocId) -> CmdResult<pw_pdf::SanitizeFindings> {
@@ -389,6 +397,7 @@ pub fn run() {
             redaction_preview,
             sanitize_inspect,
             list_attachments,
+            verify_signatures,
             open_documents,
         ])
         .run(tauri::generate_context!())

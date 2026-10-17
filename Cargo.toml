@@ -23,6 +23,16 @@ lopdf = { version = "0.45", default-features = false }
 getrandom = "0.3"
 # Strict zlib decode/encode for lossless recompression (already in the graph via lopdf).
 flate2 = "1.1"
+# Digital signature verification (RustCrypto, pure Rust; MIT/Apache-2.0).
+cms = "0.2"
+x509-cert = { version = "0.2", default-features = false }
+der = { version = "0.7", features = ["alloc", "oid"] }
+# RSA verification is done locally with a big-integer modpow (public operations only): the rsa
+# crate carries RUSTSEC-2023-0071 (D-011).
+num-bigint = { version = "0.4", default-features = false, features = ["std"] }
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+p384 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+sha1 = "0.10"
 # Myers diff for document comparison (Apache-2.0, no dependencies).
 similar = { version = "2", default-features = false }
 # Both already in the dependency graph (pdfium-render / Tauri); pinned to those versions.

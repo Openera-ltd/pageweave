@@ -1244,6 +1244,51 @@ await test("compare documents: another file by path; errors explained; swap orde
   });
 });
 
+await test("signatures: status bar summary and panel for valid, tampered, edited and unsigned files; trust not claimed", async () => {
+  const files = ["signed-rsa.pdf", "signed-tampered.pdf", "signed-then-edited.pdf", "five-pages.pdf"];
+  await withApp(files.map((f) => join(FIX, f)), async (s) => {
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label .name').length")) === 4, "all open");
+    const summaryOf = async (name) => {
+      await s.exec(`[...document.querySelectorAll('.tab-label')].find(t => t.textContent.includes(${JSON.stringify(name)})).click()`);
+      await s.waitUntil(async () => (await s.exec("return document.querySelector('.tab-label[aria-current=page] .name')?.textContent ?? null")) === name, `${name} active`);
+      if (name === "five-pages.pdf") {
+        await pageLoaded(s, 0);
+        return (await s.exec("return document.querySelector('[data-testid=signature-summary]')?.textContent ?? null"));
+      }
+      await s.waitFor('[data-testid="signature-summary"]');
+      return s.text('[data-testid="signature-summary"]');
+    };
+    assert((await summaryOf("signed-rsa.pdf")) === "Signed", "valid signature");
+    assert((await summaryOf("signed-tampered.pdf")) === "Signature invalid", "tampered");
+    assert((await summaryOf("signed-then-edited.pdf")) === "Signed, changed since", "edited after signing");
+    assert((await summaryOf("five-pages.pdf")) === null, "unsigned: no indicator");
+
+    // Panel details for the tampered file, opened from the status bar.
+    await summaryOf("signed-tampered.pdf");
+    await s.click('[data-testid="signature-summary"]');
+    await s.waitFor('#sb-tab-signatures[aria-selected="true"]');
+    await s.waitFor('[data-signature="0"]');
+    assert((await s.text('[data-signature="0"] [data-testid="signature-status"]')) === "Invalid", "panel status");
+    const panel = await s.exec("return document.querySelector('.signatures').textContent");
+    assert(panel.includes("PageWeave Test Signer") && panel.includes("changed after it was signed"), "signer and reason shown");
+    assert(panel.includes("does not yet check whether the signer is trusted"), "trust is not claimed");
+    await axeCheck(s, "signatures-panel");
+    writeFileSync(join(ART, "signatures-panel.png"), await s.screenshot());
+
+    // Valid file: status and the field's page link.
+    await summaryOf("signed-rsa.pdf");
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-signature=\"0\"] [data-testid=signature-status]')?.textContent ?? null")) === "Valid", "valid in panel");
+    await s.exec("[...document.querySelectorAll('.signature .btn.link')].find(b => b.textContent === 'Go to page 1').click()");
+
+    // Unsigned file via the palette command.
+    await summaryOf("five-pages.pdf");
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Show signatures");
+    await s.click('[role="option"][data-command="view.showSignatures"]');
+    await s.waitUntil(async () => ((await s.exec("return document.querySelector('.signatures')?.textContent ?? null")) ?? "").includes("not digitally signed"), "unsigned explained");
+  });
+});
+
 await test("protect with password: AES-256 copy needs the password; wrong password refused; content intact", async () => {
   const src = join(FIX, "five-pages.pdf");
   const before = sha(src);

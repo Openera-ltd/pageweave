@@ -40,6 +40,7 @@ export type CommandId =
   | "view.fitWidth"
   | "view.toggleThumbnails"
   | "view.showBookmarks"
+  | "view.showSignatures"
   | "nav.nextPage"
   | "nav.previousPage"
   | "nav.firstPage"
@@ -113,6 +114,7 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "view.fitWidth", label: "Fit width", category: "View", shortcuts: ["Ctrl+2"] },
   { id: "view.toggleThumbnails", label: "Show or hide page thumbnails", category: "View", shortcuts: ["Ctrl+B"] },
   { id: "view.showBookmarks", label: "Show bookmarks", category: "View", shortcuts: ["Ctrl+Shift+B"] },
+  { id: "view.showSignatures", label: "Show signatures", category: "View", shortcuts: [] },
   { id: "nav.nextPage", label: "Next page", category: "Navigate", shortcuts: ["Ctrl+PageDown"] },
   { id: "nav.previousPage", label: "Previous page", category: "Navigate", shortcuts: ["Ctrl+PageUp"] },
   { id: "nav.firstPage", label: "First page", category: "Navigate", shortcuts: ["Ctrl+Home"] },

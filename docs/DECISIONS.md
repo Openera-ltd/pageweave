@@ -97,3 +97,10 @@ These were made by Claude Code under the owner's standing instruction to "start 
 - **Decision:** "Remove password" and re-protecting a protected file are refused (`pdf.owner_restricted`, category permission) unless PDFium reports full rights — i.e. the file has no restrictions, or it was opened with the permissions password. Decryption uses PDFium's own save with `FPDF_REMOVE_SECURITY`, which keeps bookmarks, properties and forms.
 - **Consequences:** A user with only the open password of a restricted file cannot remove its protection; the error says what is needed.
 - **Open question (needs a product decision):** page operations (extract, delete, split, combine, organize, redact, OCR) on a restricted file still produce unprotected outputs (existing behaviour, disclosed by a warning). Whether they should also require full rights, or check the specific permission (e.g. assemble for page operations), is not yet decided.
+
+### D-011 — Signature verification with RustCrypto parsers and local RSA verification
+- **Status:** Accepted
+- **Date:** 2026-10-17
+- **Context:** Checking PDF signatures needs CMS/X.509 parsing and RSA/ECDSA verification. The `rsa` crate (0.9, the current release line) carries RUSTSEC-2023-0071 (Marvin timing attack on private-key operations). The project rule is that vulnerabilities are never ignored in deny.toml, even when the vulnerable path is unused.
+- **Decision:** Parse with `cms`/`x509-cert`/`der` and verify ECDSA with `p256`/`p384` (RustCrypto, pure Rust, MIT/Apache-2.0). RSA PKCS#1 v1.5 verification is implemented in `crates/pw-pdf/src/signatures.rs` with a public-key modular exponentiation (`num-bigint`) and an exact comparison of the encoded message against the expected DigestInfo — public operations only, so no secret-dependent timing exists. Trust is never claimed: certificate chains, revocation and timestamps are not checked yet and every report says so.
+- **Consequences:** RSA-PSS and BER-encoded or non-canonically ordered signed attributes are reported as unsupported/unreadable, not as valid. Revisit when `rsa` 0.10 (no advisory) is released, or when a trust list is added.

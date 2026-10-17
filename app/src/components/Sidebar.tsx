@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { Bookmark, Download, LayoutGrid, Paperclip, Plus } from "lucide-react";
+import { Bookmark, Download, LayoutGrid, Paperclip, Plus, ShieldCheck } from "lucide-react";
 import { useApi } from "../api";
-import { toPwError, type AttachmentInfo, type OpenedDoc, type PwError } from "../types";
+import { toPwError, type AttachmentInfo, type OpenedDoc, type PwError, type SignatureReport } from "../types";
+import { formatDate, formatTime, statusLabel } from "../signatures";
 import { formatBytes } from "../format";
 import { Thumbnails } from "./Thumbnails";
 
-export type SidebarView = "pages" | "bookmarks" | "attachments";
+export type SidebarView = "pages" | "bookmarks" | "attachments" | "signatures";
 
 interface Props {
   doc: OpenedDoc;
@@ -17,10 +18,13 @@ interface Props {
   onSaveAttachment: (a: AttachmentInfo) => void;
   onAttachFiles: () => void;
   onEditBookmarks: () => void;
+  /** Signature check of this document: undefined while it runs. */
+  signatures?: SignatureReport | null;
+  signaturesError?: PwError | null;
 }
 
 /** Left panel: page thumbnails or the document outline (bookmarks). */
-export function Sidebar({ doc, view, onView, currentPage, onSelectPage, onPageContextMenu, onSaveAttachment, onAttachFiles, onEditBookmarks }: Props) {
+export function Sidebar({ doc, view, onView, currentPage, onSelectPage, onPageContextMenu, onSaveAttachment, onAttachFiles, onEditBookmarks, signatures, signaturesError }: Props) {
   const hasBookmarks = doc.info.bookmarks.length > 0;
   const shown: SidebarView = view === "bookmarks" ? (hasBookmarks ? "bookmarks" : "pages") : view;
   return (
@@ -45,6 +49,9 @@ export function Sidebar({ doc, view, onView, currentPage, onSelectPage, onPageCo
         <button type="button" role="tab" id="sb-tab-attachments" aria-controls="sb-panel" aria-selected={shown === "attachments"} title="Attachments" aria-label="Attachments" onClick={() => onView("attachments")}>
           <Paperclip aria-hidden="true" />
         </button>
+        <button type="button" role="tab" id="sb-tab-signatures" aria-controls="sb-panel" aria-selected={shown === "signatures"} title="Signatures" aria-label="Signatures" onClick={() => onView("signatures")}>
+          <ShieldCheck aria-hidden="true" />
+        </button>
       </div>
       <div id="sb-panel" role="tabpanel" aria-labelledby={`sb-tab-${shown}`} className="sidebar-panel">
         {shown === "pages" ? (
@@ -58,6 +65,8 @@ export function Sidebar({ doc, view, onView, currentPage, onSelectPage, onPageCo
               </button>
             </div>
           </div>
+        ) : shown === "signatures" ? (
+          <Signatures report={signatures} error={signaturesError ?? null} onSelect={onSelectPage} />
         ) : (
           <Attachments doc={doc} onSave={onSaveAttachment} onAttach={onAttachFiles} />
         )}
@@ -159,6 +168,78 @@ function Attachments({ doc, onSave, onAttach }: { doc: OpenedDoc; onSave: (a: At
           <Plus /> Attach files…
         </button>
       </div>
+    </div>
+  );
+}
+
+/** Digital signatures and what was (and was not) checked. */
+function Signatures({ report, error, onSelect }: { report: SignatureReport | null | undefined; error: PwError | null; onSelect: (p: number) => void }) {
+  if (error) {
+    return (
+      <div className="panel-scroll signatures">
+        <p className="error" role="alert">
+          {error.message}
+        </p>
+      </div>
+    );
+  }
+  if (report === undefined || report === null) {
+    return (
+      <div className="panel-scroll signatures" aria-busy="true">
+        <p className="hint">Checking signatures…</p>
+      </div>
+    );
+  }
+  return (
+    <div className="panel-scroll signatures">
+      {report.signatures.length === 0 ? (
+        <p className="hint">This document is not digitally signed.</p>
+      ) : (
+        <ul aria-label="Digital signatures">
+          {report.signatures.map((s, i) => {
+            const label = statusLabel(s);
+            const rows: Array<[string, string | null]> = [
+              ["Signed", formatTime(s.signing_time)],
+              ["Reason", s.reason],
+              ["Location", s.location],
+              ["Issued by", s.issuer],
+              ["Valid", s.certificate_valid_from && s.certificate_valid_to ? `${formatDate(s.certificate_valid_from)} – ${formatDate(s.certificate_valid_to)}` : null],
+              ["Algorithm", s.signature_algorithm],
+              ["Field", s.field],
+            ];
+            return (
+              <li key={i} className="signature" data-signature={i}>
+                <div className="row">
+                  <span className={`sig-status tone-${label.tone}`} data-testid="signature-status">
+                    {label.text}
+                  </span>
+                  <span className="grow name" title={s.signer_subject ?? undefined}>
+                    {s.signer ?? "Unknown signer"}
+                  </span>
+                </div>
+                <p className="hint">{s.detail}</p>
+                {s.changed_after && <p className="hint">The document was changed after this signature was made.</p>}
+                <dl>
+                  {rows
+                    .filter((r) => r[1])
+                    .map(([k, v]) => (
+                      <div key={k}>
+                        <dt>{k}</dt>
+                        <dd>{v}</dd>
+                      </div>
+                    ))}
+                </dl>
+                {s.page !== null && (
+                  <button type="button" className="btn link" onClick={() => onSelect(s.page!)}>
+                    Go to page {s.page + 1}
+                  </button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {report.signatures.length > 0 && <p className="hint">{report.trust_note}</p>}
     </div>
   );
 }

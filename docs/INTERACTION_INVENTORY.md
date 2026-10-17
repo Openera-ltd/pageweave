@@ -41,6 +41,7 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `view.fitWidth` | Fit width | Ctrl+2 | Exercised by tests |
 | `view.toggleThumbnails` | Show or hide page thumbnails | Ctrl+B | Exercised by tests |
 | `view.showBookmarks` | Show bookmarks | Ctrl+Shift+B | Exercised by tests |
+| `view.showSignatures` | Show signatures | — | Exercised by tests |
 | `nav.nextPage` | Next page | Ctrl+PageDown | Exercised by tests |
 | `nav.previousPage` | Previous page | Ctrl+PageUp | Exercised by tests |
 | `nav.firstPage` | First page | Ctrl+Home | Exercised by tests |
@@ -67,4 +68,4 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `app.commandPalette` | Command palette | Ctrl+K, Ctrl+Shift+P | Exercised by tests |
 | `app.openLogs` | Show log folder | — | Exercised by tests |
 
-Coverage: 60 of 60 commands exercised by unit or real-app E2E tests.
+Coverage: 61 of 61 commands exercised by unit or real-app E2E tests.

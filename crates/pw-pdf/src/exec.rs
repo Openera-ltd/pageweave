@@ -306,6 +306,10 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
                 }),
             )
         }
+        Operation::VerifySignatures { input } => {
+            let report = crate::signatures::verify_signatures(input, &opts)?;
+            (vec![], serde_json::to_value(&report).unwrap_or_default())
+        }
         Operation::Compare { old, new } => {
             let page_progress = |done: u64, total: u64| {
                 if let Some(c) = ctx {

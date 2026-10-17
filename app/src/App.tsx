@@ -39,9 +39,10 @@ import { COMMAND_BY_ID, COMMANDS, commandForShortcut, effectiveBindings, type Co
 import { clampZoom, fitWidthZoom, nextZoom, pageOrigin, screenRectToPdf, ZOOM_PRESETS, CSS_PX_PER_PT, displaySizePt } from "./geometry";
 import { basename, siblingOutput } from "./paths";
 import { sizeChange } from "./format";
+import { signatureSummary } from "./signatures";
 import { eventToShortcut, isTextEntry } from "./shortcuts";
 import { applyAppearance } from "./theme";
-import { toPwError, type AppInfo, type AttachmentInfo, type CollisionPolicy, type FormField, type FormInfo, type FormValue, type JobSnapshot, type OpenedDoc, type Operation, type PwError, type RecoveredJob, type RedactArea, type SearchHit, type SearchRect, type Settings } from "./types";
+import { toPwError, type AppInfo, type AttachmentInfo, type CollisionPolicy, type FormField, type FormInfo, type FormValue, type JobSnapshot, type OpenedDoc, type Operation, type PwError, type RecoveredJob, type RedactArea, type SearchHit, type SearchRect, type Settings, type SignatureReport } from "./types";
 import { CommandButton, Menu, type MenuItemOrSeparator } from "./components/ui";
 import { Viewer, type ScrollRequest } from "./components/Viewer";
 import { Sidebar, type SidebarView } from "./components/Sidebar";
@@ -144,6 +145,8 @@ export function App() {
   const [views, setViews] = useState<Record<number, ViewState>>({});
   const [showThumbs, setShowThumbs] = useState(true);
   const [sidebarView, setSidebarView] = useState<SidebarView>("pages");
+  /** Signature check of the active document (undefined while it runs). */
+  const [sigs, setSigs] = useState<{ docId: number; report?: SignatureReport; error?: PwError } | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [notices, setNotices] = useState<Notice[]>([]);
@@ -171,6 +174,21 @@ export function App() {
   const viewerHost = useRef<HTMLDivElement>(null);
 
   const active = tabs.find((t) => t.doc_id === activeId) ?? null;
+
+  // Check signatures once per opened document (read-only, on a worker thread in the host).
+  const sigDocId = active?.doc_id;
+  useEffect(() => {
+    if (sigDocId === undefined) return;
+    let live = true;
+    setSigs({ docId: sigDocId });
+    api
+      .verifySignatures(sigDocId)
+      .then((report) => live && setSigs({ docId: sigDocId, report }))
+      .catch((e) => live && setSigs({ docId: sigDocId, error: toPwError(e) }));
+    return () => {
+      live = false;
+    };
+  }, [api, sigDocId]);
   const view: ViewState = (active && views[active.doc_id]) || { zoom: 1, page: 0 };
   const effective = preview ?? settings;
   const pendingOf = (id: number) => annots[id]?.items ?? NO_PENDING;
@@ -728,6 +746,14 @@ export function App() {
       available: needDoc,
     },
     "view.toggleThumbnails": { run: () => setShowThumbs((s) => !s), available: needDoc },
+    "view.showSignatures": {
+      run: () => {
+        setShowThumbs(true);
+        setSidebarView("signatures");
+        requestAnimationFrame(() => document.querySelector<HTMLElement>("#sb-tab-signatures")?.focus());
+      },
+      available: needDoc,
+    },
     "view.showBookmarks": {
       run: () => {
         setShowThumbs(true);
@@ -1164,6 +1190,8 @@ export function App() {
               onSaveAttachment={(a) => setDialog({ kind: "saveAttachment", attachment: a })}
               onAttachFiles={() => attachFiles(active)}
               onEditBookmarks={() => setDialog({ kind: "bookmarks", addOnOpen: false, page: view.page })}
+              signatures={sigs?.docId === active.doc_id ? (sigs.report ?? (sigs.error ? null : undefined)) : undefined}
+              signaturesError={sigs?.docId === active.doc_id ? (sigs.error ?? null) : null}
             />
           )}
           <div ref={viewerHost} style={{ display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0, minWidth: 0 }}>
@@ -1228,7 +1256,7 @@ export function App() {
         </div>
       )}
 
-      <StatusBar doc={active} currentPage={view.page} zoom={view.zoom} jobs={Object.values(jobs)} onGoToPage={goToPage} goToNonce={goToNonce} onCancelJob={(id) => api.cancelJob(id)} unsaved={activeSavable} onSaveAnnotations={() => runCommand("file.saveCopy")} marks={activeMarks} onApplyRedactions={() => runCommand("redact.apply")} markMode={markMode} onEndMarkMode={() => setMarkMode(false)} />
+      <StatusBar doc={active} currentPage={view.page} zoom={view.zoom} jobs={Object.values(jobs)} onGoToPage={goToPage} goToNonce={goToNonce} onCancelJob={(id) => api.cancelJob(id)} unsaved={activeSavable} onSaveAnnotations={() => runCommand("file.saveCopy")} marks={activeMarks} onApplyRedactions={() => runCommand("redact.apply")} markMode={markMode} onEndMarkMode={() => setMarkMode(false)} signature={sigs?.docId === active?.doc_id ? signatureSummary(sigs?.report ?? null) : null} onShowSignatures={() => runCommand("view.showSignatures")} />
 
       {menu && (
         <Menu

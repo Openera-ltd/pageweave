@@ -24,6 +24,7 @@ mod properties;
 mod protect;
 mod redact;
 mod sanitize;
+mod signatures;
 mod unprotect;
 
 pub use attachments::{add_attachments, clean_name, extract_attachment, list_attachments, AttachmentInfo};
@@ -45,6 +46,7 @@ pub use properties::{set_properties, PropertyChanges};
 pub use protect::protect;
 pub use redact::{redact, redaction_preview, AreaPreview};
 pub use sanitize::{sanitize, sanitize_inspect, SanitizeFindings};
+pub use signatures::{verify_signatures, SignatureInfo, SignatureReport, SignatureStatus, TRUST_NOTE};
 pub use unprotect::unprotect;
 
 use pdfium_render::prelude::*;

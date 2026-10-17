@@ -218,6 +218,21 @@ fn compare_lists_differences_in_both_forms() {
 }
 
 #[test]
+fn signatures_reports_status_and_never_claims_trust() {
+    let r = bin().args(["--json", "signatures"]).arg(fixture("signed-tampered.pdf")).output().expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let v = json(&r);
+    assert_eq!(v["result"]["data"]["signatures"][0]["status"], "invalid");
+    assert_eq!(v["result"]["data"]["signatures"][0]["trust"], "not_checked");
+    let human = bin().arg("signatures").arg(fixture("signed-rsa.pdf")).output().expect("run");
+    let text = String::from_utf8_lossy(&human.stdout);
+    assert!(text.contains("Signature 1 (Approval): VALID") && text.contains("Signer: PageWeave Test Signer"), "{text}");
+    assert!(text.contains("does not yet check whether the signer is trusted"), "{text}");
+    let none = bin().arg("signatures").arg(fixture("five-pages.pdf")).output().expect("run");
+    assert!(String::from_utf8_lossy(&none.stdout).contains("No digital signatures."));
+}
+
+#[test]
 fn text_saves_a_file_with_output_and_prints_without() {
     let dir = tempfile::tempdir().expect("tmp");
     let out = dir.path().join("five.txt");

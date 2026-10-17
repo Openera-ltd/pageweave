@@ -545,6 +545,10 @@ pub enum Operation {
         images: Option<ImageReduce>,
         output: PathBuf,
     },
+    /// Check every digital signature in the document (read-only).
+    VerifySignatures {
+        input: PathBuf,
+    },
     /// Differences between two documents (read-only): aligned pages, text, format and visual changes.
     Compare {
         old: PathBuf,
@@ -602,6 +606,7 @@ pub const OPERATION_IDS: &[&str] = &[
     "export_text",
     "optimize",
     "compare",
+    "verify_signatures",
     "list_attachments",
     "extract_attachment",
     "add_attachments",
@@ -641,6 +646,7 @@ impl Operation {
             Operation::ExportText { .. } => "export_text",
             Operation::Optimize { .. } => "optimize",
             Operation::Compare { .. } => "compare",
+            Operation::VerifySignatures { .. } => "verify_signatures",
             Operation::ListAttachments { .. } => "list_attachments",
             Operation::ExtractAttachment { .. } => "extract_attachment",
             Operation::AddAttachments { .. } => "add_attachments",
@@ -662,6 +668,7 @@ impl Operation {
                 | Operation::SanitizeInspect { .. }
                 | Operation::ListAttachments { .. }
                 | Operation::Compare { .. }
+                | Operation::VerifySignatures { .. }
         )
     }
 
@@ -698,6 +705,7 @@ impl Operation {
             | Operation::Watermark { input, .. }
             | Operation::CropPages { input, .. }
             | Operation::ListAttachments { input }
+            | Operation::VerifySignatures { input }
             | Operation::SetBookmarks { input, .. }
             | Operation::ExportText { input, .. }
             | Operation::Optimize { input, .. }
@@ -727,7 +735,8 @@ impl Operation {
             | Operation::RedactionPreview { .. }
             | Operation::SanitizeInspect { .. }
             | Operation::ListAttachments { .. }
-            | Operation::Compare { .. } => None,
+            | Operation::Compare { .. }
+            | Operation::VerifySignatures { .. } => None,
             Operation::Split { output_dir, .. } | Operation::ExportImages { output_dir, .. } => {
                 Some(output_dir.clone())
             }

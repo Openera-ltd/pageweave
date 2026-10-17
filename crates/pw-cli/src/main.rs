@@ -192,6 +192,8 @@ enum Command {
         #[arg(long, default_value = "pt")]
         unit: String,
     },
+    /// Check the document's digital signatures (integrity; signer trust is not checked).
+    Signatures { file: PathBuf },
     /// List the differences between two documents (pages, text, format, visual).
     Compare { old: PathBuf, new: PathBuf },
     /// Save a smaller copy with the same content (lossless; images unchanged), verified page by page.
@@ -421,6 +423,7 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
             }
             _ => return Err(PwError::invalid("attach.output", "Give -o with --save or --add.")),
         },
+        Command::Signatures { file } => Operation::VerifySignatures { input: file.clone() },
         Command::Compare { old, new } => Operation::Compare { old: old.clone(), new: new.clone() },
         Command::Optimize { file, output, image_dpi, image_quality } => Operation::Optimize {
             input: file.clone(),
@@ -593,6 +596,40 @@ fn print_human(r: &OperationResult) {
                     line += " (read-only)";
                 }
                 println!("{line}");
+            }
+        }
+        "verify_signatures" => {
+            let list = r.data["signatures"].as_array().cloned().unwrap_or_default();
+            if list.is_empty() {
+                println!("No digital signatures.");
+            }
+            for (i, s) in list.iter().enumerate() {
+                let get = |k: &str| s[k].as_str().unwrap_or("").to_string();
+                println!(
+                    "Signature {} ({}): {}",
+                    i + 1,
+                    if get("field").is_empty() { "unnamed".into() } else { get("field") },
+                    get("status").to_uppercase()
+                );
+                println!("  {}", get("detail"));
+                if s["changed_after"] == true {
+                    println!("  The document was changed after this signature (later revision).");
+                }
+                for (label, key) in [
+                    ("Signer", "signer"),
+                    ("Issuer", "issuer"),
+                    ("Signed", "signing_time"),
+                    ("Reason", "reason"),
+                    ("Algorithm", "signature_algorithm"),
+                ] {
+                    let v = get(key);
+                    if !v.is_empty() {
+                        println!("  {label}: {v}");
+                    }
+                }
+            }
+            if !list.is_empty() {
+                println!("Note: {}", r.data["trust_note"].as_str().unwrap_or(""));
             }
         }
         "compare" => {

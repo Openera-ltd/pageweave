@@ -196,6 +196,8 @@ export function StatusBar({
   onApplyRedactions,
   markMode = false,
   onEndMarkMode,
+  signature = null,
+  onShowSignatures,
 }: {
   doc: OpenedDoc | null;
   currentPage: number;
@@ -213,6 +215,9 @@ export function StatusBar({
   /** Dragging on pages marks areas for redaction. */
   markMode?: boolean;
   onEndMarkMode?: () => void;
+  /** Signature summary of the active document (null when it is not signed). */
+  signature?: { text: string; tone: "ok" | "warn" | "bad" } | null;
+  onShowSignatures?: () => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
@@ -255,6 +260,11 @@ export function StatusBar({
           </span>
           <span>{Math.round(zoom * 100)}%</span>
           {doc.info.encrypted && <span title="This document is password protected">Protected</span>}
+          {signature && (
+            <button type="button" className={`btn link tone-${signature.tone}`} data-testid="signature-summary" title="Show signature details" onClick={() => onShowSignatures?.()}>
+              {signature.text}
+            </button>
+          )}
           <span aria-live="polite">
             {unsaved > 0 && (
               <button type="button" className="btn link" data-testid="unsaved" title="Save a copy with changes (Ctrl+S)" onClick={() => onSaveAnnotations?.()}>

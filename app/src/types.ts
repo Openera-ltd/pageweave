@@ -82,6 +82,36 @@ export interface DocumentInfo {
   warnings: string[];
 }
 
+export type SignatureStatus = "valid" | "invalid" | "unsupported" | "unreadable";
+
+export interface SignatureInfo {
+  field: string | null;
+  page: number | null;
+  status: SignatureStatus;
+  detail: string;
+  signer: string | null;
+  signer_subject: string | null;
+  issuer: string | null;
+  certificate_valid_from: string | null;
+  certificate_valid_to: string | null;
+  self_signed: boolean;
+  signing_time: string | null;
+  reason: string | null;
+  location: string | null;
+  sub_filter: string | null;
+  digest_algorithm: string | null;
+  signature_algorithm: string | null;
+  covers_whole_file: boolean;
+  changed_after: boolean;
+  has_timestamp: boolean;
+  trust: "not_checked";
+}
+
+export interface SignatureReport {
+  signatures: SignatureInfo[];
+  trust_note: string;
+}
+
 export interface OpenedDoc {
   doc_id: number;
   path: string;
@@ -202,6 +232,7 @@ export type Operation =
   | { op: "extract_attachment"; input: string; index: number; output: string }
   | { op: "add_attachments"; input: string; files: string[]; output: string }
   | { op: "compare"; old: string; new: string }
+  | { op: "verify_signatures"; input: string }
   | { op: "optimize"; input: string; images: { max_dpi: number; quality: number } | null; output: string }
   | { op: "export_text"; input: string; pages: string | null; output: string }
   | { op: "crop_pages"; input: string; pages: string | null; margins: { top: number; right: number; bottom: number; left: number }; output: string }

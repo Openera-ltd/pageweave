@@ -19,6 +19,7 @@ import type {
   PageText,
   RecoveredJob,
   SanitizeFindings,
+  SignatureReport,
   SearchHit,
   Settings,
 } from "./types";
@@ -51,6 +52,8 @@ export interface Api {
   redactionPreview(docId: number, areas: RedactArea[]): Promise<AreaPreview[]>;
   /** What hidden information the document holds (read-only, runs in the engine). */
   sanitizeInspect(docId: number): Promise<SanitizeFindings>;
+  /** The document's digital signatures, checked (read-only). */
+  verifySignatures(docId: number): Promise<SignatureReport>;
   /** Files embedded in the document (read-only). */
   listAttachments(docId: number): Promise<AttachmentInfo[]>;
   /** JPEG and PNG images. */
@@ -121,6 +124,7 @@ export const tauriApi: Api = {
     return Array.isArray(r) ? r : [r];
   },
   pickSaveAnyPath: (defaultPath) => saveDialog({ defaultPath }),
+  verifySignatures: (docId) => invoke("verify_signatures", { docId }),
   launchFiles: () => invoke("launch_files"),
   launchFileDone: (path) => invoke("launch_file_done", { path }),
   openDocuments: () => invoke("open_documents"),
