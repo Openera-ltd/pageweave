@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "component": "ocr",
+  "decision": "D-009",
+  "onnxruntime": {
+    "version": "1.31.0",
+    "source": "https://github.com/microsoft/onnxruntime/releases/tag/v1.31.0",
+    "license": "MIT (ONNX Runtime) + ThirdPartyNotices.txt",
+    "telemetry": "Windows builds can emit telemetry events; PageWeave disables them when creating the environment.",
+    "artifacts": {
+      "linux-x64": {
+        "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.31.0/onnxruntime-linux-x64-1.31.0.tgz",
+        "sha256": "cc5c72baf5ae5c8238a6841f0897227be2d02826b9cf98eaf02fdefaeeb03a57",
+        "members": {
+          "onnxruntime-linux-x64-1.31.0/lib/libonnxruntime.so.1.31.0": "libonnxruntime.so",
+          "onnxruntime-linux-x64-1.31.0/LICENSE": "LICENSE",
+          "onnxruntime-linux-x64-1.31.0/ThirdPartyNotices.txt": "ThirdPartyNotices.txt"
+        },
+        "library": "libonnxruntime.so"
+      },
+      "win-x64": {
+        "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.31.0/onnxruntime-win-x64-1.31.0.zip",
+        "sha256": "3958d8a44984160692c1b4ffd0de3cb48f8c39f9d34bb31e433db06e30b82195",
+        "members": {
+          "onnxruntime-win-x64-1.31.0/lib/onnxruntime.dll": "onnxruntime.dll",
+          "onnxruntime-win-x64-1.31.0/LICENSE": "LICENSE",
+          "onnxruntime-win-x64-1.31.0/ThirdPartyNotices.txt": "ThirdPartyNotices.txt"
+        },
+        "library": "onnxruntime.dll"
+      }
+    }
+  },
+  "models": {
+    "license": "Apache-2.0 (PaddleOCR / Baidu; official model cards)",
+    "files": {
+      "det.onnx": {
+        "url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/28fe5895c24fd108c19eb3e8479f4ab385fbfc62/inference.onnx",
+        "sha256": "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e",
+        "bytes": 9880512
+      },
+      "rec.onnx": {
+        "url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.onnx",
+        "sha256": "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634",
+        "bytes": 21159378
+      }
+    },
+    "dictionary": {
+      "file": "resources/ocr/ppocrv6_rec_dict.txt",
+      "sha256": "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d",
+      "entries": 18708,
+      "derived_from": "PostProcess.character_dict of https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.yml (sha256 ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1), one entry per line; identical to the dictionary embedded in the benchmarked RapidOCR copy"
+    }
+  }
+}

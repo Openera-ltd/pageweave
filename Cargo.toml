@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/pw-core", "crates/pw-pdf", "crates/pw-cli", "app/src-tauri"]
+members = ["crates/pw-core", "crates/pw-pdf", "crates/pw-ocr", "crates/pw-cli", "app/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"

@@ -7,6 +7,7 @@
 
 # Downloaded native runtimes (fetched and checksum-verified by tools/fetch_pdfium.py)
 /third_party/pdfium/*/
+/third_party/ocr/
 
 # Secrets and credentials (PRD 16) — never commit
 .env

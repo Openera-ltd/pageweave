@@ -63,18 +63,20 @@ def normalize_background(path: Path):
 class PpOcr:
     """PP-OCRv6 small detection + recognition (Apache-2.0 weights) on ONNX Runtime, via RapidOCR."""
 
-    def __init__(self, use_cls: bool = False, threads: int | None = None, normalize: bool = False, det: dict | None = None) -> None:
+    def __init__(self, use_cls: bool = False, threads: int | None = None, normalize: bool = False, det: dict | None = None, extra: dict | None = None, label: str = "") -> None:
         self.normalize = normalize
         self.det = det or {}
+        self.extra = extra or {}
         from rapidocr import RapidOCR
 
         params = {"Global.use_cls": use_cls, "Global.log_level": "error"}
         if threads:
             params["EngineConfig.onnxruntime.intra_op_num_threads"] = threads
         params.update({f"Det.{k}": v for k, v in self.det.items()})
+        params.update(self.extra)
         self._eng = RapidOCR(params=params)
         self.use_cls = use_cls
-        self.name = "ppocrv6-small" + ("-cls" if use_cls else "") + ("-norm" if normalize else "") + "".join(f"-{k}{v}" for k, v in self.det.items())
+        self.name = "ppocrv6-small" + ("-cls" if use_cls else "") + ("-norm" if normalize else "") + "".join(f"-{k}{v}" for k, v in self.det.items()) + (f"-{label}" if label else "")
 
     def info(self) -> dict:
         import onnxruntime
@@ -92,6 +94,7 @@ class PpOcr:
             "use_cls": self.use_cls,
             "normalize_background": self.normalize,
             "det_overrides": self.det,
+            "overrides": {k: (Path(v).name if isinstance(v, str) and "/" in v else v) for k, v in self.extra.items()},
         }
 
     def run(self, image: Path) -> list[OcrLine]:
@@ -101,7 +104,33 @@ class PpOcr:
         return [OcrLine(t, [tuple(map(float, p)) for p in box], float(s)) for box, t, s in zip(r.boxes, r.txts, r.scores)]
 
 
+OFFICIAL = Path(__import__("os").environ.get("PWML_OFFICIAL_MODELS", "/nonexistent"))
+
+
+def _official(paddle_cfg: bool) -> "PpOcr":
+    extra = {
+        "Det.model_path": str(OFFICIAL / "det_inference.onnx"),
+        "Rec.model_path": str(OFFICIAL / "rec_inference.onnx"),
+        "Rec.rec_keys_path": str(OFFICIAL / "rec_dict.txt"),
+    }
+    if paddle_cfg:
+        # Settings from the official model's inference.yml.
+        extra.update({"Det.mean": [0.485, 0.456, 0.406], "Det.std": [0.229, 0.224, 0.225], "Det.thresh": 0.2, "Det.box_thresh": 0.45, "Det.unclip_ratio": 1.4})
+    return PpOcr(extra=extra, label="official" + ("-paddlecfg" if paddle_cfg else "-rapidcfg"))
+
+
+class External:
+    """Results produced outside Python (e.g. the Rust engine via crates/pw-ocr/examples/ocr_dir.rs)
+    and scored with `bench --rescore`; cannot be run from here."""
+
+    def __init__(self) -> None:
+        raise SystemExit("this engine's raw output is produced by its own harness; use bench --rescore")
+
+
 ENGINES = {
+    "pwocr": External,
+    "ppocr-official-rapidcfg": lambda: _official(False),
+    "ppocr-official-paddlecfg": lambda: _official(True),
     "tesseract": Tesseract,
     "ppocr": PpOcr,
     "ppocr-norm": lambda: PpOcr(normalize=True),

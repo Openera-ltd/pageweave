@@ -69,3 +69,24 @@ untuned defaults only. Tuning happens on validation from now on.
    Kaggle becomes worthwhile if a real-world, rights-cleared evaluation set shows a larger gap.
 3. Speed: ~3 s/page on 4 threads is acceptable for a background job but must be measured in the Rust
    integration on Windows target hardware; memory must be re-measured outside Python.
+
+## Product implementation parity (Rust `pw-ocr`)
+
+`crates/pw-ocr` reimplements the pipeline in Rust on ONNX Runtime 1.31 (official Microsoft build,
+loaded at runtime) with the **official** PP-OCRv6 small model files (pinned Hugging Face revisions,
+`resources/ocr.lock.json`). The official files are functionally identical to the copies benchmarked
+above (same validation result to the line); the processing settings in the official
+`inference.yml` scored worse on validation (1.32% CER) than the measured configuration and were not
+used. Scored by the same scorer via `crates/pw-ocr/examples/ocr_dir.rs` + `bench --rescore`:
+
+| Split | Engine | CER | WER | Line recall | Exact lines | Median s/page |
+|---|---|---|---|---|---|---|
+| validation | reference (Python) | 0.218% | 1.76% | 100% | 92.4% | 2.2 |
+| validation | pw-ocr, bilinear crops (first version) | 0.226% | 1.90% | 100% | 91.9% | 1.8 |
+| validation | **pw-ocr, bicubic crops (final)** | 0.201% | 1.61% | 100% | 92.8% | 1.7 |
+| blind (single run of the final version) | reference (Python) | 0.41% | 1.18% | 99.8% | 93.8% | 3.1 |
+| blind (single run of the final version) | **pw-ocr** | 0.41% | 1.19% | 99.8% | 93.8% | 1.6 |
+
+Per condition on blind the two agree within ±0.02 percentage points. The first Rust version was
+worse on bad scans (validation WER 10.5% vs 8.7%); the cause was bilinear crop sampling, fixed by
+OpenCV-style bicubic sampling. Same 4-thread container; Windows timing still to be measured.
