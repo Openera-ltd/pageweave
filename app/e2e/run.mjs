@@ -49,6 +49,9 @@ async function captureFailure(s) {
 const phase = { create: 0, teardown: 0 };
 /** App launches that failed before a session existed and were retried (reported in the summary). */
 const launchRetries = [];
+/** Consecutive scenarios whose app could not be launched at all; the suite stops after 3. */
+let launchFailuresInARow = 0;
+class LaunchFailed extends Error {}
 
 async function withApp(args, fn) {
   const t0 = Date.now();
@@ -60,8 +63,14 @@ async function withApp(args, fn) {
     // driver then waits out its timeout. Retry the launch once and record it; a second failure is real.
     launchRetries.push({ test: currentTest, error: String(e?.message ?? e).slice(0, 300) });
     console.log(`  note: app launch failed (${String(e?.message ?? e).slice(0, 160)}); retrying the launch once`);
-    s = await Session.create(DRIVER, APP, args);
+    try {
+      s = await Session.create(DRIVER, APP, args);
+    } catch (e2) {
+      launchFailuresInARow++;
+      throw new LaunchFailed(`the app could not be started under WebDriver twice: ${String(e2?.message ?? e2).slice(0, 200)}`);
+    }
   }
+  launchFailuresInARow = 0;
   phase.create += Date.now() - t0;
   try {
     await s.waitFor(args.length ? '.tab-label' : ".home", { timeout: 20000 });
@@ -84,6 +93,12 @@ class Skip extends Error {}
 
 async function test(name, fn) {
   if (ONLY && !name.includes(ONLY)) return;
+  if (launchFailuresInARow >= 3) {
+    // Every launch is failing: report the remaining scenarios as not run instead of timing out each.
+    results.push({ name, status: "FAIL", error: "not run: the app could not be launched for the previous 3 scenarios" });
+    console.log(`FAIL ${name}: not run (app launches are failing)`);
+    return;
+  }
   currentTest = name;
   phase.create = 0;
   phase.teardown = 0;

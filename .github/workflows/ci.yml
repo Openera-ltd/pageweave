@@ -253,6 +253,39 @@ jobs:
           cargo build -p pw-cli
       - name: Install tauri-driver
         run: cargo install --locked tauri-driver@2.1.0
+      # Every WebDriver session timed out on the first Windows runs. This bounded step records whether
+      # the app's WebView2 exposes DevTools when asked, whether the app logged its startup, and what
+      # Edge WebDriver itself does with the capabilities tauri-driver sends (verbose log uploaded).
+      - name: Diagnose WebView2 automation (bounded, informational)
+        shell: pwsh
+        working-directory: app
+        timeout-minutes: 4
+        continue-on-error: true
+        run: |
+          New-Item -ItemType Directory -Force ..\e2e-artifacts-windows | Out-Null
+          $app = (Resolve-Path ..\target\debug\pageweave-app.exe).Path
+          $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9333"
+          $p = Start-Process $app -PassThru
+          $ok = $false
+          for ($i = 0; $i -lt 40; $i++) { try { $r = Invoke-WebRequest http://127.0.0.1:9333/json/version -UseBasicParsing -TimeoutSec 2; "DevTools reachable: $($r.Content)"; $ok = $true; break } catch { Start-Sleep -Milliseconds 500 } }
+          if (-not $ok) { "DevTools endpoint NOT reachable after 20 s" }
+          "App still running: $(-not $p.HasExited)"
+          Get-ChildItem "$env:LOCALAPPDATA\io.github.kuyamcliff.pageweave\logs\*.jsonl" -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Tail 10 }
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          Remove-Item Env:\WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
+          $edge = Join-Path $env:EDGEWEBDRIVER "msedgedriver.exe"
+          $log = (Join-Path (Resolve-Path ..\e2e-artifacts-windows) "msedgedriver-diag.log")
+          $d = Start-Process $edge -ArgumentList "--port=9515", "--verbose", "--log-path=$log" -PassThru
+          Start-Sleep -Seconds 2
+          $caps = @{ capabilities = @{ alwaysMatch = @{ browserName = "webview2"; "ms:edgeChromium" = $true; "ms:edgeOptions" = @{ binary = $app; args = @() } } } } | ConvertTo-Json -Depth 6
+          try {
+            $sess = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:9515/session -Body $caps -ContentType "application/json" -TimeoutSec 60
+            "Native Edge WebDriver session OK: $($sess.value.sessionId)"
+            Invoke-RestMethod -Method Delete -Uri "http://127.0.0.1:9515/session/$($sess.value.sessionId)" -TimeoutSec 20 | Out-Null
+          } catch { "Native Edge WebDriver session FAILED: $_" }
+          Stop-Process -Id $d.Id -Force -ErrorAction SilentlyContinue
+          Get-Process pageweave-app -ErrorAction SilentlyContinue | Stop-Process -Force
+          if (Test-Path $log) { Get-Content $log -Tail 40 }
       - name: Real-app end-to-end tests on Windows
         shell: pwsh
         working-directory: app
