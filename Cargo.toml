@@ -26,7 +26,7 @@ flate2 = "1.1"
 # Both already in the dependency graph (pdfium-render / Tauri); pinned to those versions.
 libloading = "=0.9.0"
 parking_lot = "0.12"
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 clap = { version = "4", features = ["derive"] }
 pw-core = { path = "crates/pw-core" }
 pw-pdf = { path = "crates/pw-pdf" }

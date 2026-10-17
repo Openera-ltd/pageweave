@@ -240,6 +240,19 @@ impl Default for SanitizeOptions {
     }
 }
 
+/// Lossy image reduction for `optimize`: images shown above `max_dpi` are resampled to it and
+/// stored as JPEG at `quality` (30–95, higher is better).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageReduce {
+    pub max_dpi: u32,
+    pub quality: u8,
+}
+
+pub const MIN_IMAGE_DPI: u32 = 36;
+pub const MAX_IMAGE_DPI: u32 = 1200;
+pub const MIN_JPEG_QUALITY: u8 = 30;
+pub const MAX_JPEG_QUALITY: u8 = 95;
+
 /// Margins to cut from each side of a page, in points, as the page is displayed.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 pub struct Margins {
@@ -527,6 +540,9 @@ pub enum Operation {
     /// objects and earlier versions dropped; verified to look and read the same.
     Optimize {
         input: PathBuf,
+        /// Also resample high-resolution images (lossy; off unless given).
+        #[serde(default)]
+        images: Option<ImageReduce>,
         output: PathBuf,
     },
     /// What redacting `areas` would remove (read-only; shown before applying).
@@ -895,6 +911,20 @@ impl Operation {
                     return Err(PwError::invalid(
                         "attach.too_many",
                         format!("Attach at most {MAX_ATTACH_FILES} files at once."),
+                    ));
+                }
+            }
+            Operation::Optimize { images: Some(r), .. } => {
+                if !(MIN_IMAGE_DPI..=MAX_IMAGE_DPI).contains(&r.max_dpi) {
+                    return Err(PwError::invalid(
+                        "optimize.dpi",
+                        format!("Image resolution must be between {MIN_IMAGE_DPI} and {MAX_IMAGE_DPI} dpi."),
+                    ));
+                }
+                if !(MIN_JPEG_QUALITY..=MAX_JPEG_QUALITY).contains(&r.quality) {
+                    return Err(PwError::invalid(
+                        "optimize.quality",
+                        format!("Image quality must be between {MIN_JPEG_QUALITY} and {MAX_JPEG_QUALITY}."),
                     ));
                 }
             }

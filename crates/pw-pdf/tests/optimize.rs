@@ -13,7 +13,7 @@ fn run(op: Operation) -> pw_core::PwResult<OperationResult> {
 }
 
 fn optimize(input: &Path, output: &Path) -> pw_core::PwResult<OperationResult> {
-    run(Operation::Optimize { input: input.into(), output: output.into() })
+    run(Operation::Optimize { input: input.into(), images: None, output: output.into() })
 }
 
 fn texts(path: &Path) -> Vec<String> {
@@ -153,6 +153,7 @@ fn protected_corrupt_and_existing_outputs_write_nothing() {
     let out = dir.path().join("o.pdf");
     let mut req = OperationRequest::new(Operation::Optimize {
         input: fixture("encrypted-rc4-user-password.pdf"),
+        images: None,
         output: out.clone(),
     });
     req.password = Some("pw-user-test".into());
@@ -189,8 +190,113 @@ fn cancelled_at_any_point_writes_nothing() {
             calls.set(calls.get() + 1);
             calls.get() > after
         };
-        let e = pw_pdf::optimize(&src, &opts, &out, Default::default(), &cancelled, &|_, _| {}).expect_err("cancelled");
+        let e = pw_pdf::optimize(&src, &opts, None, &out, Default::default(), &cancelled, &|_, _| {})
+            .expect_err("cancelled");
         assert_eq!(e.category, pw_core::ErrorCategory::Cancelled, "after {after}");
         assert_eq!(std::fs::read_dir(dir.path()).expect("dir").count(), 0, "nothing written");
     }
+}
+
+/// (width, height, filter, colour space, hash of the image data) of every image in the file, sorted.
+fn images_in(path: &Path) -> Vec<(i64, i64, String, String, String)> {
+    use sha2::{Digest, Sha256};
+    let doc = lopdf::Document::load(path).expect("lopdf");
+    let mut v: Vec<_> = doc
+        .objects
+        .values()
+        .filter_map(|o| match o {
+            lopdf::Object::Stream(s)
+                if s.dict.get(b"Subtype").ok().and_then(|t| t.as_name().ok()) == Some(b"Image") =>
+            {
+                let n = |k: &[u8]| s.dict.get(k).ok().and_then(|o| o.as_i64().ok()).unwrap_or(0);
+                let name = |k: &[u8]| {
+                    s.dict.get(k).ok().and_then(|o| o.as_name().ok()).map(|n| String::from_utf8_lossy(n).into_owned())
+                };
+                // Pixel data as decoded (Flate re-compression changes bytes, not pixels); JPEG data raw.
+                let data = if name(b"Filter").as_deref() == Some("FlateDecode") {
+                    s.decompressed_content().expect("decode")
+                } else {
+                    s.content.clone()
+                };
+                let hash = format!("{:x}", Sha256::digest(&data));
+                Some((
+                    n(b"Width"),
+                    n(b"Height"),
+                    name(b"Filter").unwrap_or_default(),
+                    name(b"ColorSpace").unwrap_or_default(),
+                    hash,
+                ))
+            }
+            _ => None,
+        })
+        .collect();
+    v.sort();
+    v
+}
+
+fn optimize_images(input: &Path, output: &Path, dpi: u32, quality: u8) -> pw_core::PwResult<OperationResult> {
+    run(Operation::Optimize {
+        input: input.into(),
+        images: Some(pw_core::ops::ImageReduce { max_dpi: dpi, quality }),
+        output: output.into(),
+    })
+}
+
+#[test]
+fn images_shown_above_the_target_are_resampled_and_the_rest_kept() {
+    let src = fixture("photo-heavy.pdf");
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("small.pdf");
+    let r = optimize_images(&src, &out, 150, 75).expect("optimize");
+    assert_eq!(r.data["images_reduced"], 3, "{}", r.data);
+    assert_eq!(r.data["images_kept"], 1, "the CMYK image is not supported: {}", r.data);
+    let (before, after) = (r.data["bytes_before"].as_u64().expect("b"), r.data["bytes_after"].as_u64().expect("a"));
+    assert!(after * 5 < before * 2, "at least 60% smaller: {before} -> {after}");
+    assert_eq!(texts(&out), texts(&src));
+
+    let old = images_in(&src);
+    let new = images_in(&out);
+    let dims = |v: &[(i64, i64, String, String, String)]| v.iter().map(|i| (i.0, i.1)).collect::<Vec<_>>();
+    // 1500x1000 shown at 5x3.33 in -> 750x500; 500x500 with alpha at 2 in -> 300x300 (and its mask);
+    // 700x700 gray drawn through a form scaled to 2 in -> 300x300; CMYK 600x400 and the annotation's
+    // 800x800 image unchanged.
+    let mut want = vec![(300, 300), (300, 300), (300, 300), (600, 400), (750, 500), (800, 800)];
+    want.sort();
+    assert_eq!(dims(&new), want, "{new:?}");
+    for kept in old.iter().filter(|i| (i.0, i.1) == (600, 400) || (i.0, i.1) == (800, 800)) {
+        assert!(new.contains(kept), "image {}x{} kept byte for byte", kept.0, kept.1);
+    }
+    for changed in new.iter().filter(|i| i.0 == 300 || i.0 == 750) {
+        let mask = changed.3 == "DeviceGray" && changed.2 == "FlateDecode";
+        assert!(mask || changed.2 == "DCTDecode", "{changed:?}");
+    }
+}
+
+#[test]
+fn lossless_mode_never_touches_images_and_a_second_pass_explains() {
+    let src = fixture("photo-heavy.pdf");
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("lossless.pdf");
+    let r = optimize(&src, &out).expect("optimize");
+    assert_eq!(r.data["images_reduced"], 0);
+    let hashes = |p: &Path| images_in(p).into_iter().map(|i| i.4).collect::<Vec<_>>();
+    assert_eq!(hashes(&out), hashes(&src), "image data unchanged (decoded)");
+
+    let small = dir.path().join("small.pdf");
+    optimize_images(&src, &small, 150, 75).expect("first");
+    let again = dir.path().join("again.pdf");
+    let e = optimize_images(&small, &again, 150, 75).expect_err("nothing left");
+    assert_eq!(e.code, "optimize.not_smaller");
+    assert!(e.action.contains("resolution"), "{e:?}");
+    assert!(!again.exists());
+}
+
+#[test]
+fn out_of_range_image_settings_are_refused() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("o.pdf");
+    for (dpi, q) in [(10, 75), (5000, 75), (150, 5), (150, 100)] {
+        assert!(optimize_images(&fixture("photo-heavy.pdf"), &out, dpi, q).is_err(), "{dpi} dpi, quality {q}");
+    }
+    assert!(!out.exists());
 }

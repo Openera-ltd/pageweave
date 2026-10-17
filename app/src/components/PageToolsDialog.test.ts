@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { UNIT_PT, displayedSize, expandStamp, stampCharsOk } from "./PageToolsDialog";
+import { IMAGE_PRESETS, UNIT_PT, displayedSize, expandStamp, stampCharsOk } from "./PageToolsDialog";
 
 describe("stamp preview", () => {
   it("expands the template like the engine", () => {
@@ -26,5 +26,17 @@ describe("crop helpers", () => {
     expect(displayedSize({ width_pt: 612, height_pt: 792, rotation: 0 })).toEqual([612, 792]);
     expect(displayedSize({ width_pt: 612, height_pt: 792, rotation: 90 })).toEqual([792, 612]);
     expect(displayedSize({ width_pt: 612, height_pt: 792, rotation: 270 })).toEqual([792, 612]);
+  });
+});
+
+describe("image reduction presets", () => {
+  it("stay inside the engine's accepted ranges (pw-core MIN/MAX_IMAGE_DPI, MIN/MAX_JPEG_QUALITY)", () => {
+    expect(IMAGE_PRESETS.map((p) => p.id)).toEqual(["screen", "standard", "print"]);
+    for (const p of IMAGE_PRESETS) {
+      expect(p.max_dpi).toBeGreaterThanOrEqual(36);
+      expect(p.max_dpi).toBeLessThanOrEqual(1200);
+      expect(p.quality).toBeGreaterThanOrEqual(30);
+      expect(p.quality).toBeLessThanOrEqual(95);
+    }
   });
 });

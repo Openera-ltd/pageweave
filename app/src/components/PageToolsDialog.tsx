@@ -64,6 +64,13 @@ const ANGLES: Array<[number, string]> = [
 
 const DPI_CHOICES = [72, 96, 150, 300, 600];
 
+/** Image reduction presets for "Reduce file size": resolution and JPEG quality. */
+export const IMAGE_PRESETS: Array<{ id: string; label: string; max_dpi: number; quality: number }> = [
+  { id: "screen", label: "Screen (96 dpi)", max_dpi: 96, quality: 60 },
+  { id: "standard", label: "Standard (150 dpi)", max_dpi: 150, quality: 75 },
+  { id: "print", label: "Print (300 dpi)", max_dpi: 300, quality: 85 },
+];
+
 const POSITIONS: Array<[StampPosition, string]> = [
   ["bottom_center", "Bottom center"],
   ["bottom_right", "Bottom right"],
@@ -129,6 +136,8 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   const [allPages, setAllPages] = useState(ALL_PAGES_TOOLS.includes(tool) && !initialPages);
   const [includeTextPages, setIncludeTextPages] = useState(false);
   const [dpi, setDpi] = useState(150);
+  const [reduceImages, setReduceImages] = useState(false);
+  const [imagePreset, setImagePreset] = useState("standard");
   /** Tools that write several files into a folder rather than one new PDF. */
   const toFolder = tool === "split" || tool === "images";
   const [stampText, setStampText] = useState("Page {page} of {total}");
@@ -253,8 +262,10 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
           digits: digitsN,
           output,
         };
-      case "optimize":
-        return { op: "optimize", input: doc.path, output };
+      case "optimize": {
+        const p = IMAGE_PRESETS.find((x) => x.id === imagePreset) ?? IMAGE_PRESETS[1]!;
+        return { op: "optimize", input: doc.path, images: reduceImages ? { max_dpi: p.max_dpi, quality: p.quality } : null, output };
+      }
       case "text":
         return { op: "export_text", input: doc.path, pages: allPages ? null : pages, output };
       case "crop":
@@ -517,8 +528,30 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
 
       {tool === "optimize" && (
         <p className="hint" style={{ marginTop: 0 }}>
-          Saves a smaller copy that looks and reads exactly the same: data is packed more tightly and repeated parts are stored once. Images are not changed.
+          Saves a smaller copy: data is packed more tightly and repeated parts are stored once. Text and drawings are never changed.
         </p>
+      )}
+
+      {tool === "optimize" && (
+        <div className="field">
+          <label className="row">
+            <input type="checkbox" checked={reduceImages} onChange={(e) => setReduceImages(e.target.checked)} data-testid="optimize-images" /> Reduce image resolution
+          </label>
+          {reduceImages ? (
+            <>
+              <select id="optimize-preset" className="select" aria-label="Image resolution" value={imagePreset} onChange={(e) => setImagePreset(e.target.value)}>
+                {IMAGE_PRESETS.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+              <span className="hint">Images shown above this resolution are resampled and stored as JPEG; some detail is lost.</span>
+            </>
+          ) : (
+            <span className="hint">Off: every image keeps its exact data.</span>
+          )}
+        </div>
       )}
 
       {tool === "ocr" && (

@@ -1142,6 +1142,34 @@ await test("reduce file size: tab menu and palette; smaller verified copy with t
   assert(!existsSync(again), "nothing written");
 });
 
+await test("reduce file size with image resolution: preset applied; images resampled; text kept", async () => {
+  const src = join(FIX, "photo-heavy.pdf");
+  const out = join(work, "photo-smaller.pdf");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Reduce file size");
+    await s.click('[role="option"][data-command="file.reduceSize"]');
+    await s.waitFor('[data-testid="optimize-images"]');
+    assert((await s.exec("return document.querySelector('#optimize-preset')")) === null, "preset hidden while off");
+    await s.click('[data-testid="optimize-images"]');
+    await s.waitFor("#optimize-preset");
+    assert((await s.exec("return document.querySelector('#optimize-preset').value")) === "standard", "standard by default");
+    await s.click('#optimize-preset option[value="screen"]');
+    await s.type("#output", out);
+    await axeCheck(s, "reduce-size-images-dialog");
+    writeFileSync(join(ART, "reduce-size-images-dialog.png"), await s.screenshot());
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved photo-smaller.pdf") && /% smaller/.test(t)), "saved notice");
+  });
+  assert(statSync(out).size * 3 < statSync(src).size, `at least two thirds smaller (${statSync(src).size} -> ${statSync(out).size})`);
+  if (CLI) {
+    const t = JSON.parse(execFileSync(CLI, ["--json", "text", out], { encoding: "utf8" }));
+    const all = t.result.data.pages.map((p) => p.text).join(" ");
+    for (const m of ["PWPHOTO1", "PWPHOTO2", "PWPHOTO3", "PWPHOTO4"]) assert(all.includes(m), `${m} kept`);
+  }
+});
+
 await test("protect with password: AES-256 copy needs the password; wrong password refused; content intact", async () => {
   const src = join(FIX, "five-pages.pdf");
   const before = sha(src);

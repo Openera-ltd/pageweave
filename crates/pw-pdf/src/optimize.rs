@@ -17,7 +17,7 @@ use pdfium_render::prelude::*;
 use pw_core::output::{write_atomic_bytes, CollisionPolicy, CommittedOutput};
 use pw_core::{ErrorCategory, PwError, PwResult};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io::Read;
 use std::path::Path;
 
@@ -27,6 +27,13 @@ const MAX_DECODED: usize = 256 * 1024 * 1024;
 const CHECK_PIXELS: f32 = 1000.0;
 /// Rounding differences allowed per colour channel between the two renders.
 const MAX_CHANNEL_DELTA: u8 = 2;
+/// Pages showing a resampled image: largest mean colour difference allowed between the renders,
+/// and largest share of pixels allowed to differ strongly (more than 64 in some channel). Measured
+/// on photo-heavy.pdf at the lowest allowed setting (36 dpi, quality 30): mean 1.0, share 0.03%;
+/// 150 dpi / quality 75: mean 0.11, share 0. Wrong image data or placement is far above both.
+const LOSSY_MEAN_DELTA: f64 = 4.0;
+const LOSSY_BIG_SHARE: f64 = 0.01;
+const LOSSY_BIG_DELTA: u8 = 64;
 /// Passes of duplicate merging (merging fonts' files can make the font dictionaries identical).
 const DEDUPE_PASSES: usize = 3;
 
@@ -38,6 +45,10 @@ pub struct OptimizeSummary {
     pub streams_recompressed: u32,
     pub duplicates_merged: u32,
     pub unused_removed: u32,
+    /// Images resampled (only when image reduction was asked for).
+    pub images_reduced: u32,
+    /// Images above the target resolution left as they are (unsupported layout or unknown use).
+    pub images_kept: u32,
 }
 
 fn fail(what: &str) -> PwError {
@@ -226,10 +237,24 @@ fn render(page: &PdfPage) -> PwResult<image::RgbaImage> {
 
 /// The copy is the same document: pages look and read the same; annotations, bookmarks and
 /// attachments are all there.
+/// Mean colour difference and share of strongly different pixels between two renders.
+fn diff_stats(a: &image::RgbaImage, b: &image::RgbaImage) -> (f64, f64) {
+    let (mut sum, mut big, mut n) = (0u64, 0u64, 0u64);
+    for (p, q) in a.pixels().zip(b.pixels()) {
+        let d = [p.0[0].abs_diff(q.0[0]), p.0[1].abs_diff(q.0[1]), p.0[2].abs_diff(q.0[2])];
+        sum += d.iter().map(|&x| u64::from(x)).sum::<u64>();
+        big += u64::from(d.iter().any(|&x| x > LOSSY_BIG_DELTA));
+        n += 1;
+    }
+    let n = n.max(1) as f64;
+    (sum as f64 / (3.0 * n), big as f64 / n)
+}
+
 fn check_same(
     pdfium: &Pdfium,
     source: &PdfDocument,
     bytes: &[u8],
+    lossy_pages: &BTreeSet<u32>,
     cancelled: &dyn Fn() -> bool,
     progress: &dyn Fn(u64, u64),
 ) -> PwResult<()> {
@@ -259,7 +284,12 @@ fn check_same(
         }
         let (ra, rb) = (render(&a)?, render(&b)?);
         let same = ra.dimensions() == rb.dimensions()
-            && ra.pixels().zip(rb.pixels()).all(|(p, q)| (0..3).all(|c| p.0[c].abs_diff(q.0[c]) <= MAX_CHANNEL_DELTA));
+            && if lossy_pages.contains(&(i as u32 + 1)) {
+                let (mean, big) = diff_stats(&ra, &rb);
+                mean <= LOSSY_MEAN_DELTA && big <= LOSSY_BIG_SHARE
+            } else {
+                ra.pixels().zip(rb.pixels()).all(|(p, q)| (0..3).all(|c| p.0[c].abs_diff(q.0[c]) <= MAX_CHANNEL_DELTA))
+            };
         if !same {
             return Err(fail(&format!("page {} no longer looks the same", i + 1)));
         }
@@ -271,6 +301,7 @@ fn check_same(
 pub fn optimize(
     input: &Path,
     opts: &OpenOptions,
+    images: Option<pw_core::ops::ImageReduce>,
     output: &Path,
     policy: CollisionPolicy,
     cancelled: &dyn Fn() -> bool,
@@ -289,6 +320,13 @@ pub fn optimize(
     let earlier = has_earlier_versions(&raw);
 
     let mut summary = OptimizeSummary { bytes_before: raw.len() as u64, ..Default::default() };
+    let mut lossy_pages = BTreeSet::new();
+    if let Some(r) = images {
+        let d = crate::downsample::downsample(&mut doc, r.max_dpi as f32, r.quality, cancelled)?;
+        summary.images_reduced = d.reduced;
+        summary.images_kept = d.kept;
+        lossy_pages = d.pages;
+    }
     for o in doc.objects.values_mut() {
         if let Object::Stream(s) = o {
             if cancelled() {
@@ -320,12 +358,16 @@ pub fn optimize(
             "optimize.not_smaller",
             "This file is already compact; a rewritten copy would not be smaller, so nothing was saved.",
         )
-        .with_action("Images are kept exactly as they are; their quality is what decides the size of this file."));
+        .with_action(if images.is_some() {
+            "Its images are already at or below the chosen resolution."
+        } else {
+            "Images were kept exactly as they are; try again with “Reduce image resolution”."
+        }));
     }
     if has_earlier_versions(&bytes) {
         return Err(fail("an earlier version remains"));
     }
-    check_same(&pdfium, &source, &bytes, cancelled, progress)?;
+    check_same(&pdfium, &source, &bytes, &lossy_pages, cancelled, progress)?;
 
     let protected_sources = [input.to_path_buf()];
     let c = write_atomic_bytes(output, policy, &protected_sources, &bytes, |staged| {

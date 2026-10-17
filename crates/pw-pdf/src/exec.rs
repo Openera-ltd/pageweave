@@ -284,13 +284,14 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(w);
             (vec![out(&c, Some(n))], json!({ "page_count": n, "removed": removed }))
         }
-        Operation::Optimize { input, output } => {
+        Operation::Optimize { input, images, output } => {
             let page_progress = |done: u64, total: u64| {
                 if let Some(c) = ctx {
                     c.set_progress(done, total, "pages");
                 }
             };
-            let (c, sum, w) = crate::optimize::optimize(input, &opts, output, policy, &cancelled, &page_progress)?;
+            let (c, sum, w) =
+                crate::optimize::optimize(input, &opts, *images, output, policy, &cancelled, &page_progress)?;
             warnings.extend(w);
             (
                 vec![out(&c, None)],
@@ -300,6 +301,8 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
                     "streams_recompressed": sum.streams_recompressed,
                     "duplicates_merged": sum.duplicates_merged,
                     "unused_removed": sum.unused_removed,
+                    "images_reduced": sum.images_reduced,
+                    "images_kept": sum.images_kept,
                 }),
             )
         }

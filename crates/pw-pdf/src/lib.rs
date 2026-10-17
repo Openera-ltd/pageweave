@@ -11,6 +11,7 @@
 mod attachments;
 mod content_ops;
 mod document;
+mod downsample;
 mod edit;
 mod exec;
 mod forms;

@@ -199,7 +199,7 @@ fn text(o: &Object) -> String {
 }
 
 /// Name token from a content stream (`/Name#20x`) as a dictionary key.
-fn decode_name(tok: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn decode_name(tok: &[u8]) -> Option<Vec<u8>> {
     let n = tok.strip_prefix(b"/")?;
     let mut out = Vec::with_capacity(n.len());
     let mut i = 0;

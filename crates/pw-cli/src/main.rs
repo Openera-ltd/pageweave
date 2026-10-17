@@ -197,6 +197,12 @@ enum Command {
         file: PathBuf,
         #[arg(short, long)]
         output: PathBuf,
+        /// Also resample images shown above this resolution (lossy), e.g. 150.
+        #[arg(long)]
+        image_dpi: Option<u32>,
+        /// JPEG quality for resampled images (30–95).
+        #[arg(long, default_value_t = 75)]
+        image_quality: u8,
     },
     /// Add a text watermark, centred on each page, in a new file.
     Watermark {
@@ -413,7 +419,11 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
             }
             _ => return Err(PwError::invalid("attach.output", "Give -o with --save or --add.")),
         },
-        Command::Optimize { file, output } => Operation::Optimize { input: file.clone(), output: output.clone() },
+        Command::Optimize { file, output, image_dpi, image_quality } => Operation::Optimize {
+            input: file.clone(),
+            images: image_dpi.map(|max_dpi| pw_core::ops::ImageReduce { max_dpi, quality: *image_quality }),
+            output: output.clone(),
+        },
         Command::Crop { file, output, pages, top, right, bottom, left, unit } => {
             let k = match unit.as_str() {
                 "pt" => 1.0,

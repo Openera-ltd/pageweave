@@ -180,6 +180,28 @@ fn optimize_reports_sizes_and_refuses_a_second_pass() {
 }
 
 #[test]
+fn optimize_image_flags_resample_and_bad_values_are_usage_errors() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("photos.pdf");
+    let r = bin()
+        .args(["--json", "optimize", "--image-dpi", "150", "--image-quality", "70", "-o"])
+        .arg(&out)
+        .arg(fixture("photo-heavy.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert_eq!(json(&r)["result"]["data"]["images_reduced"], 3);
+    let bad = bin()
+        .args(["--json", "optimize", "--image-dpi", "5000", "-o"])
+        .arg(dir.path().join("x.pdf"))
+        .arg(fixture("photo-heavy.pdf"))
+        .output()
+        .expect("run");
+    assert_eq!(bad.status.code(), Some(2), "out-of-range resolution is invalid input");
+    assert_eq!(json(&bad)["error"]["code"], "optimize.dpi");
+}
+
+#[test]
 fn text_saves_a_file_with_output_and_prints_without() {
     let dir = tempfile::tempdir().expect("tmp");
     let out = dir.path().join("five.txt");
