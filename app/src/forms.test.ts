@@ -1,0 +1,49 @@
+import { describe, expect, it } from "vitest";
+import { currentValue, fieldLabel, isFillable, missingRequired, originalValue, setEdit, toFieldValues } from "./forms";
+import type { FormField } from "./types";
+
+const base = { label: null, value: null, options: [], read_only: false, required: false, multiline: false, editable: false };
+const w = (checked = false, export_value: string | null = null) => ({ page: 0, rect: { left: 0, bottom: 0, right: 10, top: 10 }, export_value, checked });
+const text: FormField = { ...base, name: "full_name", kind: "text", value: "Ada", widgets: [w()] };
+const box: FormField = { ...base, name: "subscribe", kind: "checkbox", widgets: [w(false, "On")] };
+const radio: FormField = { ...base, name: "plan", kind: "radio", widgets: [w(true, "basic"), w(false, "pro")] };
+const sig: FormField = { ...base, name: "sig", kind: "signature", widgets: [w()] };
+
+describe("form edits", () => {
+  it("derives original values per kind", () => {
+    expect(originalValue(text)).toBe("Ada");
+    expect(originalValue(box)).toBe(false);
+    expect(originalValue(radio)).toBe("basic");
+  });
+
+  it("tracks only real changes and drops edits set back to the original", () => {
+    let e = setEdit({}, text, "Grace");
+    e = setEdit(e, box, true);
+    expect(e).toEqual({ full_name: "Grace", subscribe: true });
+    e = setEdit(e, text, "Ada");
+    expect(e).toEqual({ subscribe: true });
+    expect(currentValue(e, text)).toBe("Ada");
+    expect(currentValue(e, box)).toBe(true);
+  });
+
+  it("builds engine values in field order and never sends unfillable or read-only fields", () => {
+    const ro: FormField = { ...text, name: "locked", read_only: true };
+    const e = { subscribe: true, full_name: "Grace", sig: "x", locked: "y", gone: "z" };
+    expect(toFieldValues(e, [text, box, sig, ro])).toEqual([
+      { name: "full_name", value: "Grace" },
+      { name: "subscribe", value: true },
+    ]);
+    expect(isFillable(sig)).toBe(false);
+  });
+
+  it("reports required fields left empty", () => {
+    const req: FormField = { ...text, name: "email", value: "", required: true };
+    expect(missingRequired({}, [req, text]).map((f) => f.name)).toEqual(["email"]);
+    expect(missingRequired({ email: "a@b.c" }, [req])).toEqual([]);
+  });
+
+  it("labels fields by /TU, else a readable name", () => {
+    expect(fieldLabel({ ...text, label: "Full name" })).toBe("Full name");
+    expect(fieldLabel({ ...text, name: "address.post_code" })).toBe("address post code");
+  });
+});

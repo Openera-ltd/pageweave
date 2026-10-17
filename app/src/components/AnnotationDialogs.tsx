@@ -52,7 +52,7 @@ export function NoteDialog({ page, onAdd, onCancel }: { page: number; onAdd: (te
 }
 
 /**
- * Asked before closing a document (or the app) that has unsaved annotations. The safe choice,
+ * Asked before closing a document (or the app) that has unsaved changes (annotations, form fields). The safe choice,
  * Save, has initial focus; Discard is never the default.
  */
 export function UnsavedDialog({
@@ -63,7 +63,7 @@ export function UnsavedDialog({
   onDiscard,
   onCancel,
 }: {
-  /** Documents with unsaved annotations. */
+  /** Documents with unsaved changes. */
   names: string[];
   count: number;
   /** Saving from here is offered only for a single document. */
@@ -75,7 +75,7 @@ export function UnsavedDialog({
   const one = names.length === 1;
   return (
     <Dialog
-      title="Unsaved annotations"
+      title="Unsaved changes"
       onClose={onCancel}
       initialFocus={canSave ? '[data-testid="unsaved-save"]' : '[data-testid="unsaved-cancel"]'}
       footer={
@@ -97,16 +97,16 @@ export function UnsavedDialog({
       <p style={{ marginTop: 0 }}>
         {one ? (
           <>
-            <strong>{names[0]}</strong> has {count} unsaved annotation{count === 1 ? "" : "s"}.
+            <strong>{names[0]}</strong> has {count} unsaved change{count === 1 ? "" : "s"}.
           </>
         ) : (
           <>
-            {names.length} documents have {count} unsaved annotations: {names.join(", ")}.
+            {names.length} documents have {count} unsaved changes: {names.join(", ")}.
           </>
         )}
       </p>
       <p className="hint" style={{ marginBottom: 0 }}>
-        {canSave ? "Save them to a copy of the PDF, or discard them." : "Cancel to save each document’s annotations first, or discard them all."}
+        {canSave ? "Save them to a copy of the PDF, or discard them." : "Cancel to save each document’s changes first, or discard them all."}
       </p>
     </Dialog>
   );

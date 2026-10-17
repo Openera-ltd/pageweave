@@ -12,6 +12,7 @@ import type {
   JobSnapshot,
   OpenedDoc,
   OperationRequest,
+  FormInfo,
   PageText,
   RecoveredJob,
   SearchHit,
@@ -54,6 +55,7 @@ export interface Api {
   markTiming(name: "ui_ready" | "first_page"): Promise<number | null>;
   /** Jobs interrupted when the app last closed (returned once). */
   recoveredJobs(): Promise<RecoveredJob[]>;
+  formFields(docId: number): Promise<FormInfo>;
 }
 
 export const tauriApi: Api = {
@@ -92,6 +94,7 @@ export const tauriApi: Api = {
   quitApp: () => invoke("quit_app"),
   markTiming: (name) => invoke("mark_timing", { name }),
   recoveredJobs: () => invoke("recovered_jobs"),
+  formFields: (docId) => invoke("form_fields", { docId }),
   copyText: async (text) => {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(text);

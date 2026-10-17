@@ -67,6 +67,8 @@ export interface DocumentInfo {
   author: string | null;
   encrypted: boolean;
   has_xfa: boolean;
+  /** "none", "acrobat", "xfa_full", "xfa_foreground". */
+  form_type?: string;
   pages: PageInfo[];
   bookmarks: BookmarkInfo[];
   warnings: string[];
@@ -126,13 +128,50 @@ export interface AnnotationSpec {
   contents?: string | null;
 }
 
+export type FieldKind = "text" | "checkbox" | "radio" | "combo" | "list" | "push_button" | "signature" | "unknown";
+
+export interface FormWidget {
+  page: number;
+  rect: SearchRect;
+  export_value: string | null;
+  checked: boolean;
+}
+
+export interface FormField {
+  name: string;
+  label: string | null;
+  kind: FieldKind;
+  value: string | null;
+  options: string[];
+  read_only: boolean;
+  required: boolean;
+  multiline: boolean;
+  editable: boolean;
+  widgets: FormWidget[];
+}
+
+export interface FormInfo {
+  fields: FormField[];
+  has_xfa: boolean;
+  truncated: boolean;
+}
+
+/** true/false for checkboxes; text for text, choice and radio (export value) fields. */
+export type FormValue = boolean | string;
+
+export interface FieldValue {
+  name: string;
+  value: FormValue;
+}
+
 export type Operation =
   | { op: "extract_pages"; input: string; pages: string; output: string }
   | { op: "delete_pages"; input: string; pages: string; output: string }
   | { op: "rotate_pages"; input: string; pages: string | null; degrees: number; output: string }
   | { op: "merge"; inputs: string[]; output: string }
   | { op: "split"; input: string; split: SplitMode; output_dir: string }
-  | { op: "annotate"; input: string; annotations: AnnotationSpec[]; output: string };
+  | { op: "annotate"; input: string; annotations: AnnotationSpec[]; output: string }
+  | { op: "apply_edits"; input: string; form_values: FieldValue[]; annotations: AnnotationSpec[]; output: string };
 
 export interface RecoveredJob {
   label: string;

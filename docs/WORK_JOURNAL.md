@@ -86,3 +86,9 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - Test-harness fix: `axeCheck` could sample a just-mounted notice mid-fade (contrast 3.66 at 50% opacity); it now waits two frames and requires two settled checks, and reports axe's measured colours.
 - CI run #11 (`91a7c48`): Linux (incl. E2E 33/33), Windows tests + installer smoke, gitleaks, cargo-deny green; first Windows E2E still running at the time of writing (>8 min vs ~90 s locally) — read its log next.
 - Local totals: Rust 90, UI unit 32, E2E 35/35, audit 39/39.
+
+## 2026-10-17 — Session 1, checkpoints 16–18: forms, Windows E2E diagnosis
+- Forms (`ffd5549`, `e2e6462`, this checkpoint): engine reads/fills AcroForms through PDFium's form filler (decision D-006: one audited FFI module, `unsafe_code` denied elsewhere, enforced by a test; engine-wide shared/exclusive lock with a lock-order guard). Typed ops `form_fields`, `fill_form`, `apply_edits`; CLI `pageweave fields`. App: native controls over widgets, edits counted as unsaved changes with annotations, Ctrl+S saves everything into one verified copy and the tab switches to it.
+- Windows E2E (`5130c46`, `0ac5e86`): every WebDriver session timed out. Diagnostic on the runner: the *debug* build starts but its web UI never loads (no ui_ready, no WebView2 DevTools) while the installed *release* build reaches ui_ready in 5.4 s and renders the first page. Windows E2E now runs the release build. **Open investigation:** why the debug build's UI does not load on the Windows runner.
+- CI toolchain moved to Rust 1.99 (new clippy lint caught in tests); local toolchain updated to match.
+- Local totals: Rust 101, UI unit 37, E2E 36/36, audit 39/39.

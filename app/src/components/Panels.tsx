@@ -224,8 +224,8 @@ export function StatusBar({
           {doc.info.encrypted && <span title="This document is password protected">Protected</span>}
           <span aria-live="polite">
             {unsaved > 0 && (
-              <button type="button" className="btn link" data-testid="unsaved" title="Save annotated copy (Ctrl+S)" onClick={() => onSaveAnnotations?.()}>
-                {unsaved} unsaved annotation{unsaved === 1 ? "" : "s"}
+              <button type="button" className="btn link" data-testid="unsaved" title="Save a copy with changes (Ctrl+S)" onClick={() => onSaveAnnotations?.()}>
+                {unsaved} unsaved change{unsaved === 1 ? "" : "s"}
               </button>
             )}
           </span>

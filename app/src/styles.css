@@ -629,6 +629,48 @@ textarea {
   height: 70%;
 }
 
+/* Form fields: native controls over the page's widgets (on top of the text layer). */
+.formlayer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+
+.formlayer .pw-field {
+  position: absolute;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0 3px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 9%, white);
+  color: #111;
+  font-family: Helvetica, Arial, sans-serif;
+  line-height: 1.15;
+  resize: none;
+}
+
+.formlayer textarea.pw-field {
+  padding-top: 2px;
+}
+
+.formlayer .pw-field.check {
+  padding: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.formlayer .pw-field:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.formlayer .pw-field:disabled {
+  background: color-mix(in srgb, #888 10%, white);
+  cursor: not-allowed;
+}
+
 .page .hit {
   position: absolute;
   background: var(--hit);

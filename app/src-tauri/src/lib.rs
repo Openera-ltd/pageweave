@@ -115,6 +115,13 @@ async fn page_text(state: State<'_, AppState>, doc_id: DocId, page: u32) -> CmdR
     .await
 }
 
+/// AcroForm fields of an open document. Runs on a worker thread.
+#[tauri::command]
+async fn form_fields(state: State<'_, AppState>, doc_id: DocId) -> CmdResult<pw_pdf::FormInfo> {
+    let doc = state.doc(doc_id)?;
+    blocking(move || pw_pdf::form_fields(&doc.path, doc.password.as_deref())).await
+}
+
 /// Start an operation as a job. When `doc_id` is given, its password is supplied by the host so
 /// the UI never has to hold it. Returns the job ID; progress arrives as `job-update` events.
 #[tauri::command]
@@ -291,6 +298,7 @@ pub fn run() {
             quit_app,
             mark_timing,
             recovered_jobs,
+            form_fields,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PageWeave");

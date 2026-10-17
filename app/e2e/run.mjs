@@ -670,7 +670,7 @@ await test("annotate: highlight/underline/strike/note from selection and menus; 
     await s.click('[role="menuitem"][data-command="annotate.highlight"]');
     await s.waitUntil(async () => (await annotCount(s, "highlight")) === 1, "highlight drawn");
     assert((await selection(s)) === "", "selection cleared so the highlight is visible");
-    await s.waitUntil(async () => (await unsavedText(s)) === "1 unsaved annotation", "status bar counts it");
+    await s.waitUntil(async () => (await unsavedText(s)) === "1 unsaved change", "status bar counts it");
     // The overlay covers the word it was made from.
     const cover = await s.exec(`const a=document.querySelector('.annot.highlight').getBoundingClientRect(); const t=document.querySelector('[data-e2e=target]').getBoundingClientRect();
       return [a.left, a.right, a.top, a.bottom, t.left, t.right, t.top, t.bottom]`);
@@ -706,7 +706,7 @@ await test("annotate: highlight/underline/strike/note from selection and menus; 
     await axeCheck(s, "note-dialog");
     await s.keys(["Control", "Enter"]);
     await s.waitUntil(async () => (await annotCount(s, "note")) === 1, "note marker drawn");
-    await s.waitUntil(async () => (await unsavedText(s)) === "4 unsaved annotations", "four unsaved");
+    await s.waitUntil(async () => (await unsavedText(s)) === "4 unsaved changes", "four unsaved changes");
     await axeCheck(s, "viewer-with-annotations");
     writeFileSync(join(ART, "annotations-pending.png"), await s.screenshot());
 
@@ -714,7 +714,7 @@ await test("annotate: highlight/underline/strike/note from selection and menus; 
     await s.keys(["Control", "s"]);
     await s.waitFor("#output");
     assert((await s.exec("return document.querySelector('#output').value")).endsWith("single-page-annotated.pdf"), "default output name");
-    assert((await s.text('[role="dialog"] h2')) === "Save annotated copy", "save dialog title");
+    assert((await s.text('[role="dialog"] h2')) === "Save a copy with your changes", "save dialog title");
     await s.type("#output", out);
     await s.click('[data-testid="tool-start"]');
     await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved annotated.pdf")), "saved notice");
@@ -751,9 +751,9 @@ await test("unsaved annotations: closing the tab asks (Save focused); Cancel kee
     // Discard from the command palette, then undo the discard from its notice.
     await s.keys(["Control", "k"]);
     await s.type('[role="dialog"] input', "Discard unsaved");
-    await s.click('[role="option"][data-command="annotate.discard"]');
+    await s.click('[role="option"][data-command="edit.discardChanges"]');
     await s.waitUntil(async () => (await annotCount(s)) === 0, "discarded");
-    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.startsWith("Discarded 1 annotation")), "discard notice");
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.startsWith("Discarded 1 change")), "discard notice");
     await s.click('.notice button[data-action="Undo"]');
     await s.waitUntil(async () => (await annotCount(s, "highlight")) === 1, "discard undone");
 
@@ -794,7 +794,7 @@ await test("window close: clean app closes at once; unsaved annotations ask firs
     await highlightMarker(s);
     wmClose();
     await s.waitFor('[data-testid="unsaved-save"]');
-    assert((await s.exec("return document.querySelector('[role=dialog] p').textContent")).includes("1 unsaved annotation"), "prompt names the count");
+    assert((await s.exec("return document.querySelector('[role=dialog] p').textContent")).includes("1 unsaved change"), "prompt names the count");
     await s.click('[data-testid="unsaved-cancel"]');
     await s.waitUntil(async () => (await s.exec("return !document.querySelector('[role=dialog]')")) === true, "prompt closed");
     assert((await annotCount(s, "highlight")) === 1, "Cancel keeps the app and the annotation");
@@ -884,6 +884,59 @@ await test("interrupted task: reported at next start with its partial file remov
   assert(existsSync(out), "output saved by Run again");
   const n = pdfPages(out);
   assert(n === null || n === 2, `re-run output has 2 pages (got ${n})`);
+});
+
+await test("forms: fill text, checkbox, radio, choice and multiline; Ctrl+S saves a verified filled copy and the tab switches to it", async () => {
+  const src = join(FIX, "form-fields.pdf");
+  const before = sha(src);
+  const out = join(work, "filled.pdf");
+  const field = (name) => `[data-formlayer="0"] [data-field="${name}"]`;
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.waitFor(field("full_name"));
+    assert((await s.attr(field("full_name"), "aria-label")) === "Full name", "field is labelled by /TU");
+    await s.type(field("full_name"), "Ada Lovelace");
+    await s.click(field("subscribe"));
+    await s.click(`${field("plan")}[value="pro"]`);
+    await s.click(`${field("country")} option[value="Japan"]`);
+    await s.type(field("comments"), "Line one");
+    await s.typeKeys("\nLine two");
+    const state = () =>
+      s.exec(`const q = (n) => document.querySelector('[data-formlayer="0"] [data-field="' + n + '"]');
+        return [q('full_name').value, q('subscribe').checked, document.querySelector('[data-field="plan"][value="pro"]').checked, q('country').value, q('comments').value]`);
+    const want = JSON.stringify(["Ada Lovelace", true, true, "Japan", "Line one\nLine two"]);
+    assert(JSON.stringify(await state()) === want, `controls hold the edits (${JSON.stringify(await state())})`);
+    await s.waitUntil(async () => (await unsavedText(s)) === "5 unsaved changes", "five unsaved changes");
+    await axeCheck(s, "form-fields");
+    writeFileSync(join(ART, "form-filled.png"), await s.screenshot());
+
+    // Closing the tab with field edits asks first.
+    await s.keys(["Control", "w"]);
+    await s.waitFor('[data-testid="unsaved-cancel"]');
+    await s.click('[data-testid="unsaved-cancel"]');
+
+    // Ctrl+S from inside a field opens the save dialog.
+    await s.click(field("full_name"));
+    await s.keys(["Control", "s"]);
+    await s.waitFor("#output");
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("form-fields-filled.pdf"), "default output name");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved filled.pdf")), "saved notice");
+    // Save As semantics: the tab now shows the saved copy, with its own (filled) values and no pending changes.
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('.tab-label[aria-current=page] .name')?.textContent")) === "filled.pdf", "tab switched to the copy");
+    await s.waitFor(field("full_name"));
+    await s.waitUntil(async () => JSON.stringify(await state()).replace(/\\r/g, "") === want, "saved copy shows the filled values");
+    assert((await unsavedText(s)) === "", "no unsaved changes after saving");
+  });
+  assert(existsSync(out), "filled copy exists");
+  assert(sha(src) === before, "source PDF unchanged");
+  if (CLI) {
+    const listing = execFileSync(CLI, ["fields", out], { encoding: "utf8" });
+    for (const needle of ['full_name  (text) = "Ada Lovelace"', "subscribe  (checkbox) = checked", "options: basic [pro]", 'country  (combo) = "Japan"']) {
+      assert(listing.includes(needle), `CLI sees "${needle}" in the saved file:\n${listing}`);
+    }
+  }
 });
 
 /* ------------------------------------------------------------------ */

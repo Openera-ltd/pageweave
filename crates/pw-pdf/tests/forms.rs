@@ -97,6 +97,7 @@ fn reads_every_field_of_the_fixture() {
     assert_eq!(names, ["full_name", "subscribe", "plan", "country", "comments"]);
     let f = |n: &str| info.fields.iter().find(|f| f.name == n).expect(n);
     assert_eq!(f("full_name").kind, FieldKind::Text);
+    assert_eq!(f("full_name").label.as_deref(), Some("Full name"), "/TU is the accessible label");
     assert!(!f("full_name").multiline);
     assert!(f("comments").multiline);
     assert_eq!(f("subscribe").kind, FieldKind::Checkbox);

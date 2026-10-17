@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, FolderOpen, Plus, Trash2 } from "lucide-react";
 import { useApi } from "../api";
 import { basename, dirname, siblingOutput } from "../paths";
-import { toPwError, type AnnotationSpec, type CollisionPolicy, type JobSnapshot, type OpenedDoc, type Operation, type PwError } from "../types";
+import { toPwError, type AnnotationSpec, type CollisionPolicy, type FieldValue, type JobSnapshot, type OpenedDoc, type Operation, type PwError } from "../types";
 import { Dialog, useDebounced } from "./ui";
 
-export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "annotate";
+export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save";
 
 const TITLES: Record<PageTool, string> = {
   extract: "Extract pages",
@@ -13,7 +13,7 @@ const TITLES: Record<PageTool, string> = {
   rotate: "Rotate pages",
   split: "Split document",
   merge: "Combine files",
-  annotate: "Save annotated copy",
+  save: "Save a copy with your changes",
 };
 
 const SUFFIX: Record<PageTool, string> = {
@@ -22,15 +22,16 @@ const SUFFIX: Record<PageTool, string> = {
   rotate: "rotated",
   split: "",
   merge: "combined",
-  annotate: "annotated",
+  save: "edited",
 };
 
 interface Props {
   tool: PageTool;
   doc: OpenedDoc;
   initialPages?: string;
-  /** For the annotate tool: the annotations to write into the copy. */
+  /** For the save tool: pending annotations and changed form values to write into the copy. */
   annotations?: AnnotationSpec[];
+  formValues?: FieldValue[];
   jobs: Record<string, JobSnapshot>;
   onClose: () => void;
   onFinished: (job: JobSnapshot) => void;
@@ -60,12 +61,16 @@ function useRangeCheck(docId: number, spec: string, enabled: boolean): RangeChec
   return check;
 }
 
-export function PageToolsDialog({ tool, doc, initialPages, annotations, jobs, onClose, onFinished }: Props) {
+export function PageToolsDialog({ tool, doc, initialPages, annotations, formValues, jobs, onClose, onFinished }: Props) {
+  const nAnnots = annotations?.length ?? 0;
+  const nFields = formValues?.length ?? 0;
+  // "-annotated" / "-filled" when only one kind of change is saved, "-edited" for both.
+  const suffix = tool === "save" ? (nFields === 0 ? "annotated" : nAnnots === 0 ? "filled" : "edited") : SUFFIX[tool];
   const api = useApi();
   const [pages, setPages] = useState(initialPages ?? (tool === "rotate" ? "" : ""));
   const [allPages, setAllPages] = useState(tool === "rotate" && !initialPages);
   const [degrees, setDegrees] = useState(90);
-  const [output, setOutput] = useState(tool === "split" ? dirname(doc.path) : siblingOutput(doc.path, SUFFIX[tool]));
+  const [output, setOutput] = useState(tool === "split" ? dirname(doc.path) : siblingOutput(doc.path, suffix));
   const [splitMode, setSplitMode] = useState<"every_n" | "ranges">("every_n");
   const [everyN, setEveryN] = useState("1");
   const [ranges, setRanges] = useState("");
@@ -105,7 +110,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, jobs, on
     if (tool === "split" && splitMode === "every_n" && !everyNValid) return `Enter a number from 1 to ${doc.info.page_count}.`;
     if (tool === "split" && splitMode === "ranges" && rangeLines.length === 0) return "Enter one page range per line.";
     if (tool === "merge" && files.length < 2) return "Add at least one more file.";
-    if (tool === "annotate" && !annotations?.length) return "There are no annotations to save.";
+    if (tool === "save" && nAnnots + nFields === 0) return "There are no changes to save.";
     if (!output.trim()) return tool === "split" ? "Choose an output folder." : "Choose where to save the new file.";
     return null;
   })();
@@ -127,11 +132,12 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, jobs, on
         };
       case "merge":
         return { op: "merge", inputs: files, output };
-      case "annotate":
+      case "save":
         // Only the contract fields: UI bookkeeping (ids) stays in the UI.
         return {
-          op: "annotate",
+          op: "apply_edits",
           input: doc.path,
+          form_values: formValues ?? [],
           annotations: (annotations ?? []).map(({ page, kind, rects, color, contents }) => ({ page, kind, rects, color, contents: contents ?? null })),
           output,
         };
@@ -187,9 +193,10 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, jobs, on
 
   return (
     <Dialog title={TITLES[tool]} onClose={onClose} footer={footer} busy={busy} wide={tool === "merge"}>
-      {tool === "annotate" ? (
+      {tool === "save" ? (
         <p className="hint" style={{ marginTop: 0 }}>
-          Adds {annotations?.length ?? 0} annotation{annotations?.length === 1 ? "" : "s"} to a copy of <strong>{doc.name}</strong>. The original file is not changed.
+          Saves {[nFields ? `${nFields} filled field${nFields === 1 ? "" : "s"}` : "", nAnnots ? `${nAnnots} annotation${nAnnots === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ")} into a copy of{" "}
+          <strong>{doc.name}</strong>. The original file is not changed.
         </p>
       ) : (
         tool !== "merge" && (

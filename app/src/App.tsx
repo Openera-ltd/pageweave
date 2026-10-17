@@ -27,12 +27,13 @@ import {
   type AnnotationHistory,
   type PendingAnnotation,
 } from "./annotations";
+import { missingRequired, setEdit, toFieldValues, fieldLabel, type FormEdits } from "./forms";
 import { COMMAND_BY_ID, COMMANDS, commandForShortcut, effectiveBindings, type CommandHandlers, type CommandId } from "./commands";
 import { clampZoom, fitWidthZoom, nextZoom, screenRectToPdf, ZOOM_PRESETS, CSS_PX_PER_PT, displaySizePt } from "./geometry";
 import { basename } from "./paths";
 import { eventToShortcut, isTextEntry } from "./shortcuts";
 import { applyAppearance } from "./theme";
-import { toPwError, type AnnotationKind, type AppInfo, type JobSnapshot, type OpenedDoc, type Operation, type PwError, type RecoveredJob, type SearchHit, type SearchRect, type Settings } from "./types";
+import { toPwError, type AnnotationKind, type AppInfo, type FormField, type FormInfo, type FormValue, type JobSnapshot, type OpenedDoc, type Operation, type PwError, type RecoveredJob, type SearchHit, type SearchRect, type Settings } from "./types";
 import { CommandButton, Menu, type MenuItemOrSeparator } from "./components/ui";
 import { Viewer, type ScrollRequest } from "./components/Viewer";
 import { Sidebar, type SidebarView } from "./components/Sidebar";
@@ -63,6 +64,7 @@ type DialogState =
 type AfterSave = { kind: "close"; docId: number } | { kind: "quit" } | null;
 
 const NO_PENDING: PendingAnnotation[] = [];
+const NO_EDITS: FormEdits = {};
 
 const OPERATION_TITLES: Partial<Record<Operation["op"], string>> = {
   extract_pages: "Extract pages",
@@ -115,6 +117,9 @@ export function App() {
   const [goToNonce, setGoToNonce] = useState(0);
   const [annots, setAnnots] = useState<Record<number, AnnotationHistory>>({});
   const annGroup = useRef(1);
+  /** Form fields per document (null: none, or still loading) and the user's unsaved field edits. */
+  const [forms, setForms] = useState<Record<number, FormInfo | null>>({});
+  const [formEdits, setFormEdits] = useState<Record<number, FormEdits>>({});
   /** Jobs started outside a dialog (e.g. "Run again"): their outcome is reported by a notice. */
   const [watched, setWatched] = useState<string[]>([]);
   const afterSave = useRef<AfterSave>(null);
@@ -127,8 +132,12 @@ export function App() {
   const effective = preview ?? settings;
   const pendingOf = (id: number) => annots[id]?.items ?? NO_PENDING;
   const activePending = active ? pendingOf(active.doc_id) : NO_PENDING;
-  const dirtyTabs = tabs.filter((t) => pendingOf(t.doc_id).length > 0);
-  const totalUnsaved = dirtyTabs.reduce((n, t) => n + pendingOf(t.doc_id).length, 0);
+  const editsOf = (id: number) => formEdits[id] ?? NO_EDITS;
+  /** Unsaved changes of a document: pending annotations plus changed form fields. */
+  const changesOf = (id: number) => pendingOf(id).length + Object.keys(editsOf(id)).length;
+  const activeChanges = active ? changesOf(active.doc_id) : 0;
+  const dirtyTabs = tabs.filter((t) => changesOf(t.doc_id) > 0);
+  const totalUnsaved = dirtyTabs.reduce((n, t) => n + changesOf(t.doc_id), 0);
   const bindings = useMemo(() => effectiveBindings(effective?.shortcuts ?? {}), [effective?.shortcuts]);
 
   const notify = useCallback((n: Omit<Notice, "id">) => {
@@ -261,6 +270,8 @@ export function App() {
       });
       setViews(({ [id]: _gone, ...rest }) => rest);
       setAnnots(({ [id]: _dropped, ...rest }) => rest);
+      setForms(({ [id]: _f, ...rest }) => rest);
+      setFormEdits(({ [id]: _e, ...rest }) => rest);
       if (id === activeId) {
         setSearchOpen(false);
         setHits([]);
@@ -273,10 +284,33 @@ export function App() {
   /** Close a tab, asking first when it has unsaved annotations. */
   const closeTab = useCallback(
     (id: number) => {
-      if ((annots[id]?.items.length ?? 0) > 0) setDialog({ kind: "unsaved", reason: "tab", docId: id });
+      if ((annots[id]?.items.length ?? 0) + Object.keys(formEdits[id] ?? {}).length > 0) setDialog({ kind: "unsaved", reason: "tab", docId: id });
       else closeTabNow(id);
     },
-    [annots, closeTabNow],
+    [annots, formEdits, closeTabNow],
+  );
+
+  // Read a document's form fields the first time it is shown (only documents that have a form).
+  useEffect(() => {
+    if (!active || active.doc_id in forms) return;
+    const id = active.doc_id;
+    setForms((f) => ({ ...f, [id]: null }));
+    if ((active.info.form_type ?? "none") === "none") return;
+    api
+      .formFields(id)
+      .then((info) => {
+        setForms((f) => (id in f ? { ...f, [id]: info } : f));
+        if (info.has_xfa) notify({ kind: "warning", title: active.name, detail: "This form uses XFA; its fields cannot be filled in PageWeave.", persistent: true });
+      })
+      .catch((e) => notifyError("Couldn’t read the form fields", e));
+  }, [api, active, forms, notify, notifyError]);
+
+  const onFormEdit = useCallback(
+    (field: FormField, value: FormValue) => {
+      if (activeId === null) return;
+      setFormEdits((all) => ({ ...all, [activeId]: setEdit(all[activeId] ?? {}, field, value) }));
+    },
+    [activeId],
   );
 
   // Keep the host's window-close guard in step with the number of unsaved annotations.
@@ -463,20 +497,40 @@ export function App() {
     }
   };
 
-  const discardAnnotations = (docId: number) => {
+  const discardChanges = (docId: number) => {
+    const n = changesOf(docId);
+    if (!n) return;
     const before = annots[docId];
-    if (!before?.items.length) return;
+    const beforeEdits = formEdits[docId];
     setAnnots(({ [docId]: _gone, ...rest }) => rest);
+    setFormEdits(({ [docId]: _gone, ...rest }) => rest);
     notify({
       kind: "info",
-      title: `Discarded ${before.items.length} annotation${before.items.length === 1 ? "" : "s"}`,
-      actions: [{ label: "Undo", run: () => setAnnots((a) => ({ ...a, [docId]: before })) }],
+      title: `Discarded ${n} change${n === 1 ? "" : "s"}`,
+      actions: [
+        {
+          label: "Undo",
+          run: () => {
+            if (before) setAnnots((a) => ({ ...a, [docId]: before }));
+            if (beforeEdits) setFormEdits((e) => ({ ...e, [docId]: beforeEdits }));
+          },
+        },
+      ],
       persistent: false,
     });
   };
 
+  const openSaveDialog = () => {
+    if (!active) return;
+    const missing = missingRequired(editsOf(active.doc_id), forms[active.doc_id]?.fields ?? []);
+    if (missing.length) {
+      notify({ kind: "warning", title: "Required fields are empty", detail: missing.slice(0, 5).map(fieldLabel).join(", ") + (missing.length > 5 ? ", …" : ""), persistent: false });
+    }
+    openTool("save");
+  };
+
   const selectionAvail = (): true | string => (pageSelection() ? true : "Select text on a page first.");
-  const roomAvail = (): true | string => (activePending.length < MAX_PENDING ? true : "Save the annotated copy first; too many unsaved annotations.");
+  const roomAvail = (): true | string => (activePending.length < MAX_PENDING ? true : "Save a copy first; too many unsaved annotations.");
 
   const handlers: CommandHandlers = {
     "edit.copy": { run: () => copySelection(), available: () => (pageSelection() ? true : "Select text on a page first.") },
@@ -492,13 +546,13 @@ export function App() {
     "annotate.underline": { run: () => annotateSelection("underline"), available: all(needDoc, noDialog, roomAvail, selectionAvail) },
     "annotate.strikeOut": { run: () => annotateSelection("strike_out"), available: all(needDoc, noDialog, roomAvail, selectionAvail) },
     "annotate.note": { run: () => startNote(), available: all(needDoc, noDialog, roomAvail) },
-    "annotate.save": {
-      run: () => openTool("annotate"),
-      available: all(needDoc, noDialog, () => (activePending.length ? true : "There are no unsaved annotations.")),
+    "file.saveCopy": {
+      run: openSaveDialog,
+      available: all(needDoc, noDialog, () => (activeChanges ? true : "There are no unsaved changes.")),
     },
-    "annotate.discard": {
-      run: () => active && discardAnnotations(active.doc_id),
-      available: all(needDoc, () => (activePending.length ? true : "There are no unsaved annotations.")),
+    "edit.discardChanges": {
+      run: () => active && discardChanges(active.doc_id),
+      available: all(needDoc, () => (activeChanges ? true : "There are no unsaved changes.")),
     },
     "file.open": { run: openDialog, available: () => true },
     "file.close": { run: () => active && closeTab(active.doc_id), available: needDoc },
@@ -659,10 +713,10 @@ export function App() {
   /** Close every other tab; tabs with unsaved annotations stay open (one prompt per tab would pile up). */
   const closeOthers = (keepId: number) => {
     const others = tabs.filter((t) => t.doc_id !== keepId);
-    const kept = others.filter((t) => pendingOf(t.doc_id).length > 0);
+    const kept = others.filter((t) => changesOf(t.doc_id) > 0);
     others.filter((t) => !kept.includes(t)).forEach((t) => closeTabNow(t.doc_id));
     if (kept.length) {
-      notify({ kind: "warning", title: `${kept.length} tab${kept.length === 1 ? " was" : "s were"} kept open`, detail: `Unsaved annotations: ${kept.map((t) => t.name).join(", ")}.`, persistent: true });
+      notify({ kind: "warning", title: `${kept.length} tab${kept.length === 1 ? " was" : "s were"} kept open`, detail: `Unsaved changes: ${kept.map((t) => t.name).join(", ")}.`, persistent: true });
     }
   };
 
@@ -718,15 +772,40 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobs, watched]);
 
-  /** The save dialog's annotated copy is committed: drop the saved annotations, then continue a pending close/quit. */
-  const afterAnnotationsSaved = (docId: number) => {
+  /**
+   * The copy with the user's changes is committed: drop the saved changes, then either continue a
+   * pending close/quit or switch the tab to the saved copy (Save As semantics), keeping the view.
+   */
+  const afterChangesSaved = (docId: number, job: JobSnapshot) => {
     setAnnots(({ [docId]: _saved, ...rest }) => rest);
+    setFormEdits(({ [docId]: _saved, ...rest }) => rest);
     const next = afterSave.current;
     afterSave.current = null;
-    if (next?.kind === "close") closeTabNow(next.docId);
-    if (next?.kind === "quit" && dirtyTabs.every((t) => t.doc_id === docId)) {
-      api.quitApp().catch((e) => notifyError("PageWeave could not close", e));
+    if (next?.kind === "close") return closeTabNow(next.docId);
+    if (next?.kind === "quit") {
+      if (dirtyTabs.every((t) => t.doc_id === docId)) api.quitApp().catch((e) => notifyError("PageWeave could not close", e));
+      return;
     }
+    const out = job.result?.outputs[0]?.path;
+    if (!out) return;
+    api
+      .openDocument(out)
+      .then((doc) => {
+        if (doc.already_open) {
+          closeTabNow(docId);
+          setActiveId(doc.doc_id);
+          return;
+        }
+        setTabs((ts) => ts.map((t) => (t.doc_id === docId ? doc : t)));
+        setViews((v) => {
+          const { [docId]: old, ...rest } = v;
+          return { ...rest, [doc.doc_id]: { ...(old ?? { zoom: 1, page: 0 }), fitPending: false } };
+        });
+        setForms(({ [docId]: _f, ...rest }) => rest);
+        setActiveId(doc.doc_id);
+        api.closeDocument(docId).catch(() => undefined);
+      })
+      .catch((e) => notifyError(`Saved, but ${basename(out)} could not be opened`, e, [{ label: "Open", run: () => openPath(out) }]));
   };
 
   /* ---------- Render ---------- */
@@ -882,6 +961,9 @@ export function App() {
               currentHit={search.current}
               onPageContextMenu={pageMenu}
               annotations={activePending}
+              form={forms[active.doc_id] ?? null}
+              formEdits={editsOf(active.doc_id)}
+              onFormEdit={onFormEdit}
               onMeasured={(width) => {
                 if (view.fitPending) setView({ zoom: Math.min(1.5, fitWidthZoom(active.info.pages, width)), fitPending: false });
               }}
@@ -901,7 +983,7 @@ export function App() {
         </div>
       )}
 
-      <StatusBar doc={active} currentPage={view.page} zoom={view.zoom} jobs={Object.values(jobs)} onGoToPage={goToPage} goToNonce={goToNonce} onCancelJob={(id) => api.cancelJob(id)} unsaved={activePending.length} onSaveAnnotations={() => runCommand("annotate.save")} />
+      <StatusBar doc={active} currentPage={view.page} zoom={view.zoom} jobs={Object.values(jobs)} onGoToPage={goToPage} goToNonce={goToNonce} onCancelJob={(id) => api.cancelJob(id)} unsaved={activeChanges} onSaveAnnotations={() => runCommand("file.saveCopy")} />
 
       {menu && (
         <Menu
@@ -918,14 +1000,15 @@ export function App() {
           tool={dialog.tool}
           doc={active}
           initialPages={dialog.initialPages}
-          annotations={dialog.tool === "annotate" ? activePending : undefined}
+          annotations={dialog.tool === "save" ? activePending : undefined}
+          formValues={dialog.tool === "save" ? toFieldValues(editsOf(active.doc_id), forms[active.doc_id]?.fields ?? []) : undefined}
           jobs={jobs}
           onClose={() => {
             afterSave.current = null;
             setDialog(null);
           }}
           onFinished={(job) => {
-            if (dialog.tool === "annotate") afterAnnotationsSaved(active.doc_id);
+            if (dialog.tool === "save") afterChangesSaved(active.doc_id, job);
             onJobFinished(job);
           }}
         />
@@ -971,7 +1054,7 @@ export function App() {
         return (
           <UnsavedDialog
             names={docs.map((d) => d.name)}
-            count={docs.reduce((n, d) => n + pendingOf(d.doc_id).length, 0)}
+            count={docs.reduce((n, d) => n + changesOf(d.doc_id), 0)}
             canSave={!!target}
             onCancel={() => setDialog(null)}
             onDiscard={() => {
@@ -983,7 +1066,7 @@ export function App() {
               if (!target) return;
               afterSave.current = dialog.reason === "tab" ? { kind: "close", docId: target.doc_id } : { kind: "quit" };
               setActiveId(target.doc_id);
-              setDialog({ kind: "tool", tool: "annotate" });
+              setDialog({ kind: "tool", tool: "save" });
             }}
           />
         );

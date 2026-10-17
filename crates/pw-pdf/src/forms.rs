@@ -57,6 +57,8 @@ pub struct FormWidget {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FormField {
     pub name: String,
+    /// The field's user-facing name (`/TU`), when the document provides one.
+    pub label: Option<String>,
     pub kind: FieldKind,
     /// Current value (`Off` for unchecked buttons, the export value when checked).
     pub value: Option<String>,
@@ -149,6 +151,7 @@ api! {
     FPDFAnnot_GetSubtype: fn(FPDF_ANNOTATION) -> c_int;
     FPDFAnnot_GetRect: fn(FPDF_ANNOTATION, *mut FS_RECTF) -> FPDF_BOOL;
     FPDFAnnot_GetFormFieldName: fn(FPDF_FORMHANDLE, FPDF_ANNOTATION, *mut FPDF_WCHAR, c_ulong) -> c_ulong;
+    FPDFAnnot_GetFormFieldAlternateName: fn(FPDF_FORMHANDLE, FPDF_ANNOTATION, *mut FPDF_WCHAR, c_ulong) -> c_ulong;
     FPDFAnnot_GetFormFieldType: fn(FPDF_FORMHANDLE, FPDF_ANNOTATION) -> c_int;
     FPDFAnnot_GetFormFieldFlags: fn(FPDF_FORMHANDLE, FPDF_ANNOTATION) -> c_int;
     FPDFAnnot_GetFormFieldValue: fn(FPDF_FORMHANDLE, FPDF_ANNOTATION, *mut FPDF_WCHAR, c_ulong) -> c_ulong;
@@ -292,6 +295,10 @@ impl<'a> FormDoc<'a> {
         self.wide(|b, l| unsafe { (self.api.FPDFAnnot_GetFormFieldName)(self.form, annot, b, l) })
     }
     /// Field value with line breaks normalized to `\n` (PDFium stores CR LF for multiline text).
+    fn label(&self, annot: FPDF_ANNOTATION) -> Option<String> {
+        self.wide(|b, l| unsafe { (self.api.FPDFAnnot_GetFormFieldAlternateName)(self.form, annot, b, l) })
+            .filter(|s| !s.trim().is_empty())
+    }
     fn value(&self, annot: FPDF_ANNOTATION) -> Option<String> {
         self.wide(|b, l| unsafe { (self.api.FPDFAnnot_GetFormFieldValue)(self.form, annot, b, l) })
             .map(|v| v.replace("\r\n", "\n").replace('\r', "\n"))
@@ -359,6 +366,7 @@ impl<'a> FormDoc<'a> {
                 order.push(name.clone());
                 FormField {
                     name: name.clone(),
+                    label: self.label(annot),
                     kind,
                     value: self.value(annot),
                     options: if matches!(kind, FieldKind::Combo | FieldKind::List) {

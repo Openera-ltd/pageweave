@@ -17,8 +17,8 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `annotate.underline` | Underline selected text | Ctrl+Shift+U | Exercised by tests |
 | `annotate.strikeOut` | Strike through selected text | — | Exercised by tests |
 | `annotate.note` | Add note… | — | Exercised by tests |
-| `annotate.save` | Save annotated copy… | Ctrl+S | Exercised by tests |
-| `annotate.discard` | Discard unsaved annotations | — | Exercised by tests |
+| `file.saveCopy` | Save a copy with changes… | Ctrl+S | Exercised by tests |
+| `edit.discardChanges` | Discard unsaved changes | — | Exercised by tests |
 | `tab.next` | Next tab | Ctrl+Tab | Exercised by tests |
 | `tab.previous` | Previous tab | Ctrl+Shift+Tab | Exercised by tests |
 | `view.zoomIn` | Zoom in | Ctrl+=, Ctrl+Plus | Exercised by tests |

@@ -100,6 +100,20 @@ export class Session {
     if (got !== text) throw new Error(`typed ${JSON.stringify(text)} into ${css} but the field contains ${JSON.stringify(got)} (WebDriver input simulation)`);
   }
 
+  /** Type into the focused element key by key (newline = Enter), as a user would. */
+  async typeKeys(text) {
+    const acts = [];
+    for (const ch of text) {
+      const key = ch === "\n" ? KEYS.Enter : ch;
+      const shifted = ch !== "\n" && ch !== ch.toLowerCase();
+      if (shifted) acts.push({ type: "keyDown", value: KEYS.Shift });
+      acts.push({ type: "keyDown", value: key }, { type: "keyUp", value: key });
+      if (shifted) acts.push({ type: "keyUp", value: KEYS.Shift });
+    }
+    await this.cmd("POST", "/actions", { actions: [{ type: "key", id: "kb", actions: acts }] });
+    await this.cmd("DELETE", "/actions");
+  }
+
   async text(css) {
     const el = await this.waitFor(css);
     return this.cmd("GET", `/element/${el}/text`);

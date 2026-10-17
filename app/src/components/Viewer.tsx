@@ -2,8 +2,9 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { StickyNote } from "lucide-react";
 import { useApi } from "../api";
 import { KIND_LABEL, type PendingAnnotation } from "../annotations";
+import { currentValue, fieldLabel, isFillable, type FormEdits } from "../forms";
 import { CSS_PX_PER_PT, displaySizePx, mostVisiblePage, pdfRectToScreen, renderScalePermille, unrotatedLayer } from "../geometry";
-import type { OpenedDoc, PageInfo, PageText, SearchHit } from "../types";
+import type { FormField, FormInfo, FormValue, FormWidget, OpenedDoc, PageInfo, PageText, SearchHit } from "../types";
 
 export interface ScrollRequest {
   page: number;
@@ -24,15 +25,27 @@ interface ViewerProps {
   onPageContextMenu: (page: number, x: number, y: number) => void;
   /** Unsaved annotations to draw over the pages. */
   annotations: PendingAnnotation[];
+  /** The document's form fields (null while loading or when it has none) and the user's edits. */
+  form?: FormInfo | null;
+  formEdits?: FormEdits;
+  onFormEdit?: (field: FormField, value: FormValue) => void;
   /** Called once after mount with the real viewport width, so the first zoom can fit the page. */
   onMeasured?: (width: number) => void;
 }
 
 const PAGE_GAP = 16;
 const NO_ANNOTATIONS: PendingAnnotation[] = [];
+const NO_WIDGETS: PageWidget[] = [];
+const NO_EDITS: FormEdits = {};
+
+interface PageWidget {
+  field: FormField;
+  widget: FormWidget;
+  key: string;
+}
 let firstPageReported = false;
 
-export function Viewer({ doc, zoom, onZoomStep, onCurrentPage, scrollRequest, hits, currentHit, onPageContextMenu, annotations, onMeasured }: ViewerProps) {
+export function Viewer({ doc, zoom, onZoomStep, onCurrentPage, scrollRequest, hits, currentHit, onPageContextMenu, annotations, form, formEdits, onFormEdit, onMeasured }: ViewerProps) {
   const ref = useRef<HTMLDivElement>(null);
   // Per-page lists with stable identity, so adding an annotation re-renders only its page.
   const byPage = useMemo(() => {
@@ -40,6 +53,14 @@ export function Viewer({ doc, zoom, onZoomStep, onCurrentPage, scrollRequest, hi
     for (const a of annotations) m.set(a.page, [...(m.get(a.page) ?? []), a]);
     return m;
   }, [annotations]);
+  const widgetsByPage = useMemo(() => {
+    const m = new Map<number, PageWidget[]>();
+    for (const field of form?.fields ?? []) {
+      if (!isFillable(field)) continue;
+      field.widgets.forEach((widget, i) => m.set(widget.page, [...(m.get(widget.page) ?? []), { field, widget, key: `${field.name}#${i}` }]));
+    }
+    return m;
+  }, [form]);
 
   useLayoutEffect(() => {
     if (ref.current && onMeasured) onMeasured(ref.current.clientWidth);
@@ -153,6 +174,9 @@ export function Viewer({ doc, zoom, onZoomStep, onCurrentPage, scrollRequest, hi
             currentHit={currentHit}
             onContextMenu={onPageContextMenu}
             annotations={byPage.get(p.index) ?? NO_ANNOTATIONS}
+            widgets={widgetsByPage.get(p.index) ?? NO_WIDGETS}
+            formEdits={formEdits ?? NO_EDITS}
+            onFormEdit={onFormEdit}
           />
         ))}
       </div>
@@ -169,9 +193,12 @@ interface PageProps {
   currentHit: number;
   onContextMenu: (page: number, x: number, y: number) => void;
   annotations: PendingAnnotation[];
+  widgets: PageWidget[];
+  formEdits: FormEdits;
+  onFormEdit?: (field: FormField, value: FormValue) => void;
 }
 
-const Page = memo(function Page({ docId, page, zoom, root, hits, currentHit, onContextMenu, annotations }: PageProps) {
+const Page = memo(function Page({ docId, page, zoom, root, hits, currentHit, onContextMenu, annotations, widgets, formEdits, onFormEdit }: PageProps) {
   const api = useApi();
   const ref = useRef<HTMLDivElement>(null);
   const [near, setNear] = useState(false);
@@ -247,6 +274,7 @@ const Page = memo(function Page({ docId, page, zoom, root, hits, currentHit, onC
       )}
       {annotations.length > 0 && <AnnotationLayer page={page} zoom={zoom} annotations={annotations} />}
       {near && <TextLayer docId={docId} page={page} zoom={zoom} />}
+      {near && widgets.length > 0 && onFormEdit && <FormLayer docId={docId} page={page} zoom={zoom} widgets={widgets} edits={formEdits} onEdit={onFormEdit} />}
       {pageHits.flatMap(({ h, i }) =>
         h.rects.map((r, j) => {
           const s = pdfRectToScreen(r, page, zoom);
@@ -293,6 +321,81 @@ const AnnotationLayer = memo(function AnnotationLayer({ page, zoom, annotations 
     </div>
   );
 });
+
+/**
+ * Native controls over the page's form widgets, laid out in unrotated page space and rotated with
+ * the page (like the text layer). Edits are kept by the app until saved into a copy.
+ */
+function FormLayer({ docId, page, zoom, widgets, edits, onEdit }: { docId: number; page: PageInfo; zoom: number; widgets: PageWidget[]; edits: FormEdits; onEdit: (field: FormField, value: FormValue) => void }) {
+  const k = zoom * CSS_PX_PER_PT;
+  const layer = unrotatedLayer(page, zoom);
+  return (
+    <div className="formlayer" data-formlayer={page.index} style={{ width: layer.width, height: layer.height, transform: layer.transform }}>
+      {widgets.map(({ field, widget, key }) => {
+        const r = widget.rect;
+        const box = { left: r.left * k, top: (page.height_pt - r.top) * k, width: Math.max(4, (r.right - r.left) * k), height: Math.max(4, (r.top - r.bottom) * k) };
+        const fontSize = Math.max(8, Math.min(box.height * 0.62, 13 * k));
+        const label = fieldLabel(field);
+        const common = {
+          "data-field": field.name,
+          "aria-label": label,
+          "aria-required": field.required || undefined,
+          disabled: field.read_only,
+          title: field.read_only ? `${label} — read-only field` : label,
+        };
+        const value = currentValue(edits, field);
+        const style = { ...box, fontSize };
+        switch (field.kind) {
+          case "checkbox":
+            return <input key={key} type="checkbox" className="pw-field check" style={box} {...common} checked={value === true} onChange={(e) => onEdit(field, e.target.checked)} />;
+          case "radio":
+            return (
+              <input
+                key={key}
+                type="radio"
+                className="pw-field check"
+                style={box}
+                {...common}
+                aria-label={`${label}: ${widget.export_value ?? ""}`}
+                name={`pwf-${docId}-${field.name}`}
+                value={widget.export_value ?? ""}
+                checked={value === widget.export_value}
+                onChange={() => widget.export_value && onEdit(field, widget.export_value)}
+              />
+            );
+          case "combo":
+            if (field.editable) {
+              const listId = `pwf-${docId}-${field.name}-options`;
+              return (
+                <span key={key}>
+                  <input className="pw-field" style={style} {...common} list={listId} value={String(value)} onChange={(e) => onEdit(field, e.target.value)} />
+                  <datalist id={listId}>{field.options.map((o) => <option key={o} value={o} />)}</datalist>
+                </span>
+              );
+            }
+            return (
+              <select key={key} className="pw-field" style={style} {...common} value={String(value)} onChange={(e) => onEdit(field, e.target.value)}>
+                {!field.options.includes(String(value)) && <option value={String(value)}>{String(value)}</option>}
+                {field.options.map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+            );
+          case "list":
+            return (
+              <select key={key} className="pw-field" style={style} {...common} size={Math.max(2, Math.min(field.options.length, Math.floor(box.height / (fontSize * 1.3)) || 2))} value={String(value)} onChange={(e) => onEdit(field, e.target.value)}>
+                {field.options.map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+            );
+          default:
+            return field.multiline ? (
+              <textarea key={key} className="pw-field" style={style} {...common} value={String(value)} onChange={(e) => onEdit(field, e.target.value)} />
+            ) : (
+              <input key={key} className="pw-field" style={style} {...common} value={String(value)} onChange={(e) => onEdit(field, e.target.value)} />
+            );
+        }
+      })}
+    </div>
+  );
+}
 
 /**
  * Invisible, selectable text positioned over the rendered page so native selection, double-click
