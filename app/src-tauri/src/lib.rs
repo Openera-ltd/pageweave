@@ -71,9 +71,14 @@ fn save_settings(state: State<'_, AppState>, settings: serde_json::Value) -> Cmd
 }
 
 #[tauri::command]
-async fn open_document(state: State<'_, AppState>, path: PathBuf, password: Option<String>) -> CmdResult<OpenedDoc> {
+async fn open_document(
+    state: State<'_, AppState>,
+    path: PathBuf,
+    password: Option<String>,
+    remember: Option<bool>,
+) -> CmdResult<OpenedDoc> {
     let st = state.inner().clone();
-    blocking(move || st.open(path, password)).await
+    blocking(move || st.open_with(path, password, remember.unwrap_or(true))).await
 }
 
 #[tauri::command]

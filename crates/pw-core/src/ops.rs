@@ -27,6 +27,18 @@ pub enum SplitMode {
 pub const MAX_ANNOTATIONS_PER_REQUEST: usize = 10_000;
 pub const MAX_NOTE_CHARS: usize = 10_000;
 pub const MAX_FORM_VALUES: usize = 10_000;
+pub const MAX_ORGANIZE_PAGES: usize = 100_000;
+
+/// One page of an organized output: page `page` (0-based) of source `source` (0 = the input,
+/// 1.. = `extra_inputs`), turned clockwise by `rotate` degrees relative to its current rotation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PageRef {
+    #[serde(default)]
+    pub source: u32,
+    pub page: u32,
+    #[serde(default)]
+    pub rotate: i32,
+}
 pub const MAX_FORM_TEXT_CHARS: usize = 100_000;
 
 /// A value to put into a form field. Text fields, combo and list boxes take text (a choice must be
@@ -142,6 +154,15 @@ pub enum Operation {
         values: Vec<FieldValue>,
         output: PathBuf,
     },
+    /// Build a new file from pages in a chosen order: reorder, duplicate, drop, rotate, and insert
+    /// pages from other files in one step.
+    OrganizePages {
+        input: PathBuf,
+        #[serde(default)]
+        extra_inputs: Vec<PathBuf>,
+        pages: Vec<PageRef>,
+        output: PathBuf,
+    },
     /// Apply pending edits (form values and/or annotations) to one new file.
     ApplyEdits {
         input: PathBuf,
@@ -169,6 +190,7 @@ impl Operation {
             Operation::Annotate { .. } => "annotate",
             Operation::FillForm { .. } => "fill_form",
             Operation::ApplyEdits { .. } => "apply_edits",
+            Operation::OrganizePages { .. } => "organize_pages",
         }
     }
 
@@ -187,6 +209,9 @@ impl Operation {
     pub fn inputs(&self) -> Vec<PathBuf> {
         match self {
             Operation::Merge { inputs, .. } => inputs.clone(),
+            Operation::OrganizePages { input, extra_inputs, .. } => {
+                std::iter::once(input.clone()).chain(extra_inputs.iter().cloned()).collect()
+            }
             Operation::Inspect { input }
             | Operation::FormFields { input }
             | Operation::ExtractText { input, .. }
@@ -225,7 +250,8 @@ impl Operation {
             | Operation::RotatePages { output, .. }
             | Operation::Annotate { output, .. }
             | Operation::FillForm { output, .. }
-            | Operation::ApplyEdits { output, .. } => parent(output),
+            | Operation::ApplyEdits { output, .. }
+            | Operation::OrganizePages { output, .. } => parent(output),
         }
     }
 
@@ -276,6 +302,31 @@ impl Operation {
             }
             Operation::Annotate { annotations, .. } => validate_annotations(annotations)?,
             Operation::FillForm { values, .. } => validate_form_values(values)?,
+            Operation::OrganizePages { extra_inputs, pages, .. } => {
+                if pages.is_empty() {
+                    return Err(PwError::invalid("organize.empty", "A PDF must keep at least one page."));
+                }
+                if pages.len() > MAX_ORGANIZE_PAGES {
+                    return Err(PwError::invalid("organize.too_many", "Too many pages in one document."));
+                }
+                if extra_inputs.len() > MAX_MERGE_INPUTS {
+                    return Err(PwError::invalid("organize.too_many_files", "Too many files to insert from."));
+                }
+                for p in pages {
+                    if p.source as usize > extra_inputs.len() {
+                        return Err(PwError::invalid(
+                            "organize.source",
+                            "A page refers to a file that is not in the list.",
+                        ));
+                    }
+                    if p.rotate % 90 != 0 || p.rotate.abs() >= 360 {
+                        return Err(PwError::invalid(
+                            "organize.rotate",
+                            "Pages can only be turned by 90, 180 or 270 degrees.",
+                        ));
+                    }
+                }
+            }
             Operation::ApplyEdits { form_values, annotations, .. } => {
                 if form_values.is_empty() && annotations.is_empty() {
                     return Err(PwError::invalid("edits.empty", "There are no changes to save."));

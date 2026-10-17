@@ -28,7 +28,8 @@ export interface Api {
   appInfo(): Promise<AppInfo>;
   getSettings(): Promise<Settings>;
   saveSettings(s: Settings): Promise<Settings>;
-  openDocument(path: string, password?: string): Promise<OpenedDoc>;
+  /** `remember: false` opens without adding to recent files (page previews for insertion). */
+  openDocument(path: string, password?: string, remember?: boolean): Promise<OpenedDoc>;
   closeDocument(docId: number): Promise<boolean>;
   validateRange(docId: number, spec: string): Promise<number[]>;
   search(docId: number, query: string, matchCase: boolean, wholeWord: boolean): Promise<{ hits: SearchHit[]; truncated: boolean }>;
@@ -62,7 +63,7 @@ export const tauriApi: Api = {
   appInfo: () => invoke("app_info"),
   getSettings: () => invoke("get_settings"),
   saveSettings: (settings) => invoke("save_settings", { settings }),
-  openDocument: (path, password) => invoke("open_document", { path, password: password ?? null }),
+  openDocument: (path, password, remember) => invoke("open_document", { path, password: password ?? null, remember: remember ?? null }),
   closeDocument: (docId) => invoke("close_document", { docId }),
   validateRange: (docId, spec) => invoke("validate_range", { docId, spec }),
   search: (docId, query, matchCase, wholeWord) => invoke("search", { docId, query, matchCase, wholeWord }),

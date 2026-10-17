@@ -38,6 +38,7 @@ import { CommandButton, Menu, type MenuItemOrSeparator } from "./components/ui";
 import { Viewer, type ScrollRequest } from "./components/Viewer";
 import { Sidebar, type SidebarView } from "./components/Sidebar";
 import { PageToolsDialog, type PageTool } from "./components/PageToolsDialog";
+import { OrganizeDialog } from "./components/OrganizeDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { NoteDialog, UnsavedDialog } from "./components/AnnotationDialogs";
 import { CommandPalette, Home, Notices, PasswordDialog, PropertiesDialog, SearchBar, StatusBar, type Notice, type NoticeAction, type SearchState } from "./components/Panels";
@@ -56,6 +57,7 @@ type DialogState =
   | { kind: "properties" }
   | { kind: "password"; path: string; error: PwError | null }
   | { kind: "note"; page: number; rect: SearchRect }
+  | { kind: "organize" }
   | { kind: "unsaved"; reason: "tab"; docId: number }
   | { kind: "unsaved"; reason: "quit" }
   | null;
@@ -611,6 +613,7 @@ export function App() {
     "pages.rotate": { run: () => openTool("rotate"), available: all(needDoc, noDialog) },
     "pages.split": { run: () => openTool("split"), available: all(needDoc, noDialog, () => (active && active.info.page_count > 1 ? true : "A one-page document cannot be split.")) },
     "pages.merge": { run: () => openTool("merge"), available: all(needDoc, noDialog) },
+    "pages.organize": { run: () => setDialog({ kind: "organize" }), available: all(needDoc, noDialog) },
     "app.settings": { run: () => settings && setDialog({ kind: "settings", tab: "appearance", original: settings }), available: () => (settings ? noDialog() : "Settings are still loading.") },
     "app.shortcuts": { run: () => settings && setDialog({ kind: "settings", tab: "shortcuts", original: settings }), available: () => (settings ? noDialog() : "Settings are still loading.") },
     "app.commandPalette": { run: () => setDialog({ kind: "palette" }), available: noDialog },
@@ -700,6 +703,7 @@ export function App() {
         item("pages.extract", `Extract page ${n}…`, () => openTool("extract", String(n))),
         item("pages.rotate", `Rotate page ${n}…`, () => openTool("rotate", String(n))),
         item("pages.delete", `Delete page ${n}…`, () => openTool("delete", String(n)), multi ? true : "A one-page document has no pages to delete."),
+        item("pages.organize"),
         "separator",
         item("view.zoomIn"),
         item("view.zoomOut"),
@@ -735,7 +739,7 @@ export function App() {
 
   const pagesMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
-    setMenu({ label: "Page tools", x: r.left, y: r.bottom + 2, items: [item("pages.extract"), item("pages.delete"), item("pages.rotate"), item("pages.split"), "separator", item("pages.merge")] });
+    setMenu({ label: "Page tools", x: r.left, y: r.bottom + 2, items: [item("pages.organize"), "separator", item("pages.extract"), item("pages.delete"), item("pages.rotate"), item("pages.split"), "separator", item("pages.merge")] });
   };
 
   /* ---------- Job results ---------- */
@@ -1037,6 +1041,7 @@ export function App() {
         <PasswordDialog name={basename(dialog.path)} error={dialog.error} onSubmit={(pw) => openPath(dialog.path, pw)} onCancel={() => setDialog(null)} />
       )}
 
+      {dialog?.kind === "organize" && active && <OrganizeDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "note" && active && (
         <NoteDialog
           page={dialog.page}

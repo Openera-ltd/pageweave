@@ -107,6 +107,11 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(w);
             (vec![out(&c, None)], json!({ "fields": values.len() }))
         }
+        Operation::OrganizePages { input, extra_inputs, pages, output } => {
+            let (c, n, w) = edit::organize_pages(input, &opts, extra_inputs, pages, output, policy, &cancelled)?;
+            warnings.extend(w);
+            (vec![out(&c, Some(n))], json!({ "page_count": n }))
+        }
         Operation::ApplyEdits { input, form_values, annotations, output } => {
             let (c, w) = crate::forms::apply_edits(input, opts.password, form_values, annotations, output, policy)?;
             warnings.extend(w);

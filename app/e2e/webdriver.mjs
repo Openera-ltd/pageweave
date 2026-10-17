@@ -12,7 +12,11 @@ const KEYS = {
   PageDown: "\uE00F",
   End: "\uE010",
   Home: "\uE011",
+  ArrowLeft: "\uE012",
+  ArrowUp: "\uE013",
+  ArrowRight: "\uE014",
   ArrowDown: "\uE015",
+  Delete: "\uE017",
   F3: "\uE033",
   F10: "\uE03A",
 };

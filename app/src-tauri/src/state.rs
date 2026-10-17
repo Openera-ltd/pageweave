@@ -159,6 +159,12 @@ impl AppState {
 
     /// Open (or re-focus) a document. Runs on a worker thread.
     pub fn open(&self, path: PathBuf, password: Option<String>) -> PwResult<OpenedDoc> {
+        self.open_with(path, password, true)
+    }
+
+    /// Like `open`; `remember = false` keeps the file out of the recent list (e.g. a file opened
+    /// only to preview pages for insertion).
+    pub fn open_with(&self, path: PathBuf, password: Option<String>, remember: bool) -> PwResult<OpenedDoc> {
         pw_pdf::init(self.engine_dir.as_deref())?;
         let canonical = path.canonicalize().map_err(|e| PwError::from_io(&e, "file"))?;
         {
@@ -206,7 +212,7 @@ impl AppState {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .insert(id, DocEntry { path: canonical.clone(), password, info: info.clone() });
-        {
+        if remember {
             let mut s = self.inner.settings.lock().unwrap_or_else(|p| p.into_inner());
             s.touch_recent(&canonical.to_string_lossy());
             let snapshot = s.clone();
@@ -325,6 +331,15 @@ mod tests {
         assert!(s.first_mark("first_page"));
         assert!(!s.first_mark("first_page"));
         assert!(s.first_mark("ui_ready"));
+    }
+
+    #[test]
+    fn preview_opens_stay_out_of_recent_files() {
+        let (s, _d) = state();
+        s.open_with(fixture("single-page.pdf"), None, false).expect("open");
+        assert!(s.settings().recent_files.is_empty());
+        s.open(fixture("five-pages.pdf"), None).expect("open");
+        assert_eq!(s.settings().recent_files.len(), 1);
     }
 
     #[test]

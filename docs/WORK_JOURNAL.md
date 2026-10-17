@@ -92,3 +92,9 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - Windows E2E (`5130c46`, `0ac5e86`): every WebDriver session timed out. Diagnostic on the runner: the *debug* build starts but its web UI never loads (no ui_ready, no WebView2 DevTools) while the installed *release* build reaches ui_ready in 5.4 s and renders the first page. Windows E2E now runs the release build. **Open investigation:** why the debug build's UI does not load on the Windows runner.
 - CI toolchain moved to Rust 1.99 (new clippy lint caught in tests); local toolchain updated to match.
 - Local totals: Rust 101, UI unit 37, E2E 36/36, audit 39/39.
+
+## 2026-10-17 — Session 1, checkpoint 19: organize pages; rotated-page text bug
+- Organize pages (Ctrl+Shift+O, Pages menu, page context menu): reorder, duplicate, rotate, remove, insert pages from another file (opened as a preview without touching recent files), undo/redo, drag-and-drop; saved through the typed `organize_pages` op in one verified write.
+- **Bug found by the new E2E's independent check:** text extraction (`extract_text`, CLI `text`) returned nothing for any 90°/270° page — pdfium-render's `PdfPageText::all()` bounds by the rotated page size. Files were never affected (pypdf extracts the text); PageWeave's own extraction was. Fixed and covered by a regression test that fails without the fix.
+- axe caught two defects in the first version of the organize tiles (visible label not in the accessible name; contrast on the selected tile); fixed before commit.
+- Local totals: E2E 37/37, UI unit 46, audit 40/40.

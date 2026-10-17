@@ -254,6 +254,78 @@ pub fn merge(
     Ok((c, total, warnings))
 }
 
+fn rotation_of(page: &PdfPage) -> u32 {
+    match page.rotation() {
+        Ok(PdfPageRenderRotation::Degrees90) => 90,
+        Ok(PdfPageRenderRotation::Degrees180) => 180,
+        Ok(PdfPageRenderRotation::Degrees270) => 270,
+        _ => 0,
+    }
+}
+
+/// Build a new document from `pages` (each a page of the input or of an extra file, with an extra
+/// clockwise turn), in order. Covers reorder, duplicate, drop, rotate and insert in one write. The
+/// output is reopened and its page count and every page's rotation are verified before commit.
+pub fn organize_pages(
+    input: &Path,
+    opts: &OpenOptions,
+    extra_inputs: &[PathBuf],
+    pages: &[pw_core::ops::PageRef],
+    output: &Path,
+    policy: CollisionPolicy,
+    cancelled: &dyn Fn() -> bool,
+) -> PwResult<EditOutcome> {
+    let pdfium = engine()?;
+    let mut sources = vec![load(&pdfium, input, opts)?];
+    for (n, extra) in extra_inputs.iter().enumerate() {
+        let doc = load(&pdfium, extra, &OpenOptions { password: None }).map_err(|e| PwError {
+            message: format!("Inserted file {} of {}: {}", n + 1, extra_inputs.len(), e.message),
+            ..e
+        })?;
+        sources.push(doc);
+    }
+    let counts: Vec<u32> = sources.iter().map(|d| d.pages().len().max(0) as u32).collect();
+    for p in pages {
+        let have = counts[p.source as usize];
+        if p.page >= have {
+            return Err(PwError::invalid(
+                "organize.page",
+                format!("Page {} does not exist; that document has {have} pages.", p.page + 1),
+            ));
+        }
+    }
+    let mut out = pdfium.create_new_pdf().map_err(|e| map_pdfium_error(&e, "create"))?;
+    let mut rotations = Vec::with_capacity(pages.len());
+    for (i, p) in pages.iter().enumerate() {
+        if i % 64 == 0 && cancelled() {
+            return Err(PwError::cancelled());
+        }
+        let src = &sources[p.source as usize];
+        let dest = out.pages().len();
+        out.pages_mut()
+            .copy_page_range_from_document(src, (p.page as PdfPageIndex)..=(p.page as PdfPageIndex), dest)
+            .map_err(|e| map_pdfium_error(&e, "copy_pages"))?;
+        let mut page = out.pages().get(dest).map_err(|e| map_pdfium_error(&e, "page"))?;
+        let current = rotation_of(&page);
+        let new = (current as i32 + p.rotate).rem_euclid(360) as u32;
+        if new != current {
+            page.set_rotation(to_rotation(new));
+        }
+        rotations.push(new);
+    }
+    let any_encrypted = sources.iter().any(source_encrypted);
+    let bytes = save_bytes(&out)?;
+    let total = pages.len() as u32;
+    let protected: Vec<PathBuf> = std::iter::once(input.to_path_buf()).chain(extra_inputs.iter().cloned()).collect();
+    let expect = Expect { page_count: total, password: opts.password, rotations: Some(rotations) };
+    let (c, enc) = commit(&pdfium, &bytes, output, policy, &protected, &expect)?;
+    let mut warnings = protection_warnings(any_encrypted, enc);
+    if sources.iter().any(|d| d.bookmarks().root().is_some()) {
+        warnings.push("Bookmarks are not included in the organized file.".into());
+    }
+    Ok((c, total, warnings))
+}
+
 /// Split into several files. All parts are built in memory first; if committing any part fails,
 /// parts already written by this call are removed so the result is all-or-nothing.
 pub fn split(

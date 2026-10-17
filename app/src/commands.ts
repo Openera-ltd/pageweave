@@ -40,6 +40,7 @@ export type CommandId =
   | "pages.rotate"
   | "pages.split"
   | "pages.merge"
+  | "pages.organize"
   | "app.settings"
   | "app.shortcuts"
   | "app.commandPalette"
@@ -92,6 +93,7 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "pages.rotate", label: "Rotate pages…", category: "Pages", shortcuts: ["Ctrl+Shift+R"] },
   { id: "pages.split", label: "Split document…", category: "Pages", shortcuts: [] },
   { id: "pages.merge", label: "Combine files…", category: "Pages", shortcuts: ["Ctrl+Shift+M"] },
+  { id: "pages.organize", label: "Organize pages…", category: "Pages", shortcuts: ["Ctrl+Shift+O"] },
   { id: "app.settings", label: "Settings", category: "App", shortcuts: ["Ctrl+,"] },
   { id: "app.shortcuts", label: "Keyboard shortcuts", category: "App", shortcuts: [] },
   { id: "app.commandPalette", label: "Command palette", category: "App", shortcuts: ["Ctrl+K", "Ctrl+Shift+P"], allowInInput: true },

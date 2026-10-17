@@ -244,7 +244,10 @@ pub(crate) fn page_texts(path: &Path, opts: &OpenOptions, pages: &[u32]) -> PwRe
     let mut out = Vec::with_capacity(pages.len());
     for &i in pages {
         let page = doc.pages().get(i as PdfPageIndex).map_err(|e| map_pdfium_error(&e, "page"))?;
-        let text = page.text().map_err(|e| map_pdfium_error(&e, "text"))?.all();
+        // Not `PdfPageText::all()`: it bounds extraction by the page's *rotated* size, which drops
+        // all text of a 90°/270° page. Text is in unrotated page space; take everything.
+        let everything = PdfRect::new_from_values(-1.0e6, -1.0e6, 1.0e6, 1.0e6);
+        let text = page.text().map_err(|e| map_pdfium_error(&e, "text"))?.inside_rect(everything);
         out.push((i, text));
     }
     Ok(out)

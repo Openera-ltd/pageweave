@@ -511,3 +511,75 @@ fn annotate_rejects_bad_page_and_writes_nothing() {
     assert_eq!(e.code, "annotate.page");
     assert!(!out.exists());
 }
+
+#[test]
+fn organize_reorders_duplicates_rotates_and_inserts_in_one_verified_write() {
+    use pw_core::ops::PageRef;
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("organized.pdf");
+    let src = fixture("five-pages.pdf");
+    let before = sha(&src);
+    let p = |source, page, rotate| PageRef { source, page, rotate };
+    let mut req = OperationRequest::new(Operation::OrganizePages {
+        input: src.clone(),
+        extra_inputs: vec![fixture("mixed-sizes-rotated.pdf")],
+        pages: vec![p(0, 4, 0), p(0, 0, 0), p(0, 0, 90), p(1, 2, 90), p(0, 2, -90)],
+        output: out.clone(),
+    });
+    req.collision = CollisionPolicy::Fail;
+    let r = execute(&req, None).expect("organize");
+    assert_eq!(r.outputs[0].pages, Some(5));
+    let (n, texts, rots) = independent(&out);
+    assert_eq!(n, 5);
+    let marks: Vec<&str> = texts
+        .iter()
+        .map(|t| ["PWMARK005", "PWMARK001", "PWMARK003"].into_iter().find(|m| t.contains(m)).unwrap_or("?"))
+        .collect();
+    assert_eq!(marks, ["PWMARK005", "PWMARK001", "PWMARK001", "PWMARK003", "PWMARK003"]);
+    // Inserted page 3 of the mixed file already had /Rotate 90; turning it 90 more gives 180.
+    assert_eq!(rots, [0, 0, 90, 180, 270]);
+    assert_eq!(sha(&src), before, "source untouched");
+}
+
+#[test]
+fn organize_rejects_bad_page_lists_before_writing() {
+    use pw_core::ops::PageRef;
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("never.pdf");
+    let run_pages = |pages: Vec<PageRef>, extra: Vec<PathBuf>| {
+        execute(
+            &OperationRequest::new(Operation::OrganizePages {
+                input: fixture("five-pages.pdf"),
+                extra_inputs: extra,
+                pages,
+                output: out.clone(),
+            }),
+            None,
+        )
+        .expect_err("must fail")
+        .code
+    };
+    let p = |source, page, rotate| PageRef { source, page, rotate };
+    assert_eq!(run_pages(vec![], vec![]), "organize.empty");
+    assert_eq!(run_pages(vec![p(0, 5, 0)], vec![]), "organize.page");
+    assert_eq!(run_pages(vec![p(1, 0, 0)], vec![]), "organize.source");
+    assert_eq!(run_pages(vec![p(0, 0, 45)], vec![]), "organize.rotate");
+    assert_eq!(run_pages(vec![p(1, 0, 0)], vec![fixture("encrypted-rc4-user-password.pdf")]), "pdf.password");
+    assert!(!out.exists());
+}
+
+/// Regression: text extraction returned nothing for 90°/270° pages (bounded by the rotated size).
+#[test]
+fn text_and_search_work_on_rotated_pages() {
+    let r = run(Operation::ExtractText { input: fixture("mixed-sizes-rotated.pdf"), pages: Some("3".into()) })
+        .expect("text");
+    let text = r.data["pages"][0]["text"].as_str().unwrap_or_default().to_string();
+    assert!(text.contains("PWMARK003"), "rotated page text: {text:?}");
+    let (hits, _) =
+        search(&fixture("mixed-sizes-rotated.pdf"), &OpenOptions { password: None }, "PWMARK003", true, false, &|| {
+            false
+        })
+        .expect("search");
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].page, 2);
+}

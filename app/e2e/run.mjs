@@ -939,6 +939,39 @@ await test("forms: fill text, checkbox, radio, choice and multiline; Ctrl+S save
   }
 });
 
+await test("organize pages: keyboard reorder, rotate, duplicate; saved file verified independently", async () => {
+  const out = join(work, "organized.pdf");
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "Shift", "O"]);
+    await s.waitFor(".organize-grid");
+    assert((await s.exec("return document.activeElement?.classList.contains('organize-grid')")) === true, "page grid has focus");
+    assert((await s.attr('[data-testid="organize-save"]', "aria-disabled")) === "true", "Save disabled until something changes");
+    const refs = () => s.exec("return [...document.querySelectorAll('[data-page-ref]')].map(t => t.dataset.pageRef)");
+    await s.keys(["End"]);
+    for (let i = 0; i < 4; i++) await s.keys(["Control", "ArrowLeft"]); // page 5 to the front
+    await s.keys(["r"]); // turn it right
+    await s.keys(["Control", "d"]); // and duplicate it
+    const got = JSON.stringify(await refs());
+    assert(got === JSON.stringify(["0:4:90", "0:4:90", "0:0:0", "0:1:0", "0:2:0", "0:3:0"]), `tiles after keyboard edits: ${got}`);
+    await axeCheck(s, "organize-dialog");
+    writeFileSync(join(ART, "organize.png"), await s.screenshot());
+    await s.type("#organize-output", out);
+    await s.click('[data-testid="organize-save"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved organized.pdf")), "saved notice");
+  });
+  assert(existsSync(out), "organized file exists");
+  if (CLI) {
+    const info = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data;
+    assert(info.page_count === 6, `6 pages (got ${info.page_count})`);
+    assert(JSON.stringify(info.pages.map((p) => p.rotation)) === "[90,90,0,0,0,0]", `rotations ${JSON.stringify(info.pages.map((p) => p.rotation))}`);
+    const text = JSON.parse(execFileSync(CLI, ["--json", "text", out], { encoding: "utf8" })).result.data.pages.map((p) => p.text);
+    const marks = text.map((t) => (t.match(/PWMARK\d{3}/) ?? ["?"])[0]);
+    assert(JSON.stringify(marks) === JSON.stringify(["PWMARK005", "PWMARK005", "PWMARK001", "PWMARK002", "PWMARK003", "PWMARK004"]), `page order ${marks}`);
+  }
+});
+
 /* ------------------------------------------------------------------ */
 const summary = {
   app: APP,
