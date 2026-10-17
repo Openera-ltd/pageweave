@@ -105,3 +105,11 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - **Bug (found via a Windows CI test failure, reproduced locally 4/20):** concurrent PDFium use could misreport errors — PDFium's last error is process-global and read in a separate call, so a corrupt file came back as "password protected". Engine use is now serialized per operation (reentrant lock; D-006 amendment). Regression test fails 7/10 without the lock, 0/10 with it; full engine suite 0/30 failures under 8 threads.
 - Windows E2E with D-007 (`b4ba010`) is running scenarios at the time of writing (no longer failing fast) — read results next.
 - Local totals: E2E 38/38.
+
+## 2026-10-17 — Session 1, checkpoint 21: Windows UI automation unblocked (pending confirmation)
+- Chain of root causes, each proven by a CI diagnostic before fixing:
+  1. Debug build's web UI never loaded on the runner → E2E switched to the release (shipping) build.
+  2. WebView2 ignored `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` because wry always sets its own arguments → D-007; DevTools reachable, sessions attach, scenarios without files pass.
+  3. Edge WebDriver passes app arguments as Chromium switches (`--d:\…\file.pdf`) → app accepts `--open=<path>`; Windows E2E uses it.
+- Also fixed on the way: UI tab recovery after a page reload (`42ce9e3`); per-operation engine lock (concurrency bug found by Windows CI); organize copies page runs in one call (95 ms typical for 1,000 pages).
+- Open: debug-build UI not loading on the Windows runner (does not affect shipping builds); confirm the full Windows E2E pass on `5554072`.
