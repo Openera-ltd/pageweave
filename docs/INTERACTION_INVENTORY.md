@@ -11,12 +11,17 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `file.reveal` | Show in folder | — | Exercised by tests |
 | `file.properties` | Document properties | Ctrl+D | Exercised by tests |
 | `edit.copy` | Copy selected text | — | Exercised by tests |
-| `edit.undo` | Undo annotation | Ctrl+Z | Exercised by tests |
-| `edit.redo` | Redo annotation | Ctrl+Y, Ctrl+Shift+Z | Exercised by tests |
+| `edit.undo` | Undo annotation or mark | Ctrl+Z | Exercised by tests |
+| `edit.redo` | Redo annotation or mark | Ctrl+Y, Ctrl+Shift+Z | Exercised by tests |
 | `annotate.highlight` | Highlight selected text | Ctrl+Shift+H | Exercised by tests |
 | `annotate.underline` | Underline selected text | Ctrl+Shift+U | Exercised by tests |
 | `annotate.strikeOut` | Strike through selected text | — | Exercised by tests |
 | `annotate.note` | Add note… | — | Exercised by tests |
+| `redact.markSelection` | Mark selected text for redaction | Ctrl+Shift+X | Exercised by tests |
+| `redact.markArea` | Mark areas for redaction | — | Exercised by tests |
+| `redact.markPage` | Mark current page for redaction | — | Exercised by tests |
+| `redact.markMatches` | Mark all search matches for redaction | — | Exercised by tests |
+| `redact.apply` | Apply redactions… | — | Exercised by tests |
 | `file.saveCopy` | Save a copy with changes… | Ctrl+S | Exercised by tests |
 | `edit.discardChanges` | Discard unsaved changes | — | Exercised by tests |
 | `tab.next` | Next tab | Ctrl+Tab | Exercised by tests |
@@ -49,4 +54,4 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `app.commandPalette` | Command palette | Ctrl+K, Ctrl+Shift+P | Exercised by tests |
 | `app.openLogs` | Show log folder | — | Exercised by tests |
 
-Coverage: 42 of 42 commands exercised by unit or real-app E2E tests.
+Coverage: 47 of 47 commands exercised by unit or real-app E2E tests.

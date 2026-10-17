@@ -15,30 +15,38 @@ import { useApi } from "./api";
 import {
   addAnnotations,
   ANNOTATION_COLORS,
+  annotationSpecs,
   clientRectsToPageRects,
   EMPTY_HISTORY,
+  isRedactMark,
+  itemsAt,
   KIND_LABEL,
   makeId,
   noteRect,
   pageBoxes,
+  REDACT_MARK_COLOR,
+  redactAreas,
   redo,
+  removeItem,
   selectionClientRects,
   undo,
   type AnnotationHistory,
   type PendingAnnotation,
+  type PendingKind,
 } from "./annotations";
 import { missingRequired, setEdit, toFieldValues, fieldLabel, type FormEdits } from "./forms";
 import { COMMAND_BY_ID, COMMANDS, commandForShortcut, effectiveBindings, type CommandHandlers, type CommandId } from "./commands";
-import { clampZoom, fitWidthZoom, nextZoom, screenRectToPdf, ZOOM_PRESETS, CSS_PX_PER_PT, displaySizePt } from "./geometry";
+import { clampZoom, fitWidthZoom, nextZoom, pageOrigin, screenRectToPdf, ZOOM_PRESETS, CSS_PX_PER_PT, displaySizePt } from "./geometry";
 import { basename } from "./paths";
 import { eventToShortcut, isTextEntry } from "./shortcuts";
 import { applyAppearance } from "./theme";
-import { toPwError, type AnnotationKind, type AppInfo, type FormField, type FormInfo, type FormValue, type JobSnapshot, type OpenedDoc, type Operation, type PwError, type RecoveredJob, type SearchHit, type SearchRect, type Settings } from "./types";
+import { toPwError, type AppInfo, type FormField, type FormInfo, type FormValue, type JobSnapshot, type OpenedDoc, type Operation, type PwError, type RecoveredJob, type RedactArea, type SearchHit, type SearchRect, type Settings } from "./types";
 import { CommandButton, Menu, type MenuItemOrSeparator } from "./components/ui";
 import { Viewer, type ScrollRequest } from "./components/Viewer";
 import { Sidebar, type SidebarView } from "./components/Sidebar";
 import { PageToolsDialog, type PageTool } from "./components/PageToolsDialog";
 import { OrganizeDialog } from "./components/OrganizeDialog";
+import { RedactDialog } from "./components/RedactDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { NoteDialog, UnsavedDialog } from "./components/AnnotationDialogs";
 import { CommandPalette, Home, Notices, PasswordDialog, PropertiesDialog, SearchBar, StatusBar, type Notice, type NoticeAction, type SearchState } from "./components/Panels";
@@ -58,6 +66,7 @@ type DialogState =
   | { kind: "password"; path: string; error: PwError | null }
   | { kind: "note"; page: number; rect: SearchRect }
   | { kind: "organize" }
+  | { kind: "redact"; areas: RedactArea[] }
   | { kind: "unsaved"; reason: "tab"; docId: number }
   | { kind: "unsaved"; reason: "quit" }
   | null;
@@ -75,6 +84,7 @@ const OPERATION_TITLES: Partial<Record<Operation["op"], string>> = {
   split: "Split document",
   merge: "Combine files",
   annotate: "Save annotated copy",
+  redact: "Apply redactions",
 };
 
 function operationTarget(op: Operation): string {
@@ -118,6 +128,8 @@ export function App() {
   const [scrollRequest, setScrollRequest] = useState<ScrollRequest | null>(null);
   const [goToNonce, setGoToNonce] = useState(0);
   const [annots, setAnnots] = useState<Record<number, AnnotationHistory>>({});
+  /** Area-marking mode: dragging on a page marks a rectangle for redaction. */
+  const [markMode, setMarkMode] = useState(false);
   const annGroup = useRef(1);
   /** Form fields per document (null: none, or still loading) and the user's unsaved field edits. */
   const [forms, setForms] = useState<Record<number, FormInfo | null>>({});
@@ -135,9 +147,14 @@ export function App() {
   const pendingOf = (id: number) => annots[id]?.items ?? NO_PENDING;
   const activePending = active ? pendingOf(active.doc_id) : NO_PENDING;
   const editsOf = (id: number) => formEdits[id] ?? NO_EDITS;
-  /** Unsaved changes of a document: pending annotations plus changed form fields. */
+  /** Unsaved changes of a document: pending annotations and redaction marks plus changed form fields. */
   const changesOf = (id: number) => pendingOf(id).length + Object.keys(editsOf(id)).length;
+  const marksOf = (id: number) => pendingOf(id).filter(isRedactMark).length;
+  /** Changes a saved copy can hold (redaction marks are applied, not saved). */
+  const savableOf = (id: number) => changesOf(id) - marksOf(id);
   const activeChanges = active ? changesOf(active.doc_id) : 0;
+  const activeMarks = active ? marksOf(active.doc_id) : 0;
+  const activeSavable = active ? savableOf(active.doc_id) : 0;
   const dirtyTabs = tabs.filter((t) => changesOf(t.doc_id) > 0);
   const totalUnsaved = dirtyTabs.reduce((n, t) => n + changesOf(t.doc_id), 0);
   const bindings = useMemo(() => effectiveBindings(effective?.shortcuts ?? {}), [effective?.shortcuts]);
@@ -479,17 +496,19 @@ export function App() {
   const updateAnnots = (docId: number, f: (h: AnnotationHistory) => AnnotationHistory) =>
     setAnnots((a) => ({ ...a, [docId]: f(a[docId] ?? EMPTY_HISTORY) }));
 
-  const annotateSelection = (kind: Exclude<AnnotationKind, "note">, snapshot?: Map<number, SearchRect[]>) => {
+  const annotateSelection = (kind: Exclude<PendingKind, "note">, snapshot?: Map<number, SearchRect[]>) => {
     if (!active) return;
     const rects = snapshot ?? selectionRects();
     if (rects.size === 0) {
-      notify({ kind: "warning", title: `Nothing to ${KIND_LABEL[kind].toLowerCase()}`, detail: "The selection has no text on a page.", persistent: false });
+      const what = kind === "redact" ? "mark" : KIND_LABEL[kind].toLowerCase();
+      notify({ kind: "warning", title: `Nothing to ${what}`, detail: "The selection has no text on a page.", persistent: false });
       return;
     }
     const group = annGroup.current++;
+    const color = kind === "redact" ? REDACT_MARK_COLOR : ANNOTATION_COLORS[kind];
     const added: PendingAnnotation[] = [...rects.entries()]
       .sort(([a], [b]) => a - b)
-      .map(([page, r], n) => ({ id: makeId(group, n), page, kind, rects: r.slice(0, 1000), color: ANNOTATION_COLORS[kind] }));
+      .map(([page, r], n) => ({ id: makeId(group, n), page, kind, rects: r.slice(0, 1000), color }));
     updateAnnots(active.doc_id, (h) => addAnnotations(h, added));
     window.getSelection()?.removeAllRanges();
   };
@@ -513,8 +532,51 @@ export function App() {
       const pt = screenRectToPdf({ left: at.x - box.left, top: at.y - box.top, width: 0, height: 0 }, p, zoom);
       setDialog({ kind: "note", page: pageIndex, rect: noteRect(pt.left, pt.top, p) });
     } else {
-      setDialog({ kind: "note", page: pageIndex, rect: noteRect(36, p.height_pt - 36, p) });
+      const o = pageOrigin(p);
+      setDialog({ kind: "note", page: pageIndex, rect: noteRect(o.x + 36, o.y + p.height_pt - 36, p) });
     }
+  };
+
+  /** Add redaction marks (one undo step): each entry is a page and its rectangles. */
+  const addMarks = (entries: Array<[number, SearchRect[]]>) => {
+    if (!active || entries.length === 0) return;
+    const group = annGroup.current++;
+    const room = Math.max(0, MAX_PENDING - activePending.length);
+    const added: PendingAnnotation[] = entries
+      .slice(0, Math.min(room, 1000))
+      .map(([page, r], n) => ({ id: makeId(group, n), page, kind: "redact", rects: r.slice(0, 1000), color: REDACT_MARK_COLOR }));
+    updateAnnots(active.doc_id, (h) => addAnnotations(h, added));
+    if (added.length < entries.length) {
+      notify({ kind: "warning", title: `Marked ${added.length} of ${entries.length}`, detail: "Apply these redactions first, then mark the rest.", persistent: true });
+    }
+  };
+
+  const markPage = (pageIndex: number) => {
+    const p = active?.info.pages[pageIndex];
+    if (!p) return;
+    const o = pageOrigin(p);
+    addMarks([[pageIndex, [{ left: o.x, bottom: o.y, right: o.x + p.width_pt, top: o.y + p.height_pt }]]]);
+  };
+
+  const markMatches = () => {
+    // One mark per match, so each can be reviewed and undone with the others in one step.
+    addMarks(hits.map((h) => [h.page, h.rects]));
+  };
+
+  const removeMark = (docId: number, mark: PendingAnnotation) => {
+    updateAnnots(docId, (h) => removeItem(h, mark.id));
+    notify({
+      kind: "info",
+      title: "Redaction mark removed",
+      actions: [{ label: "Undo", run: () => updateAnnots(docId, (h) => addAnnotations({ ...h, redo: h.redo }, [mark])) }],
+      persistent: false,
+    });
+  };
+
+  const openRedactDialog = () => {
+    if (!active) return;
+    setMarkMode(false);
+    setDialog({ kind: "redact", areas: redactAreas(activePending) });
   };
 
   const discardChanges = (docId: number) => {
@@ -566,9 +628,28 @@ export function App() {
     "annotate.underline": { run: () => annotateSelection("underline"), available: all(needDoc, noDialog, roomAvail, selectionAvail) },
     "annotate.strikeOut": { run: () => annotateSelection("strike_out"), available: all(needDoc, noDialog, roomAvail, selectionAvail) },
     "annotate.note": { run: () => startNote(), available: all(needDoc, noDialog, roomAvail) },
+    "redact.markSelection": { run: () => annotateSelection("redact"), available: all(needDoc, noDialog, roomAvail, selectionAvail) },
+    "redact.markArea": {
+      run: () => setMarkMode((m) => !m),
+      available: all(needDoc, noDialog, () => (markMode ? true : roomAvail())),
+    },
+    "redact.markPage": { run: () => markPage(view.page), available: all(needDoc, noDialog, roomAvail) },
+    "redact.markMatches": {
+      run: markMatches,
+      available: all(needDoc, noDialog, roomAvail, () => (searchOpen && hits.length ? true : "Find text first; every match is then marked.")),
+    },
+    "redact.apply": {
+      run: openRedactDialog,
+      available: all(
+        needDoc,
+        noDialog,
+        () => (activeMarks ? true : "Mark text or areas for redaction first."),
+        () => (activeSavable ? "Save or discard your other changes first; redaction starts from the file as saved." : true),
+      ),
+    },
     "file.saveCopy": {
       run: openSaveDialog,
-      available: all(needDoc, noDialog, () => (activeChanges ? true : "There are no unsaved changes.")),
+      available: all(needDoc, noDialog, () => (activeSavable ? true : activeMarks ? "Redaction marks are not saved; use Apply redactions." : "There are no unsaved changes.")),
     },
     "edit.discardChanges": {
       run: () => active && discardChanges(active.doc_id),
@@ -657,6 +738,19 @@ export function App() {
     if (h.available() === true) h.run();
   };
 
+  useEffect(() => setMarkMode(false), [activeId]);
+  useEffect(() => {
+    if (!markMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !dialog && !menu) {
+        e.preventDefault();
+        setMarkMode(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [markMode, dialog, menu]);
+
   /* ---------- Keyboard ---------- */
   const handlersRef = useRef(handlers);
   handlersRef.current = handlers;
@@ -693,6 +787,11 @@ export function App() {
     const selected = pageSelection();
     const rects = selected ? selectionRects() : null;
     const room = roomAvail();
+    // Redaction marks under the pointer (a point in this page's PDF space).
+    const p = active?.info.pages[page];
+    const box = pageBoxes().find((b) => b.page === page);
+    const pt = p && box ? screenRectToPdf({ left: x - box.left, top: y - box.top, width: 0, height: 0 }, p, box.width / (displaySizePt(p).w * CSS_PX_PER_PT)) : null;
+    const marksHere = pt ? itemsAt(activePending.filter(isRedactMark), page, pt.left, pt.top) : [];
     const sel = window.getSelection();
     const range = selected && sel && sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
     const restore = () => {
@@ -709,6 +808,8 @@ export function App() {
       y,
       afterClose: restore,
       items: [
+        // Actions on the mark under the pointer come first.
+        ...marksHere.flatMap((m, i) => [item("redact.apply", "Remove this redaction mark", () => active && removeMark(active.doc_id, m), true), ...(i === marksHere.length - 1 ? ["separator" as const] : [])]),
         ...(selected
           ? [
               { ...(item("edit.copy", "Copy", () => copySelection(selected), true) as Exclude<MenuItemOrSeparator, "separator">), shortcut: "Ctrl+C" },
@@ -717,6 +818,7 @@ export function App() {
               { ...(item("annotate.underline", "Underline", () => annotateSelection("underline", rects!), room) as Exclude<MenuItemOrSeparator, "separator">), shortcut: bindings["annotate.underline"]?.[0] },
               item("annotate.strikeOut", "Strikethrough", () => annotateSelection("strike_out", rects!), room),
               item("annotate.note", "Add note…", () => startNote(undefined, rects!), room),
+              { ...(item("redact.markSelection", "Mark for redaction", () => annotateSelection("redact", rects!), room) as Exclude<MenuItemOrSeparator, "separator">), shortcut: bindings["redact.markSelection"]?.[0] },
               "separator" as const,
             ]
           : [item("annotate.note", "Add note here…", () => startNote({ page, x, y }, new Map()), room), "separator" as const]),
@@ -724,6 +826,10 @@ export function App() {
         item("pages.rotate", `Rotate page ${n}…`, () => openTool("rotate", String(n))),
         item("pages.delete", `Delete page ${n}…`, () => openTool("delete", String(n)), multi ? true : "A one-page document has no pages to delete."),
         item("pages.organize"),
+        "separator",
+        item("redact.markPage", `Mark page ${n} for redaction`, () => markPage(page), room),
+        item("redact.markArea", markMode ? "Stop marking areas" : "Mark areas for redaction"),
+        item("redact.apply"),
         "separator",
         item("view.zoomIn"),
         item("view.zoomOut"),
@@ -801,6 +907,8 @@ export function App() {
    * pending close/quit or switch the tab to the saved copy (Save As semantics), keeping the view.
    */
   const afterChangesSaved = (docId: number, job: JobSnapshot) => {
+    // Redaction marks are not part of the saved copy: they move to its tab (same pages, same coordinates).
+    const marks = pendingOf(docId).filter(isRedactMark);
     setAnnots(({ [docId]: _saved, ...rest }) => rest);
     setFormEdits(({ [docId]: _saved, ...rest }) => rest);
     const next = afterSave.current;
@@ -821,6 +929,7 @@ export function App() {
           return;
         }
         setTabs((ts) => ts.map((t) => (t.doc_id === docId ? doc : t)));
+        if (marks.length) setAnnots((a) => ({ ...a, [doc.doc_id]: { items: marks, redo: [] } }));
         setViews((v) => {
           const { [docId]: old, ...rest } = v;
           return { ...rest, [doc.doc_id]: { ...(old ?? { zoom: 1, page: 0 }), fitPending: false } };
@@ -830,6 +939,13 @@ export function App() {
         api.closeDocument(docId).catch(() => undefined);
       })
       .catch((e) => notifyError(`Saved, but ${basename(out)} could not be opened`, e, [{ label: "Open", run: () => openPath(out) }]));
+  };
+
+  /** The redacted copy is verified and written: the marks are used up; open the copy to inspect it. */
+  const afterRedacted = (docId: number, job: JobSnapshot) => {
+    updateAnnots(docId, (h) => ({ items: h.items.filter((a) => !isRedactMark(a)), redo: h.redo.filter((a) => !isRedactMark(a)) }));
+    const out = job.result?.outputs[0]?.path;
+    if (out) openPath(out);
   };
 
   /* ---------- Render ---------- */
@@ -970,6 +1086,8 @@ export function App() {
                 onNext={() => stepHit(1)}
                 onPrevious={() => stepHit(-1)}
                 onClose={closeSearch}
+                onMarkAll={markMatches}
+                markAllAvailable={handlers["redact.markMatches"].available()}
               />
             ) : (
               <div />
@@ -988,6 +1106,8 @@ export function App() {
               form={forms[active.doc_id] ?? null}
               formEdits={editsOf(active.doc_id)}
               onFormEdit={onFormEdit}
+              markMode={markMode}
+              onMarkArea={(page, rect) => addMarks([[page, [rect]]])}
               onMeasured={(width) => {
                 if (view.fitPending) setView({ zoom: Math.min(1.5, fitWidthZoom(active.info.pages, width)), fitPending: false });
               }}
@@ -1007,7 +1127,7 @@ export function App() {
         </div>
       )}
 
-      <StatusBar doc={active} currentPage={view.page} zoom={view.zoom} jobs={Object.values(jobs)} onGoToPage={goToPage} goToNonce={goToNonce} onCancelJob={(id) => api.cancelJob(id)} unsaved={activeChanges} onSaveAnnotations={() => runCommand("file.saveCopy")} />
+      <StatusBar doc={active} currentPage={view.page} zoom={view.zoom} jobs={Object.values(jobs)} onGoToPage={goToPage} goToNonce={goToNonce} onCancelJob={(id) => api.cancelJob(id)} unsaved={activeSavable} onSaveAnnotations={() => runCommand("file.saveCopy")} marks={activeMarks} onApplyRedactions={() => runCommand("redact.apply")} markMode={markMode} onEndMarkMode={() => setMarkMode(false)} />
 
       {menu && (
         <Menu
@@ -1024,7 +1144,7 @@ export function App() {
           tool={dialog.tool}
           doc={active}
           initialPages={dialog.initialPages}
-          annotations={dialog.tool === "save" ? activePending : undefined}
+          annotations={dialog.tool === "save" ? annotationSpecs(activePending) : undefined}
           formValues={dialog.tool === "save" ? toFieldValues(editsOf(active.doc_id), forms[active.doc_id]?.fields ?? []) : undefined}
           jobs={jobs}
           onClose={() => {
@@ -1061,6 +1181,18 @@ export function App() {
         <PasswordDialog name={basename(dialog.path)} error={dialog.error} onSubmit={(pw) => openPath(dialog.path, pw)} onCancel={() => setDialog(null)} />
       )}
 
+      {dialog?.kind === "redact" && active && (
+        <RedactDialog
+          doc={active}
+          areas={dialog.areas}
+          jobs={jobs}
+          onClose={() => setDialog(null)}
+          onFinished={(job) => {
+            afterRedacted(active.doc_id, job);
+            onJobFinished(job);
+          }}
+        />
+      )}
       {dialog?.kind === "organize" && active && <OrganizeDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "note" && active && (
         <NoteDialog
@@ -1080,7 +1212,8 @@ export function App() {
           <UnsavedDialog
             names={docs.map((d) => d.name)}
             count={docs.reduce((n, d) => n + changesOf(d.doc_id), 0)}
-            canSave={!!target}
+            marks={docs.reduce((n, d) => n + marksOf(d.doc_id), 0)}
+            canSave={!!target && savableOf(target.doc_id) > 0}
             onCancel={() => setDialog(null)}
             onDiscard={() => {
               setDialog(null);

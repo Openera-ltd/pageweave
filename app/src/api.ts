@@ -9,7 +9,9 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { createContext, useContext } from "react";
 import type {
   AppInfo,
+  AreaPreview,
   JobSnapshot,
+  RedactArea,
   OpenedDoc,
   OperationRequest,
   FormInfo,
@@ -43,6 +45,8 @@ export interface Api {
   pickFolder(defaultPath?: string): Promise<string | null>;
   revealInFolder(path: string): Promise<void>;
   /** Command-line files the UI has not handled yet; `launchFileDone` marks one handled. */
+  /** What redacting `areas` would remove (read-only, runs in the engine). */
+  redactionPreview(docId: number, areas: RedactArea[]): Promise<AreaPreview[]>;
   launchFiles(): Promise<string[]>;
   launchFileDone(path: string): Promise<void>;
   /** Documents the host has open as tabs (restored after a page reload). */
@@ -91,6 +95,7 @@ export const tauriApi: Api = {
     return typeof r === "string" ? r : null;
   },
   revealInFolder: (path) => revealItemInDir(path),
+  redactionPreview: (docId, areas) => invoke("redaction_preview", { docId, areas }),
   launchFiles: () => invoke("launch_files"),
   launchFileDone: (path) => invoke("launch_file_done", { path }),
   openDocuments: () => invoke("open_documents"),

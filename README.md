@@ -6,7 +6,7 @@ for the full product scope).
 ## Status — early development, not production ready
 
 Release status: **BLOCKED**. What exists today is a first vertical slice; most of the product scope in
-`prd/` (OCR, conversion, form authoring, redaction, translation, read-aloud, design reconstruction,
+`prd/` (OCR, conversion, form authoring, sanitization, translation, read-aloud, design reconstruction,
 resource installer, API/MCP, …) is **not implemented**. `docs/FEATURE_PARITY_MATRIX.md` is the
 authoritative per-capability ledger with evidence and limitations.
 
@@ -17,8 +17,9 @@ Implemented and tested:
 | PDF engine | Open (with password), inspect metadata/pages/bookmarks, extract text, search with match geometry, render pages | `crates/pw-pdf/tests/engine.rs` (Linux and Windows CI) |
 | Page operations | Organize (reorder, duplicate, rotate, remove, insert pages from another file in one step), page numbers / headers / footers / Bates-style numbering, export pages as PNG images, extract, delete, rotate, split, combine — always to a **new** file; source never modified; outputs re-opened and verified before an atomic commit; explicit conflict policy | engine tests (outputs re-parsed with an independent parser) |
 | CLI | `pageweave` with JSON output and stable exit codes | `crates/pw-cli/tests/cli.rs`; packaged Windows smoke test in CI |
-| Desktop app | Tabs, continuous viewer, thumbnails, bookmarks, zoom/fit, find with highlights, text selection and copy, page tools, settings (theme/accent/density/text size/motion/shortcuts), command palette, context menus, drag-and-drop and command-line open | `app/e2e/run.mjs` drives the real app (40 scenarios incl. axe-core accessibility checks) on Linux; Windows installer install/launch/uninstall smoke in CI |
+| Desktop app | Tabs, continuous viewer, thumbnails, bookmarks, zoom/fit, find with highlights, text selection and copy, page tools, settings (theme/accent/density/text size/motion/shortcuts), command palette, context menus, drag-and-drop and command-line open | `app/e2e/run.mjs` drives the real app (41 scenarios incl. axe-core accessibility checks) on Linux and Windows CI; Windows installer install/launch/uninstall smoke in CI |
 | Forms | Fill AcroForm text, multiline, checkbox, radio, combo and list fields directly on the page; values are entered through PDFium's form filler so the saved copy's appearances show them; Ctrl+S saves all changes (fields and annotations) into one verified copy, then the tab switches to it | engine tests verify values, button states and regenerated appearance streams with an independent parser and by rendering; E2E fills every kind in the real app and checks the saved file with the CLI |
+| Redaction | Mark text (selection or every search match), dragged areas or whole pages; review what each area removes; apply to a **new** file. Content under the areas is removed (text per character, image pixels, drawings, comments/links, form widgets), the areas painted black, and the copy rewritten without unused resources, thumbnails, metadata or revision history; it is verified before it is written (no text, annotation or image data left under any area; rendering unchanged elsewhere; removed image data absent from the file) | engine tests search every object and stream of the output with an independent parser, including negative tests that prove the checks reject leaky output; CLI `redact`; E2E marks, reviews and applies in the real app, then checks the copy with the CLI and its raw bytes |
 | Annotations | Highlight, underline, strikethrough and sticky notes from a text selection or a right-click; undo/redo; saved into a **new** PDF (verified by reopening); closing a tab or the window with unsaved annotations asks first | engine tests (independent parser + rendered pixels); E2E checks the saved file and the real window-close request |
 
 Known limitations (selection):
@@ -27,6 +28,7 @@ Known limitations (selection):
 - Outputs made by extract/delete/split/combine from a password-protected PDF are **not** protected (the app warns); rotate keeps the protection.
 - Annotations: fixed colours, no editing/moving/deleting of individual or existing annotations yet (undo covers unsaved ones); not saved back into the original file by design.
 - Forms: no form authoring, field validation scripts, calculation order, signatures or XFA filling (XFA is detected and reported). Native input undo only for field edits.
+- Redaction: bookmarks, document properties, attachments and fillable fields are not carried over to the redacted copy; a page whose content cannot be removed precisely (grouped content or unreadable text crossing an area) becomes an image of the page (the app says which); drawings only partly under an area (e.g. backgrounds) are covered but kept; no pattern search (e.g. all e-mail addresses) or sanitization yet; scanned text cannot be found without OCR.
 - No OCR, conversion or printing.
 - XFA forms are detected but cannot be displayed or filled.
 - No measured performance budgets or hardware support claims yet (`docs/HARDWARE_SUPPORT.md`).

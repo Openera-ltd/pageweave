@@ -50,6 +50,9 @@ export interface PageInfo {
   height_pt: number;
   rotation: 0 | 90 | 180 | 270;
   label: string | null;
+  /** Lower-left corner of the displayed page box in PDF user space (0,0 for most files). */
+  origin_x?: number;
+  origin_y?: number;
 }
 
 export interface BookmarkInfo {
@@ -184,7 +187,25 @@ export type Operation =
       output: string;
     }
   | { op: "export_images"; input: string; pages: string | null; dpi: number; output_dir: string }
-  | { op: "organize_pages"; input: string; extra_inputs: string[]; pages: Array<{ source: number; page: number; rotate: number }>; output: string };
+  | { op: "organize_pages"; input: string; extra_inputs: string[]; pages: Array<{ source: number; page: number; rotate: number }>; output: string }
+  | { op: "redact"; input: string; areas: RedactArea[]; output: string };
+
+/** An area to redact, in PDF user space of a 0-based page. */
+export interface RedactArea {
+  page: number;
+  rect: SearchRect;
+}
+
+/** What redacting one area would remove (engine `redaction_preview`). */
+export interface AreaPreview {
+  page: number;
+  text: string;
+  images: number;
+  graphics: number;
+  /** Drawings crossing the area's edge: covered by the black box but kept in the file. */
+  graphics_kept: number;
+  annotations: number;
+}
 
 export interface RecoveredJob {
   label: string;

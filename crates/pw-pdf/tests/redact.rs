@@ -251,3 +251,11 @@ fn cancelled_redaction_writes_nothing() {
     assert_eq!(err.category, pw_core::ErrorCategory::Cancelled);
     assert_eq!(std::fs::read_dir(dir.path()).expect("ok").count(), 0);
 }
+
+#[test]
+fn page_info_reports_the_displayed_box_origin() {
+    let info = pw_pdf::open_document(&fixture("redaction.pdf"), &opts()).expect("open");
+    assert_eq!((info.pages[0].origin_x, info.pages[0].origin_y), (0.0, 0.0));
+    assert_eq!((info.pages[3].origin_x, info.pages[3].origin_y), (100.0, 100.0));
+    assert_eq!((info.pages[3].width_pt, info.pages[3].height_pt), (612.0, 792.0));
+}

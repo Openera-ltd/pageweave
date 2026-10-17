@@ -31,6 +31,12 @@ pub struct PageInfo {
     /// Intrinsic /Rotate value in degrees (0, 90, 180, 270).
     pub rotation: u32,
     pub label: Option<String>,
+    /// Lower-left corner of the displayed page box (CropBox within MediaBox) in user space. Text,
+    /// search and annotation coordinates are user space, so they are offset by this on screen.
+    #[serde(default)]
+    pub origin_x: f32,
+    #[serde(default)]
+    pub origin_y: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -155,17 +161,29 @@ pub fn open_document(path: &Path, opts: &OpenOptions) -> PwResult<DocumentInfo> 
                 let rotation = rotation_degrees(page.rotation());
                 let (w, h) = (page.width().value, page.height().value);
                 let (width_pt, height_pt) = if matches!(rotation, 90 | 270) { (h, w) } else { (w, h) };
+                let origin = page.boundaries().bounding().map(|b| (b.bounds.left().value, b.bounds.bottom().value));
+                let (origin_x, origin_y) = origin.unwrap_or((0.0, 0.0));
                 pages.push(PageInfo {
                     index: i,
                     width_pt,
                     height_pt,
                     rotation,
                     label: page.label().map(str::to_string),
+                    origin_x,
+                    origin_y,
                 })
             }
             Err(_) => {
                 warnings.push(format!("Page {} could not be loaded.", i + 1));
-                pages.push(PageInfo { index: i, width_pt: 0.0, height_pt: 0.0, rotation: 0, label: None });
+                pages.push(PageInfo {
+                    index: i,
+                    width_pt: 0.0,
+                    height_pt: 0.0,
+                    rotation: 0,
+                    label: None,
+                    origin_x: 0.0,
+                    origin_y: 0.0,
+                });
             }
         }
     }

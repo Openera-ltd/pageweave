@@ -79,6 +79,8 @@ export function SearchBar({
   onPrevious,
   onClose,
   focusNonce,
+  onMarkAll,
+  markAllAvailable,
 }: {
   state: SearchState;
   onChange: (patch: Partial<SearchState>) => void;
@@ -87,6 +89,9 @@ export function SearchBar({
   onPrevious: () => void;
   onClose: () => void;
   focusNonce: number;
+  /** Mark every match for redaction; `markAllAvailable` is true or the reason it is not. */
+  onMarkAll?: () => void;
+  markAllAvailable?: true | string;
 }) {
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -150,6 +155,18 @@ export function SearchBar({
       <span className="count" role="status" aria-live="polite">
         {label}
       </span>
+      {onMarkAll && (
+        <button
+          type="button"
+          className="btn"
+          data-command="redact.markMatches"
+          title={markAllAvailable === true ? "Mark every match for redaction" : `Mark every match for redaction — ${markAllAvailable ?? ""}`}
+          aria-disabled={markAllAvailable !== true || undefined}
+          onClick={() => markAllAvailable === true && onMarkAll()}
+        >
+          Mark all for redaction
+        </button>
+      )}
       <button type="button" className="btn icon" data-command="search.close" aria-label="Close find" title="Close find (Esc)" onClick={onClose}>
         <X />
       </button>
@@ -169,6 +186,10 @@ export function StatusBar({
   onCancelJob,
   unsaved = 0,
   onSaveAnnotations,
+  marks = 0,
+  onApplyRedactions,
+  markMode = false,
+  onEndMarkMode,
 }: {
   doc: OpenedDoc | null;
   currentPage: number;
@@ -180,6 +201,12 @@ export function StatusBar({
   /** Unsaved annotations in the active document. */
   unsaved?: number;
   onSaveAnnotations?: () => void;
+  /** Areas marked for redaction in the active document. */
+  marks?: number;
+  onApplyRedactions?: () => void;
+  /** Dragging on pages marks areas for redaction. */
+  markMode?: boolean;
+  onEndMarkMode?: () => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
@@ -229,6 +256,19 @@ export function StatusBar({
               </button>
             )}
           </span>
+          {markMode && (
+            <span className="row marking" data-testid="mark-mode">
+              Drag on a page to mark an area for redaction
+              <button type="button" className="btn link" onClick={() => onEndMarkMode?.()} title="Stop marking areas (Esc)">
+                Done
+              </button>
+            </span>
+          )}
+          {marks > 0 && (
+            <button type="button" className="btn link danger-text" data-testid="redaction-marks" title="Review and apply redactions" onClick={() => onApplyRedactions?.()}>
+              {marks} redaction mark{marks === 1 ? "" : "s"} — Apply…
+            </button>
+          )}
         </>
       ) : (
         <span>No document open</span>

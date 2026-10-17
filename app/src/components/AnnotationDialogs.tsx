@@ -58,6 +58,7 @@ export function NoteDialog({ page, onAdd, onCancel }: { page: number; onAdd: (te
 export function UnsavedDialog({
   names,
   count,
+  marks = 0,
   canSave,
   onSave,
   onDiscard,
@@ -66,6 +67,8 @@ export function UnsavedDialog({
   /** Documents with unsaved changes. */
   names: string[];
   count: number;
+  /** Redaction marks among the changes: never saved into a copy, only applied. */
+  marks?: number;
   /** Saving from here is offered only for a single document. */
   canSave: boolean;
   onSave: () => void;
@@ -108,6 +111,11 @@ export function UnsavedDialog({
       <p className="hint" style={{ marginBottom: 0 }}>
         {canSave ? "Save them to a copy of the PDF, or discard them." : "Cancel to save each document’s changes first, or discard them all."}
       </p>
+      {marks > 0 && (
+        <p className="hint" data-testid="unsaved-marks" style={{ marginBottom: 0 }}>
+          {marks} redaction mark{marks === 1 ? " is" : "s are"} not saved in a copy. Cancel and use Apply redactions to remove that content.
+        </p>
+      )}
     </Dialog>
   );
 }

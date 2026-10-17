@@ -1,8 +1,8 @@
 // Pending (unsaved) annotations: turning a text selection into PDF rectangles, merging them per line,
 // and the undo/redo history. Saving goes through the engine's typed `annotate` operation.
 
-import { displaySizePt, screenRectToPdf, CSS_PX_PER_PT, type ScreenRect } from "./geometry";
-import type { AnnotationKind, AnnotationSpec, PageInfo, SearchRect } from "./types";
+import { displaySizePt, pageOrigin, screenRectToPdf, CSS_PX_PER_PT, type ScreenRect } from "./geometry";
+import type { AnnotationKind, AnnotationSpec, PageInfo, RedactArea, SearchRect } from "./types";
 
 export const ANNOTATION_COLORS: Record<AnnotationKind, string> = {
   highlight: "#ffd400",
@@ -11,18 +11,52 @@ export const ANNOTATION_COLORS: Record<AnnotationKind, string> = {
   note: "#ffd400",
 };
 
-export const KIND_LABEL: Record<AnnotationKind, string> = {
+/**
+ * Pending items share one undo history. `redact` is UI-only: an area marked for redaction, applied
+ * with the engine's `redact` operation and never written as an annotation.
+ */
+export type PendingKind = AnnotationKind | "redact";
+
+export const KIND_LABEL: Record<PendingKind, string> = {
   highlight: "Highlight",
   underline: "Underline",
   strike_out: "Strikethrough",
   note: "Note",
+  redact: "Marked for redaction",
 };
+
+export const REDACT_MARK_COLOR = "#d1242f";
 
 /** Side of the square a note marker occupies, in PDF points (matches the engine's icon box). */
 export const NOTE_ICON_PT = 18;
 
-export interface PendingAnnotation extends AnnotationSpec {
+export interface PendingAnnotation extends Omit<AnnotationSpec, "kind"> {
   id: number;
+  kind: PendingKind;
+}
+
+export const isRedactMark = (a: Pick<PendingAnnotation, "kind">): boolean => a.kind === "redact";
+
+/** The pending annotations to write into a saved copy (redaction marks excluded), as the engine contract. */
+export function annotationSpecs(items: PendingAnnotation[]): AnnotationSpec[] {
+  return items
+    .filter((a) => !isRedactMark(a))
+    .map(({ page, kind, rects, color, contents }) => ({ page, kind: kind as AnnotationKind, rects, color, contents: contents ?? null }));
+}
+
+/** Redaction areas of the pending marks, one per rectangle. */
+export function redactAreas(items: PendingAnnotation[]): RedactArea[] {
+  return items.filter(isRedactMark).flatMap((a) => a.rects.map((rect) => ({ page: a.page, rect })));
+}
+
+/** Remove one item (e.g. a single redaction mark); the redo list is kept. */
+export function removeItem(h: AnnotationHistory, id: number): AnnotationHistory {
+  return { ...h, items: h.items.filter((a) => a.id !== id) };
+}
+
+/** Pending items on `page` whose rectangles contain the PDF point (x, y). */
+export function itemsAt(items: PendingAnnotation[], page: number, x: number, y: number): PendingAnnotation[] {
+  return items.filter((a) => a.page === page && a.rects.some((r) => x >= r.left && x <= r.right && y >= r.bottom && y <= r.top));
 }
 
 export interface AnnotationHistory {
@@ -130,9 +164,10 @@ export function clientRectsToPageRects(
 }
 
 /** Square note marker anchored at a PDF point (its top-left corner), kept inside the page. */
-export function noteRect(x: number, y: number, page: Pick<PageInfo, "width_pt" | "height_pt">): SearchRect {
-  const left = Math.min(Math.max(0, x), Math.max(0, page.width_pt - NOTE_ICON_PT));
-  const top = Math.max(Math.min(page.height_pt, y), Math.min(page.height_pt, NOTE_ICON_PT));
+export function noteRect(x: number, y: number, page: Pick<PageInfo, "width_pt" | "height_pt" | "origin_x" | "origin_y">): SearchRect {
+  const o = pageOrigin(page);
+  const left = Math.min(Math.max(o.x, x), o.x + Math.max(0, page.width_pt - NOTE_ICON_PT));
+  const top = Math.max(Math.min(o.y + page.height_pt, y), o.y + Math.min(page.height_pt, NOTE_ICON_PT));
   return { left, bottom: top - NOTE_ICON_PT, right: left + NOTE_ICON_PT, top };
 }
 

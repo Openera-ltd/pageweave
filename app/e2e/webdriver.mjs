@@ -174,6 +174,36 @@ export class Session {
     await this.cmd("DELETE", "/actions");
   }
 
+  /** Right-click at viewport coordinates. */
+  async contextClickAt(x, y) {
+    await this.cmd("POST", "/actions", {
+      actions: [{ type: "pointer", id: "mouse", parameters: { pointerType: "mouse" }, actions: [{ type: "pointerMove", origin: "viewport", x: Math.round(x), y: Math.round(y) }, { type: "pointerDown", button: 2 }, { type: "pointerUp", button: 2 }] }],
+    });
+    await this.cmd("DELETE", "/actions");
+  }
+
+  /** Left-button drag between two viewport points, in small steps (a real pointer drag). */
+  async dragAt(x0, y0, x1, y1, steps = 8) {
+    const moves = Array.from({ length: steps }, (_, i) => ({
+      type: "pointerMove",
+      origin: "viewport",
+      duration: 16,
+      x: Math.round(x0 + ((x1 - x0) * (i + 1)) / steps),
+      y: Math.round(y0 + ((y1 - y0) * (i + 1)) / steps),
+    }));
+    await this.cmd("POST", "/actions", {
+      actions: [
+        {
+          type: "pointer",
+          id: "mouse",
+          parameters: { pointerType: "mouse" },
+          actions: [{ type: "pointerMove", origin: "viewport", x: Math.round(x0), y: Math.round(y0) }, { type: "pointerDown", button: 0 }, ...moves, { type: "pointerUp", button: 0 }],
+        },
+      ],
+    });
+    await this.cmd("DELETE", "/actions");
+  }
+
   /** Double-click at viewport coordinates (for transformed elements whose layout box differs from what is drawn). */
   async doubleClickAt(x, y) {
     const click = [{ type: "pointerDown", button: 0 }, { type: "pointerUp", button: 0 }];

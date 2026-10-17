@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { addAnnotations, clientRectsToPageRects, EMPTY_HISTORY, makeId, mergeLineRects, noteRect, redo, undo, type PendingAnnotation } from "./annotations";
+import { addAnnotations, annotationSpecs, clientRectsToPageRects, EMPTY_HISTORY, itemsAt, makeId, mergeLineRects, noteRect, redactAreas, redo, removeItem, undo, type PendingAnnotation } from "./annotations";
+import { describeArea } from "./components/RedactDialog";
 import { pdfRectToScreen, screenRectToPdf } from "./geometry";
 import type { PageInfo } from "./types";
 
@@ -120,5 +121,50 @@ describe("undo / redo history", () => {
     h = addAnnotations(h, [ann(makeId(3, 0))]);
     expect(h.redo).toHaveLength(0);
     expect(redo(h)).toBe(h);
+  });
+});
+
+describe("redaction marks", () => {
+  const r = (left: number, bottom: number, right: number, top: number) => ({ left, bottom, right, top });
+  const items: PendingAnnotation[] = [
+    { id: makeId(1, 0), page: 0, kind: "highlight", rects: [r(0, 0, 10, 10)], color: "#ffd400" },
+    { id: makeId(2, 0), page: 0, kind: "redact", rects: [r(20, 20, 30, 30), r(40, 40, 50, 50)], color: "#d1242f" },
+    { id: makeId(2, 1), page: 3, kind: "redact", rects: [r(0, 0, 5, 5)], color: "#d1242f" },
+    { id: makeId(3, 0), page: 1, kind: "note", rects: [r(0, 0, 18, 18)], color: "#ffd400", contents: "hi" },
+  ];
+
+  it("are never written as annotations into a saved copy", () => {
+    const specs = annotationSpecs(items);
+    expect(specs.map((a) => a.kind)).toEqual(["highlight", "note"]);
+    expect(specs.every((a) => !("id" in a))).toBe(true);
+    expect(specs[1]!.contents).toBe("hi");
+    expect(specs[0]!.contents).toBeNull();
+  });
+
+  it("become one redaction area per rectangle", () => {
+    expect(redactAreas(items)).toEqual([
+      { page: 0, rect: r(20, 20, 30, 30) },
+      { page: 0, rect: r(40, 40, 50, 50) },
+      { page: 3, rect: r(0, 0, 5, 5) },
+    ]);
+  });
+
+  it("are found under a point and removed one at a time, undoable as a group", () => {
+    expect(itemsAt(items, 0, 45, 45).map((a) => a.id)).toEqual([makeId(2, 0)]);
+    expect(itemsAt(items, 1, 45, 45)).toEqual([]);
+    const h = removeItem({ items, redo: [] }, makeId(2, 1));
+    expect(h.items.map((a) => a.id)).not.toContain(makeId(2, 1));
+    // Marks added together undo together (group 2), leaving the highlight and note group order intact.
+    const u = undo({ items: [items[0]!, items[3]!, items[1]!, items[2]!], redo: [] });
+    expect(u.items.map((a) => a.kind)).toEqual(["highlight", "note"]);
+    expect(u.redo.length).toBe(2);
+  });
+});
+
+describe("redaction preview text", () => {
+  it("names text, images, removed drawings and comments; not drawings that stay", () => {
+    expect(describeArea({ page: 0, text: "SECRET", images: 1, graphics: 3, graphics_kept: 1, annotations: 2 })).toBe("“SECRET” · 1 image · 2 drawings · 2 comments or links");
+    expect(describeArea({ page: 0, text: "", images: 0, graphics: 1, graphics_kept: 1, annotations: 0 })).toBe("Nothing found under this area");
+    expect(describeArea({ page: 0, text: "x".repeat(100), images: 0, graphics: 0, graphics_kept: 0, annotations: 0 })).toMatch(/^“x{80}…”$/);
   });
 });

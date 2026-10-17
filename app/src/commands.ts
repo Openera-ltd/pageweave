@@ -16,6 +16,11 @@ export type CommandId =
   | "annotate.underline"
   | "annotate.strikeOut"
   | "annotate.note"
+  | "redact.markSelection"
+  | "redact.markArea"
+  | "redact.markPage"
+  | "redact.markMatches"
+  | "redact.apply"
   | "file.saveCopy"
   | "edit.discardChanges"
   | "tab.next"
@@ -51,7 +56,7 @@ export type CommandId =
 export interface CommandSpec {
   id: CommandId;
   label: string;
-  category: "File" | "Edit" | "View" | "Navigate" | "Search" | "Pages" | "Annotate" | "App";
+  category: "File" | "Edit" | "View" | "Navigate" | "Search" | "Pages" | "Annotate" | "Redact" | "App";
   /** Default bindings; the first is shown in menus. */
   shortcuts: string[];
   /** Allowed while typing in a text field (e.g. Escape, F3). */
@@ -65,12 +70,17 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "file.properties", label: "Document properties", category: "File", shortcuts: ["Ctrl+D"] },
   // Ctrl+C is handled natively by the text layer; this command backs the context-menu entry.
   { id: "edit.copy", label: "Copy selected text", category: "Edit", shortcuts: [] },
-  { id: "edit.undo", label: "Undo annotation", category: "Edit", shortcuts: ["Ctrl+Z"] },
-  { id: "edit.redo", label: "Redo annotation", category: "Edit", shortcuts: ["Ctrl+Y", "Ctrl+Shift+Z"] },
+  { id: "edit.undo", label: "Undo annotation or mark", category: "Edit", shortcuts: ["Ctrl+Z"] },
+  { id: "edit.redo", label: "Redo annotation or mark", category: "Edit", shortcuts: ["Ctrl+Y", "Ctrl+Shift+Z"] },
   { id: "annotate.highlight", label: "Highlight selected text", category: "Annotate", shortcuts: ["Ctrl+Shift+H"] },
   { id: "annotate.underline", label: "Underline selected text", category: "Annotate", shortcuts: ["Ctrl+Shift+U"] },
   { id: "annotate.strikeOut", label: "Strike through selected text", category: "Annotate", shortcuts: [] },
   { id: "annotate.note", label: "Add note…", category: "Annotate", shortcuts: [] },
+  { id: "redact.markSelection", label: "Mark selected text for redaction", category: "Redact", shortcuts: ["Ctrl+Shift+X"] },
+  { id: "redact.markArea", label: "Mark areas for redaction", category: "Redact", shortcuts: [] },
+  { id: "redact.markPage", label: "Mark current page for redaction", category: "Redact", shortcuts: [] },
+  { id: "redact.markMatches", label: "Mark all search matches for redaction", category: "Redact", shortcuts: [], allowInInput: true },
+  { id: "redact.apply", label: "Apply redactions…", category: "Redact", shortcuts: [] },
   { id: "file.saveCopy", label: "Save a copy with changes…", category: "File", shortcuts: ["Ctrl+S"], allowInInput: true },
   { id: "edit.discardChanges", label: "Discard unsaved changes", category: "Edit", shortcuts: [] },
   { id: "tab.next", label: "Next tab", category: "View", shortcuts: ["Ctrl+Tab"], allowInInput: true },

@@ -7,6 +7,7 @@ import {
   mostVisiblePage,
   nextZoom,
   pdfRectToScreen,
+  screenRectToPdf,
   renderScalePermille,
   unrotatedLayer,
   applyLayerTransform,
@@ -105,6 +106,23 @@ describe("text layer transform agrees with the search-rect mapping for every rot
       expect(top).toBeCloseTo(expected.top, 6);
       if (rot === 0) expect(layer.transform).toBe("none");
       else expect(layer.transform).toContain(`rotate(${rot}deg)`);
+    });
+  }
+});
+
+describe("pages whose box does not start at 0,0", () => {
+  for (const rot of [0, 90, 180, 270] as const) {
+    it(`maps user space through the box origin at ${rot}°`, () => {
+      const page = { index: 0, width_pt: 612, height_pt: 792, rotation: rot, label: null, origin_x: 100, origin_y: 100 };
+      // The box's lower-left corner in user space is (100,100): a rect there touches the displayed corner.
+      const corner = pdfRectToScreen({ left: 100, bottom: 100, right: 110, top: 120 }, page, 1);
+      const unshifted = pdfRectToScreen({ left: 0, bottom: 0, right: 10, top: 20 }, { ...page, origin_x: 0, origin_y: 0 }, 1);
+      expect(corner).toEqual(unshifted);
+      const back = screenRectToPdf(corner, page, 1);
+      expect(back.left).toBeCloseTo(100);
+      expect(back.bottom).toBeCloseTo(100);
+      expect(back.right).toBeCloseTo(110);
+      expect(back.top).toBeCloseTo(120);
     });
   }
 });

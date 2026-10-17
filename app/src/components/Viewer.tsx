@@ -3,8 +3,8 @@ import { StickyNote } from "lucide-react";
 import { useApi } from "../api";
 import { KIND_LABEL, type PendingAnnotation } from "../annotations";
 import { currentValue, fieldLabel, isFillable, type FormEdits } from "../forms";
-import { CSS_PX_PER_PT, displaySizePx, mostVisiblePage, pdfRectToScreen, renderScalePermille, unrotatedLayer } from "../geometry";
-import type { FormField, FormInfo, FormValue, FormWidget, OpenedDoc, PageInfo, PageText, SearchHit } from "../types";
+import { CSS_PX_PER_PT, displaySizePt, displaySizePx, mostVisiblePage, pageOrigin, pdfRectToScreen, renderScalePermille, screenRectToPdf, unrotatedLayer } from "../geometry";
+import type { FormField, FormInfo, FormValue, FormWidget, OpenedDoc, PageInfo, PageText, SearchHit, SearchRect } from "../types";
 
 export interface ScrollRequest {
   page: number;
@@ -31,6 +31,9 @@ interface ViewerProps {
   onFormEdit?: (field: FormField, value: FormValue) => void;
   /** Called once after mount with the real viewport width, so the first zoom can fit the page. */
   onMeasured?: (width: number) => void;
+  /** Area-marking mode: dragging on a page marks a rectangle for redaction instead of selecting text. */
+  markMode?: boolean;
+  onMarkArea?: (page: number, rect: SearchRect) => void;
 }
 
 const PAGE_GAP = 16;
@@ -45,7 +48,7 @@ interface PageWidget {
 }
 let firstPageReported = false;
 
-export function Viewer({ doc, zoom, onZoomStep, onCurrentPage, scrollRequest, hits, currentHit, onPageContextMenu, annotations, form, formEdits, onFormEdit, onMeasured }: ViewerProps) {
+export function Viewer({ doc, zoom, onZoomStep, onCurrentPage, scrollRequest, hits, currentHit, onPageContextMenu, annotations, form, formEdits, onFormEdit, onMeasured, markMode, onMarkArea }: ViewerProps) {
   const ref = useRef<HTMLDivElement>(null);
   // Per-page lists with stable identity, so adding an annotation re-renders only its page.
   const byPage = useMemo(() => {
@@ -177,6 +180,7 @@ export function Viewer({ doc, zoom, onZoomStep, onCurrentPage, scrollRequest, hi
             widgets={widgetsByPage.get(p.index) ?? NO_WIDGETS}
             formEdits={formEdits ?? NO_EDITS}
             onFormEdit={onFormEdit}
+            onMarkArea={markMode ? onMarkArea : undefined}
           />
         ))}
       </div>
@@ -196,9 +200,11 @@ interface PageProps {
   widgets: PageWidget[];
   formEdits: FormEdits;
   onFormEdit?: (field: FormField, value: FormValue) => void;
+  /** Set while marking areas for redaction. */
+  onMarkArea?: (page: number, rect: SearchRect) => void;
 }
 
-const Page = memo(function Page({ docId, page, zoom, root, hits, currentHit, onContextMenu, annotations, widgets, formEdits, onFormEdit }: PageProps) {
+const Page = memo(function Page({ docId, page, zoom, root, hits, currentHit, onContextMenu, annotations, widgets, formEdits, onFormEdit, onMarkArea }: PageProps) {
   const api = useApi();
   const ref = useRef<HTMLDivElement>(null);
   const [near, setNear] = useState(false);
@@ -275,6 +281,7 @@ const Page = memo(function Page({ docId, page, zoom, root, hits, currentHit, onC
       {annotations.length > 0 && <AnnotationLayer page={page} zoom={zoom} annotations={annotations} />}
       {near && <TextLayer docId={docId} page={page} zoom={zoom} />}
       {near && widgets.length > 0 && onFormEdit && <FormLayer docId={docId} page={page} zoom={zoom} widgets={widgets} edits={formEdits} onEdit={onFormEdit} />}
+      {onMarkArea && <MarkCapture page={page} onMark={onMarkArea} />}
       {pageHits.flatMap(({ h, i }) =>
         h.rects.map((r, j) => {
           const s = pdfRectToScreen(r, page, zoom);
@@ -291,6 +298,49 @@ const Page = memo(function Page({ docId, page, zoom, root, hits, currentHit, onC
     </div>
   );
 });
+
+/**
+ * Pointer layer over a page in area-marking mode: drag to draw a rectangle, released as a mark in
+ * PDF space. The zoom comes from the page element's measured width (like text selections), so UI
+ * scaling cannot skew the area. Keyboard users mark pages or search matches instead.
+ */
+function MarkCapture({ page, onMark }: { page: PageInfo; onMark: (page: number, rect: SearchRect) => void }) {
+  const [draft, setDraft] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const local = (e: React.PointerEvent<HTMLDivElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    return { x: Math.min(Math.max(e.clientX - r.left, 0), r.width), y: Math.min(Math.max(e.clientY - r.top, 0), r.height) };
+  };
+  const box = draft && { left: Math.min(draft.x0, draft.x1), top: Math.min(draft.y0, draft.y1), width: Math.abs(draft.x1 - draft.x0), height: Math.abs(draft.y1 - draft.y0) };
+  return (
+    <div
+      className="markcapture"
+      data-markcapture={page.index}
+      aria-hidden="true"
+      onPointerDown={(e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+        const p = local(e);
+        setDraft({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
+      }}
+      onPointerMove={(e) => {
+        if (!draft) return;
+        const p = local(e);
+        setDraft((d) => d && { ...d, x1: p.x, y1: p.y });
+      }}
+      onPointerUp={(e) => {
+        if (!draft || !box) return;
+        setDraft(null);
+        if (box.width < 4 || box.height < 4) return;
+        const zoom = e.currentTarget.getBoundingClientRect().width / (displaySizePt(page).w * CSS_PX_PER_PT);
+        onMark(page.index, screenRectToPdf(box, page, zoom));
+      }}
+      onPointerCancel={() => setDraft(null)}
+    >
+      {box && <div className="markdraft" style={{ left: box.left, top: box.top, width: box.width, height: box.height }} />}
+    </div>
+  );
+}
 
 /**
  * Unsaved annotations drawn over the page image, under the text layer so selection keeps working.
@@ -328,12 +378,13 @@ const AnnotationLayer = memo(function AnnotationLayer({ page, zoom, annotations 
  */
 function FormLayer({ docId, page, zoom, widgets, edits, onEdit }: { docId: number; page: PageInfo; zoom: number; widgets: PageWidget[]; edits: FormEdits; onEdit: (field: FormField, value: FormValue) => void }) {
   const k = zoom * CSS_PX_PER_PT;
+  const o = pageOrigin(page);
   const layer = unrotatedLayer(page, zoom);
   return (
     <div className="formlayer" data-formlayer={page.index} style={{ width: layer.width, height: layer.height, transform: layer.transform }}>
       {widgets.map(({ field, widget, key }) => {
         const r = widget.rect;
-        const box = { left: r.left * k, top: (page.height_pt - r.top) * k, width: Math.max(4, (r.right - r.left) * k), height: Math.max(4, (r.top - r.bottom) * k) };
+        const box = { left: (r.left - o.x) * k, top: (o.y + page.height_pt - r.top) * k, width: Math.max(4, (r.right - r.left) * k), height: Math.max(4, (r.top - r.bottom) * k) };
         const fontSize = Math.max(8, Math.min(box.height * 0.62, 13 * k));
         const label = fieldLabel(field);
         const common = {
@@ -434,6 +485,7 @@ const TextLayer = memo(function TextLayer({ docId, page, zoom }: { docId: number
 
   if (!text || text.segments.length === 0) return null;
   const k = zoom * CSS_PX_PER_PT;
+  const o = pageOrigin(page);
   const layer = unrotatedLayer(page, zoom);
   return (
     <div ref={ref} className="textlayer" data-textlayer={page.index} style={{ width: layer.width, height: layer.height, transform: layer.transform }}>
@@ -443,7 +495,7 @@ const TextLayer = memo(function TextLayer({ docId, page, zoom }: { docId: number
           <span
             key={i}
             data-w={(s.right - s.left) * k}
-            style={{ left: s.left * k, top: (page.height_pt - s.top) * k, fontSize: h, height: h }}
+            style={{ left: (s.left - o.x) * k, top: (o.y + page.height_pt - s.top) * k, fontSize: h, height: h }}
           >
             {s.text}
             {"\n"}

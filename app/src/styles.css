@@ -50,6 +50,7 @@
   --success: #1c7c3d;
   --warning: #9a5b00;
   --danger: #b42318;
+  --on-danger: #ffffff;
   --danger-bg: #fdecea;
   --warning-bg: #fff4e0;
   --shadow-1: 0 1px 2px rgba(15, 23, 42, 0.08);
@@ -80,6 +81,8 @@
   --success: #5ccf86;
   --warning: #f3b250;
   --danger: #ff8a7a;
+  /* White on the light dark-theme red is 2.3:1; dark text is ~8:1. */
+  --on-danger: #2a0d09;
   --danger-bg: #3a1d1a;
   --warning-bg: #3a2c12;
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5);
@@ -248,7 +251,7 @@ textarea {
 
 .btn.danger {
   background: var(--danger);
-  color: #fff;
+  color: var(--on-danger);
 }
 
 .btn svg {
@@ -612,6 +615,37 @@ textarea {
 .annot.strike_out[data-edge="left"],
 .annot.strike_out[data-edge="right"] {
   background: linear-gradient(to right, transparent calc(50% - 1px), var(--annot) calc(50% - 1px), var(--annot) calc(50% + 1px), transparent calc(50% + 1px));
+}
+
+/* Marked for redaction (not yet applied): outlined and hatched, so it reads as "pending", not as the black result. */
+.annot.redact {
+  border: 2px solid var(--annot);
+  background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--annot) 28%, transparent) 0 4px, transparent 4px 8px);
+}
+
+/* Area-marking mode: a pointer layer above the text layer, so dragging draws instead of selecting. */
+.markcapture {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+  touch-action: none;
+  z-index: 3;
+}
+
+.markdraft {
+  position: absolute;
+  border: 2px dashed var(--danger);
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  pointer-events: none;
+}
+
+.statusbar .marking {
+  color: var(--danger);
+  gap: var(--space-2);
+}
+
+.btn.link.danger-text {
+  color: var(--danger);
 }
 
 .annot.note {

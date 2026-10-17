@@ -59,6 +59,11 @@ export function fitWidthZoom(pages: PageInfo[], containerWidthPx: number, paddin
   return clampZoom((containerWidthPx - paddingPx) / (widest * CSS_PX_PER_PT));
 }
 
+/** Lower-left corner of the displayed page box in user space (text and search coordinates use it). */
+export function pageOrigin(p: Pick<PageInfo, "origin_x" | "origin_y">): { x: number; y: number } {
+  return { x: p.origin_x ?? 0, y: p.origin_y ?? 0 };
+}
+
 export interface ScreenRect {
   left: number;
   top: number;
@@ -72,15 +77,16 @@ export interface ScreenRect {
  */
 export function pdfRectToScreen(
   r: SearchRect,
-  page: Pick<PageInfo, "width_pt" | "height_pt" | "rotation">,
+  page: Pick<PageInfo, "width_pt" | "height_pt" | "rotation" | "origin_x" | "origin_y">,
   zoom: number,
 ): ScreenRect {
   const k = zoom * CSS_PX_PER_PT;
   const w = page.width_pt;
   const h = page.height_pt;
+  const o = pageOrigin(page);
   const corners: Array<[number, number]> = [
-    [r.left, r.bottom],
-    [r.right, r.top],
+    [r.left - o.x, r.bottom - o.y],
+    [r.right - o.x, r.top - o.y],
   ];
   const mapped = corners.map(([x, y]) => {
     switch (page.rotation) {
@@ -158,9 +164,10 @@ export function applyLayerTransform(rotation: PageInfo["rotation"], W: number, H
  */
 export function screenRectToPdf(
   s: ScreenRect,
-  page: Pick<PageInfo, "width_pt" | "height_pt" | "rotation">,
+  page: Pick<PageInfo, "width_pt" | "height_pt" | "rotation" | "origin_x" | "origin_y">,
   zoom: number,
 ): SearchRect {
+  const o = pageOrigin(page);
   const k = zoom * CSS_PX_PER_PT;
   const w = page.width_pt;
   const h = page.height_pt;
@@ -182,5 +189,5 @@ export function screenRectToPdf(
   });
   const xs = mapped.map((m) => m[0]!);
   const ys = mapped.map((m) => m[1]!);
-  return { left: Math.min(...xs), bottom: Math.min(...ys), right: Math.max(...xs), top: Math.max(...ys) };
+  return { left: Math.min(...xs) + o.x, bottom: Math.min(...ys) + o.y, right: Math.max(...xs) + o.x, top: Math.max(...ys) + o.y };
 }

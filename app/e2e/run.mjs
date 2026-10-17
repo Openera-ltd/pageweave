@@ -1025,8 +1025,13 @@ await test("page reload: open documents come back as tabs and render", async () 
   await withApp([join(FIX, "single-page.pdf"), join(FIX, "five-pages.pdf")], async (s) => {
     await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label').length")) === 2, "two tabs");
     await pageLoaded(s, 0);
-    await s.exec("location.reload(); return 1");
-    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label').length").catch(() => 0)) === 2, "both tabs restored after reload", 20000);
+    // reload() returns before navigation starts: mark the old page so its tabs are not counted.
+    await s.exec("window.__beforeReload = true; location.reload(); return 1");
+    await s.waitUntil(
+      async () => (await s.exec("return window.__beforeReload ? -1 : document.querySelectorAll('.tab-label .name').length").catch(() => -1)) === 2,
+      "both tabs restored after reload",
+      20000,
+    );
     const names = await s.exec("return [...document.querySelectorAll('.tab-label .name')].map(n => n.textContent)");
     assert(JSON.stringify(names) === JSON.stringify(["single-page.pdf", "five-pages.pdf"]), `tab order kept (${names})`);
     await pageLoaded(s, 0);
@@ -1059,6 +1064,105 @@ await test("export pages as images: page range and resolution; PNG files written
     assert(b.readUInt32BE(16) === 612 && b.readUInt32BE(20) === 792, `page ${n} is 612×792 at 72 dpi (got ${b.readUInt32BE(16)}×${b.readUInt32BE(20)})`);
   }
   assert(!existsSync(join(dir, "five-pages_p001.png")), "only the chosen pages");
+});
+
+await test("redaction: mark by search, selection and dragged area; review; apply a verified copy with the content gone", async () => {
+  const src = join(FIX, "redaction.pdf");
+  const before = sha(src);
+  const out = join(work, "redacted.pdf");
+  await withApp([src], async (s) => {
+    const marks = () => s.exec("return document.querySelector('[data-testid=redaction-marks]')?.textContent ?? ''");
+    await pageLoaded(s, 0);
+    // Apply is unavailable, with a reason, until something is marked.
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Apply redactions");
+    const applyOpt = await s.exec("const o=document.querySelector(`[role=option][data-command='${arguments[0]}']`); return o ? o.getAttribute('aria-disabled') + '|' + o.textContent : null", "redact.apply");
+    assert(applyOpt && applyOpt.startsWith("true") && applyOpt.includes("Mark text or areas"), `apply unavailable without marks (${applyOpt})`);
+    await s.keys(["Escape"]);
+    // 1. Find → Mark all for redaction (disabled with a reason before there are matches).
+    await s.keys(["Control", "f"]);
+    const reason = await s.attr('[data-command="redact.markMatches"]', "title");
+    assert(reason.includes("Find text first"), `mark-all explains why it is unavailable (${reason})`);
+    await s.type('input[aria-label="Find in document"]', "SECRET-4711");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => (await s.attr('[data-command="redact.markMatches"]', "aria-disabled")) === null, "mark-all enabled once there are matches");
+    await s.click('[data-command="redact.markMatches"]');
+    await s.waitUntil(async () => (await annotCount(s, "redact")) === 1, "search match marked");
+    await s.keys(["Escape"]);
+
+    // 2. Selected word → Ctrl+Shift+X.
+    await markSpan(s, 0, "PWHIDE");
+    await s.doubleClickAt(...(await s.exec("const r=document.querySelector('[data-e2e=target]').getBoundingClientRect(); return [r.right - 20, r.top + r.height/2]")));
+    await s.waitUntil(async () => (await selection(s)).trim() === "PWHIDE", "word selected");
+    await s.keys(["Control", "Shift", "X"]);
+    await s.waitUntil(async () => (await annotCount(s, "redact")) === 2, "selection marked");
+
+    // 3. Mark areas mode (command palette) → drag over the image at 450–482 × 300–332 pt.
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Mark areas");
+    await s.click('[role="option"][data-command="redact.markArea"]');
+    await s.waitFor('[data-testid="mark-mode"]');
+    // Page point (x, y) in PDF space → viewport pixels, measured after scrolling settles.
+    await s.exec("document.querySelector('.viewer [data-page=\"0\"]').scrollIntoView({block:'center'}); return 1");
+    await new Promise((r) => setTimeout(r, 200));
+    const box = await s.exec("const r=document.querySelector('.viewer [data-page=\"0\"]').getBoundingClientRect(); return [r.left, r.top, r.width/612]");
+    const at = (x, y) => [box[0] + x * box[2], box[1] + (792 - y) * box[2]];
+    await s.dragAt(...at(444, 344), ...at(488, 294));
+    await s.waitUntil(async () => (await annotCount(s, "redact")) === 3, "dragged area marked");
+    assert((await selection(s)) === "", "dragging in mark mode does not select text");
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=mark-mode]')")), "Escape ends mark mode");
+    await s.waitUntil(async () => (await marks()) === "3 redaction marks — Apply…", "status bar counts the marks");
+    await axeCheck(s, "viewer-with-redaction-marks");
+    writeFileSync(join(ART, "redaction-marks.png"), await s.screenshot());
+
+    // 4. Right-click a mark → Remove; the notice's Undo brings it back.
+    await s.contextClickAt(...at(466, 316));
+    await s.waitFor('[role="menuitem"]');
+    const labels = await s.exec("return [...document.querySelectorAll('[role=menuitem]')].map(m => m.textContent)");
+    assert(labels.some((l) => l.startsWith("Remove this redaction mark")), `menu offers removing the mark (${labels})`);
+    await s.exec("[...document.querySelectorAll('[role=menuitem]')].find(m => m.textContent.startsWith('Remove this redaction mark')).click(); return 1");
+    await s.waitUntil(async () => (await annotCount(s, "redact")) === 2, "mark removed");
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Redaction mark removed")), "removal notice");
+    await s.exec("[...document.querySelectorAll('.notice button')].find(b => b.textContent === 'Undo').click(); return 1");
+    await s.waitUntil(async () => (await annotCount(s, "redact")) === 3, "Undo restores the mark");
+
+    // Whole page: page 2's context menu → Mark page 2 for redaction.
+    await s.exec("document.querySelector('.viewer [data-page=\"1\"]').scrollIntoView({block:'center'}); return 1");
+    await s.contextClick('.viewer [data-page="1"]', 0, 0);
+    await s.click('[role="menuitem"][data-command="redact.markPage"]');
+    await s.waitUntil(async () => (await marks()) === "4 redaction marks — Apply…", "whole page marked");
+
+    // 5. Closing the tab asks; marks cannot be saved into a copy, and the prompt says so.
+    await s.keys(["Control", "w"]);
+    await s.waitFor('[data-testid="unsaved-marks"]');
+    assert(!(await s.exec("return !!document.querySelector('[data-testid=unsaved-save]')")), "no Save copy for marks only");
+    await s.click('[data-testid="unsaved-cancel"]');
+
+    // 6. Review and apply.
+    await s.click('[data-testid="redaction-marks"]');
+    await s.waitFor('[data-testid="redact-preview"] li');
+    const preview = await s.exec("return document.querySelector('[data-testid=redact-preview]').textContent");
+    for (const want of ["SECRET-4711", "PWHIDE", "1 image", "Page 2: “Page two visible"]) assert(preview.includes(want), `preview lists ${want}: ${preview}`);
+    assert((await s.exec("return document.querySelector('#redact-output').value")).endsWith("redaction-redacted.pdf"), "default output name");
+    await axeCheck(s, "redact-dialog");
+    writeFileSync(join(ART, "redaction-dialog.png"), await s.screenshot());
+    await s.type("#redact-output", out);
+    await s.click('[data-testid="redact-apply"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved redacted.pdf")), "saved notice", 30000);
+    await s.waitUntil(async () => (await annotCount(s, "redact")) === 0 && (await marks()) === "", "marks used up");
+    await s.waitUntil(async () => (await s.exec("return [...document.querySelectorAll('.tab-label .name')].map(n => n.textContent)")).includes("redacted.pdf"), "redacted copy opened for inspection");
+  });
+  assert(existsSync(out), "redacted copy exists");
+  assert(sha(src) === before, "source PDF unchanged");
+  const raw = readFileSync(out).toString("latin1");
+  for (const gone of ["SECRET", "PWHIDE", "PWFORMX"]) assert(!raw.includes(gone), `${gone} not in the file bytes`);
+  if (CLI) {
+    const t = JSON.parse(execFileSync(CLI, ["--json", "text", "--pages", "1", out], { encoding: "utf8" })).result.data.pages[0].text;
+    assert(!t.includes("SECRET") && !t.includes("PWHIDE") && t.includes("is closed") && t.includes("Public footer text"), `independent text check: ${t}`);
+    const t2 = JSON.parse(execFileSync(CLI, ["--json", "text", "--pages", "2", out], { encoding: "utf8" })).result.data.pages[0].text;
+    assert(t2.trim() === "", `whole-page redaction leaves no text on page 2: ${t2}`);
+  }
 });
 
 /* ------------------------------------------------------------------ */

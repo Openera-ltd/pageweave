@@ -127,6 +127,23 @@ async fn form_fields(state: State<'_, AppState>, doc_id: DocId) -> CmdResult<pw_
     blocking(move || pw_pdf::form_fields(&doc.path, doc.password.as_deref())).await
 }
 
+/// What redacting `areas` of an open document would remove (read-only). Runs on a worker thread.
+#[tauri::command]
+async fn redaction_preview(
+    state: State<'_, AppState>,
+    doc_id: DocId,
+    areas: Vec<pw_core::ops::RedactArea>,
+) -> CmdResult<Vec<pw_pdf::AreaPreview>> {
+    let doc = state.doc(doc_id)?;
+    // Same validation as the engine operation (area count and geometry).
+    OperationRequest::new(pw_core::ops::Operation::RedactionPreview { input: doc.path.clone(), areas: areas.clone() })
+        .validate()?;
+    blocking(move || {
+        pw_pdf::redaction_preview(&doc.path, &pw_pdf::OpenOptions { password: doc.password.as_deref() }, &areas)
+    })
+    .await
+}
+
 /// Start an operation as a job. When `doc_id` is given, its password is supplied by the host so
 /// the UI never has to hold it. Returns the job ID; progress arrives as `job-update` events.
 #[tauri::command]
@@ -351,6 +368,7 @@ pub fn run() {
             mark_timing,
             recovered_jobs,
             form_fields,
+            redaction_preview,
             open_documents,
         ])
         .run(tauri::generate_context!())
