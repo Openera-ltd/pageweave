@@ -11,13 +11,14 @@
 
 #![allow(unsafe_code)] // D-006: the only module with direct PDFium calls.
 
-use crate::document::preflight;
-use crate::engine_exclusive;
+use crate::document::{load, preflight, OpenOptions};
+use crate::edit::{apply_annotations, protection_warnings, save_bytes, verify_annotation_counts};
+use crate::{engine, engine_exclusive, map_pdfium_error};
 use pdfium_render::prelude::{
     FPDF_ANNOTATION, FPDF_BOOL, FPDF_DOCUMENT, FPDF_DWORD, FPDF_FILEWRITE, FPDF_FORMFILLINFO, FPDF_FORMHANDLE,
     FPDF_PAGE, FPDF_WCHAR, FPDF_WIDESTRING, FS_RECTF,
 };
-use pw_core::ops::{FieldValue, FormValue, RectPt};
+use pw_core::ops::{AnnotationSpec, FieldValue, FormValue, RectPt};
 use pw_core::output::{write_atomic_bytes, CollisionPolicy, CommittedOutput};
 use pw_core::{ErrorCategory, PwError, PwResult};
 use serde::{Deserialize, Serialize};
@@ -476,6 +477,75 @@ pub fn form_fields(path: &Path, password: Option<&str>) -> PwResult<FormInfo> {
     Ok(FormInfo { fields, has_xfa: fd.has_xfa(), truncated })
 }
 
+/// Fill the form in memory (exclusive engine access, released before returning) and return the
+/// saved bytes. Every request is checked against the form before anything changes.
+fn fill_bytes(input: &Path, password: Option<&str>, values: &[FieldValue]) -> PwResult<Vec<u8>> {
+    let (_exclusive, lib) = engine_exclusive()?;
+    let api = api(lib)?;
+    let fd = FormDoc::open(api, input, password)?;
+    if fd.has_xfa() {
+        return Err(PwError::new(
+            ErrorCategory::UnsupportedOperation,
+            "form.xfa",
+            "This form uses XFA, which PageWeave cannot fill.",
+        ));
+    }
+    let (fields, _) = fd.fields()?;
+    let by_name: HashMap<&str, &FormField> = fields.iter().map(|f| (f.name.as_str(), f)).collect();
+    for v in values {
+        let f = by_name.get(v.name.as_str()).ok_or_else(|| {
+            PwError::invalid("form.unknown_field", format!("The form has no field named “{}”.", v.name))
+        })?;
+        check_value(f, &v.value)?;
+    }
+    let wanted: HashMap<&str, &FormValue> = values.iter().map(|v| (v.name.as_str(), &v.value)).collect();
+    let mut done: HashSet<String> = HashSet::new();
+    let mut failed: Option<String> = None;
+    fd.for_each_widget(|_pi, page, annot| {
+        let Some(name) = fd.name(annot) else { return Ok(true) };
+        let Some(value) = wanted.get(name.as_str()) else { return Ok(true) };
+        let field = by_name[name.as_str()];
+        let ok = match (field.kind, value) {
+            (FieldKind::Text, FormValue::Text(t)) => done.contains(&name) || fd.replace_text(page, annot, t),
+            (FieldKind::Checkbox, FormValue::Checked(want)) => {
+                if !done.contains(&name) && fd.checked(annot) != *want {
+                    fd.click(page, annot);
+                }
+                true
+            }
+            (FieldKind::Radio, FormValue::Text(want)) => {
+                if fd.export_value(annot).as_deref() == Some(want.as_str()) && !fd.checked(annot) {
+                    fd.click(page, annot);
+                }
+                true
+            }
+            (FieldKind::Combo | FieldKind::List, FormValue::Text(t)) => {
+                done.contains(&name)
+                    || match field.options.iter().position(|o| o == t) {
+                        Some(i) => fd.select_index(
+                            page,
+                            annot,
+                            i,
+                            if field.kind == FieldKind::List { field.options.len() } else { 0 },
+                        ),
+                        None => fd.replace_text(page, annot, t), // editable combo (checked above)
+                    }
+            }
+            _ => false,
+        };
+        if !ok {
+            failed = Some(name.clone());
+            return Ok(false);
+        }
+        done.insert(name);
+        Ok(true)
+    })?;
+    if let Some(name) = failed {
+        return Err(fail("form.fill", format!("The field “{name}” could not be filled.")));
+    }
+    fd.save()
+}
+
 /// Apply `values` to a copy of `input` and commit it to `output`. The source is not modified. The
 /// staged copy is reopened and every requested value is checked before it is committed.
 pub fn fill_form(
@@ -485,95 +555,65 @@ pub fn fill_form(
     output: &Path,
     policy: CollisionPolicy,
 ) -> PwResult<(CommittedOutput, Vec<String>)> {
-    let bytes = {
-        let (_exclusive, lib) = engine_exclusive()?;
-        let api = api(lib)?;
-        let fd = FormDoc::open(api, input, password)?;
-        if fd.has_xfa() {
-            return Err(PwError::new(
-                ErrorCategory::UnsupportedOperation,
-                "form.xfa",
-                "This form uses XFA, which PageWeave cannot fill.",
-            ));
+    apply_edits(input, password, values, &[], output, policy)
+}
+
+/// Apply form values and annotations to one copy of `input`, then verify both in the staged output
+/// (field values re-read; annotation counts per touched page) before committing it atomically.
+pub fn apply_edits(
+    input: &Path,
+    password: Option<&str>,
+    values: &[FieldValue],
+    annotations: &[AnnotationSpec],
+    output: &Path,
+    policy: CollisionPolicy,
+) -> PwResult<(CommittedOutput, Vec<String>)> {
+    let filled = if values.is_empty() { None } else { Some(fill_bytes(input, password, values)?) };
+    let (bytes, expected) = if annotations.is_empty() {
+        match filled {
+            Some(b) => (b, Default::default()),
+            None => return Err(PwError::invalid("edits.empty", "There are no changes to save.")),
         }
-        let (fields, _) = fd.fields()?;
-        let by_name: HashMap<&str, &FormField> = fields.iter().map(|f| (f.name.as_str(), f)).collect();
-        // Check every request against the form before changing anything.
-        for v in values {
-            let f = by_name.get(v.name.as_str()).ok_or_else(|| {
-                PwError::invalid("form.unknown_field", format!("The form has no field named “{}”.", v.name))
-            })?;
-            check_value(f, &v.value)?;
-        }
-        let wanted: HashMap<&str, &FormValue> = values.iter().map(|v| (v.name.as_str(), &v.value)).collect();
-        let mut done: HashSet<String> = HashSet::new();
-        let mut failed: Option<String> = None;
-        fd.for_each_widget(|_pi, page, annot| {
-            let Some(name) = fd.name(annot) else { return Ok(true) };
-            let Some(value) = wanted.get(name.as_str()) else { return Ok(true) };
-            let field = by_name[name.as_str()];
-            let ok = match (field.kind, value) {
-                (FieldKind::Text, FormValue::Text(t)) => done.contains(&name) || fd.replace_text(page, annot, t),
-                (FieldKind::Checkbox, FormValue::Checked(want)) => {
-                    if !done.contains(&name) && fd.checked(annot) != *want {
-                        fd.click(page, annot);
-                    }
-                    true
-                }
-                (FieldKind::Radio, FormValue::Text(want)) => {
-                    if fd.export_value(annot).as_deref() == Some(want.as_str()) && !fd.checked(annot) {
-                        fd.click(page, annot);
-                    }
-                    true
-                }
-                (FieldKind::Combo | FieldKind::List, FormValue::Text(t)) => {
-                    done.contains(&name)
-                        || match field.options.iter().position(|o| o == t) {
-                            Some(i) => fd.select_index(
-                                page,
-                                annot,
-                                i,
-                                if field.kind == FieldKind::List { field.options.len() } else { 0 },
-                            ),
-                            None => fd.replace_text(page, annot, t), // editable combo (checked above)
-                        }
-                }
-                _ => false,
-            };
-            if !ok {
-                failed = Some(name.clone());
-                return Ok(false);
-            }
-            done.insert(name);
-            Ok(true)
-        })?;
-        if let Some(name) = failed {
-            return Err(fail("form.fill", format!("The field “{name}” could not be filled.")));
-        }
-        fd.save()?
-        // FormDoc dropped and the exclusive lock released here.
+    } else {
+        let pdfium = engine()?;
+        let doc = match &filled {
+            Some(b) => pdfium.load_pdf_from_byte_slice(b, password).map_err(|e| map_pdfium_error(&e, "open"))?,
+            None => load(&pdfium, input, &OpenOptions { password })?,
+        };
+        let expected = apply_annotations(&doc, annotations)?;
+        (save_bytes(&doc)?, expected)
     };
 
     let mut out_encrypted = false;
     let committed = write_atomic_bytes(output, policy, &[input.to_path_buf()], &bytes, |staged| {
-        let info = match form_fields(staged, None) {
-            Ok(i) => i,
-            Err(e) if e.category == ErrorCategory::PasswordRequired && password.is_some() => {
+        // Form check first: it needs exclusive engine access, so no shared access may be held here.
+        if !values.is_empty() {
+            let info = match form_fields(staged, None) {
+                Ok(i) => i,
+                Err(e) if e.category == ErrorCategory::PasswordRequired && password.is_some() => {
+                    out_encrypted = true;
+                    form_fields(staged, password).map_err(|_| verify_failed("could not be reopened"))?
+                }
+                Err(_) => return Err(verify_failed("could not be reopened")),
+            };
+            let by_name: HashMap<&str, &FormField> = info.fields.iter().map(|f| (f.name.as_str(), f)).collect();
+            for v in values {
+                let f = by_name.get(v.name.as_str()).ok_or_else(|| verify_failed("a field is missing"))?;
+                if !value_matches(f, &v.value) {
+                    return Err(verify_failed(&format!("“{}” did not take the new value", v.name)));
+                }
+            }
+        }
+        if !annotations.is_empty() {
+            let pdfium = engine()?;
+            if password.is_some() && pdfium.load_pdf_from_file(staged, None).is_err() {
                 out_encrypted = true;
-                form_fields(staged, password).map_err(|_| verify_failed("could not be reopened"))?
             }
-            Err(_) => return Err(verify_failed("could not be reopened")),
-        };
-        let by_name: HashMap<&str, &FormField> = info.fields.iter().map(|f| (f.name.as_str(), f)).collect();
-        for v in values {
-            let f = by_name.get(v.name.as_str()).ok_or_else(|| verify_failed("a field is missing"))?;
-            if !value_matches(f, &v.value) {
-                return Err(verify_failed(&format!("“{}” did not take the new value", v.name)));
-            }
+            verify_annotation_counts(&pdfium, staged, password, &expected)?;
         }
         Ok(())
     })?;
-    Ok((committed, crate::edit::protection_warnings(password.is_some(), out_encrypted)))
+    Ok((committed, protection_warnings(password.is_some(), out_encrypted)))
 }
 
 fn verify_failed(what: &str) -> PwError {

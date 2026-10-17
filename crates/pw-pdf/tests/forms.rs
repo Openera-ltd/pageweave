@@ -251,6 +251,59 @@ fn form_work_and_rendering_can_run_concurrently() {
     }
 }
 
+#[test]
+fn form_values_and_annotations_are_saved_together() {
+    use pw_core::ops::{AnnotationKind, AnnotationSpec, RectPt};
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("both.pdf");
+    let mut req = OperationRequest::new(Operation::ApplyEdits {
+        input: fixture("form-fields.pdf"),
+        form_values: vec![text("full_name", "Both Kinds")],
+        annotations: vec![AnnotationSpec {
+            page: 0,
+            kind: AnnotationKind::Highlight,
+            rects: vec![RectPt { left: 40.0, bottom: 735.0, right: 200.0, top: 750.0 }],
+            color: "#ffd400".into(),
+            contents: None,
+        }],
+        output: out.clone(),
+    });
+    req.collision = CollisionPolicy::Fail;
+    let r = execute(&req, None).expect("apply");
+    assert_eq!(r.operation, "apply_edits");
+    let lf = lopdf_fields(&out);
+    assert_eq!(lf["full_name"].0, "Both Kinds");
+    let doc = lopdf::Document::load(&out).expect("lopdf");
+    let page = *doc.get_pages().get(&1).expect("page 1");
+    let annots = doc.get_page_annotations(page).expect("annots");
+    let highlights =
+        annots.iter().filter(|a| a.get(b"Subtype").and_then(|s| s.as_name()).is_ok_and(|n| n == b"Highlight")).count();
+    assert_eq!(highlights, 1, "highlight added next to the filled widgets");
+    // Annotations alone also work, and nothing at all is rejected.
+    let only = dir.path().join("only-annots.pdf");
+    let mut req = OperationRequest::new(Operation::ApplyEdits {
+        input: fixture("single-page.pdf"),
+        form_values: vec![],
+        annotations: vec![AnnotationSpec {
+            page: 0,
+            kind: AnnotationKind::Underline,
+            rects: vec![RectPt { left: 72.0, bottom: 700.0, right: 150.0, top: 712.0 }],
+            color: "#1f6feb".into(),
+            contents: None,
+        }],
+        output: only.clone(),
+    });
+    req.collision = CollisionPolicy::Fail;
+    execute(&req, None).expect("annotations only");
+    let empty = OperationRequest::new(Operation::ApplyEdits {
+        input: fixture("single-page.pdf"),
+        form_values: vec![],
+        annotations: vec![],
+        output: dir.path().join("x.pdf"),
+    });
+    assert_eq!(execute(&empty, None).expect_err("empty").code, "edits.empty");
+}
+
 /// D-006: `unsafe` is denied workspace-wide; only the forms module may opt in.
 #[test]
 fn unsafe_is_confined_to_the_forms_module() {

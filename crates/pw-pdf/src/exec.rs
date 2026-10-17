@@ -107,6 +107,11 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(w);
             (vec![out(&c, None)], json!({ "fields": values.len() }))
         }
+        Operation::ApplyEdits { input, form_values, annotations, output } => {
+            let (c, w) = crate::forms::apply_edits(input, opts.password, form_values, annotations, output, policy)?;
+            warnings.extend(w);
+            (vec![out(&c, None)], json!({ "fields": form_values.len(), "annotations": annotations.len() }))
+        }
         Operation::Split { input, split, output_dir } => {
             let (parts, w) = edit::split(input, &opts, split, output_dir, policy, &cancelled)?;
             warnings.extend(w);

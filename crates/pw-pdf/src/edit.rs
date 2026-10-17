@@ -60,7 +60,7 @@ fn verify_output(pdfium: &Pdfium, staged: &Path, expect: &Expect) -> PwResult<bo
 pub(crate) const PROTECTION_REMOVED: &str =
     "The output is not password protected, although the original was. Protect it again before sharing if needed.";
 
-fn save_bytes(doc: &PdfDocument) -> PwResult<Vec<u8>> {
+pub(crate) fn save_bytes(doc: &PdfDocument) -> PwResult<Vec<u8>> {
     doc.save_to_bytes().map_err(|e| map_pdfium_error(&e, "save"))
 }
 
@@ -342,19 +342,14 @@ fn pdf_rect(r: &pw_core::ops::RectPt) -> PdfRect {
     PdfRect::new_from_values(r.bottom, r.left, r.top, r.right)
 }
 
-/// Add annotations to a copy of the document. Markup annotations (highlight, underline,
-/// strike-out) get one quad per rectangle; notes are placed at the first rectangle's top-left.
-/// The staged output is reopened and the annotation count of every touched page is verified.
-pub fn annotate(
-    input: &Path,
-    opts: &OpenOptions,
+/// Add annotations to a loaded document. Markup annotations (highlight, underline, strike-out) get
+/// one quad per rectangle; notes are placed at the first rectangle's top-left. Returns the expected
+/// annotation count of every touched page, for verification after saving.
+pub(crate) fn apply_annotations(
+    doc: &PdfDocument,
     specs: &[pw_core::ops::AnnotationSpec],
-    output: &Path,
-    policy: CollisionPolicy,
-) -> PwResult<EditOutcome> {
+) -> PwResult<std::collections::BTreeMap<u32, usize>> {
     use pw_core::ops::AnnotationKind;
-    let pdfium = engine()?;
-    let doc = load(&pdfium, input, opts)?;
     let count = doc.pages().len().max(0) as u32;
     let mut expected: std::collections::BTreeMap<u32, usize> = std::collections::BTreeMap::new();
     for spec in specs {
@@ -415,6 +410,46 @@ pub fn annotate(
         }
         expected.insert(spec.page, before + 1);
     }
+    Ok(expected)
+}
+
+/// Reopen a staged output and check the annotation count of every touched page.
+pub(crate) fn verify_annotation_counts(
+    pdfium: &Pdfium,
+    staged: &Path,
+    password: Option<&str>,
+    expected: &std::collections::BTreeMap<u32, usize>,
+) -> PwResult<()> {
+    let reopened =
+        pdfium.load_pdf_from_file(staged, None).or_else(|_| pdfium.load_pdf_from_file(staged, password)).map_err(
+            |_| PwError::new(ErrorCategory::ValidationFailed, "output.verify", "The output could not be reopened."),
+        )?;
+    for (page, want) in expected {
+        let got = reopened.pages().get(*page as PdfPageIndex).map(|p| p.annotations().len()).unwrap_or(0);
+        if got != *want {
+            return Err(PwError::new(
+                ErrorCategory::ValidationFailed,
+                "output.verify",
+                format!("The output failed verification (page {} has {got} annotations, expected {want}).", page + 1),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Add annotations to a copy of the document; the staged output is reopened and the annotation
+/// count of every touched page is verified before it is committed.
+pub fn annotate(
+    input: &Path,
+    opts: &OpenOptions,
+    specs: &[pw_core::ops::AnnotationSpec],
+    output: &Path,
+    policy: CollisionPolicy,
+) -> PwResult<EditOutcome> {
+    let pdfium = engine()?;
+    let doc = load(&pdfium, input, opts)?;
+    let count = doc.pages().len().max(0) as u32;
+    let expected = apply_annotations(&doc, specs)?;
     let bytes = save_bytes(&doc)?;
     let src_encrypted = source_encrypted(&doc);
     let protected = [input.to_path_buf()];
@@ -422,24 +457,7 @@ pub fn annotate(
     let c = write_atomic_bytes(output, policy, &protected, &bytes, |staged| {
         encrypted =
             verify_output(&pdfium, staged, &Expect { page_count: count, password: opts.password, rotations: None })?;
-        let reopened =
-            pdfium.load_pdf_from_file(staged, if encrypted { opts.password } else { None }).map_err(|_| {
-                PwError::new(ErrorCategory::ValidationFailed, "output.verify", "The output could not be reopened.")
-            })?;
-        for (page, want) in &expected {
-            let got = reopened.pages().get(*page as PdfPageIndex).map(|p| p.annotations().len()).unwrap_or(0);
-            if got != *want {
-                return Err(PwError::new(
-                    ErrorCategory::ValidationFailed,
-                    "output.verify",
-                    format!(
-                        "The output failed verification (page {} has {got} annotations, expected {want}).",
-                        page + 1
-                    ),
-                ));
-            }
-        }
-        Ok(())
+        verify_annotation_counts(&pdfium, staged, opts.password, &expected)
     })?;
     Ok((c, count, protection_warnings(src_encrypted, encrypted)))
 }

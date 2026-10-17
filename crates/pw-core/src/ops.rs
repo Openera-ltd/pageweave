@@ -142,6 +142,15 @@ pub enum Operation {
         values: Vec<FieldValue>,
         output: PathBuf,
     },
+    /// Apply pending edits (form values and/or annotations) to one new file.
+    ApplyEdits {
+        input: PathBuf,
+        #[serde(default)]
+        form_values: Vec<FieldValue>,
+        #[serde(default)]
+        annotations: Vec<AnnotationSpec>,
+        output: PathBuf,
+    },
 }
 
 impl Operation {
@@ -159,6 +168,7 @@ impl Operation {
             Operation::Split { .. } => "split",
             Operation::Annotate { .. } => "annotate",
             Operation::FillForm { .. } => "fill_form",
+            Operation::ApplyEdits { .. } => "apply_edits",
         }
     }
 
@@ -187,7 +197,8 @@ impl Operation {
             | Operation::RotatePages { input, .. }
             | Operation::Split { input, .. }
             | Operation::Annotate { input, .. }
-            | Operation::FillForm { input, .. } => vec![input.clone()],
+            | Operation::FillForm { input, .. }
+            | Operation::ApplyEdits { input, .. } => vec![input.clone()],
         }
     }
 
@@ -213,7 +224,8 @@ impl Operation {
             | Operation::DeletePages { output, .. }
             | Operation::RotatePages { output, .. }
             | Operation::Annotate { output, .. }
-            | Operation::FillForm { output, .. } => parent(output),
+            | Operation::FillForm { output, .. }
+            | Operation::ApplyEdits { output, .. } => parent(output),
         }
     }
 
@@ -264,6 +276,17 @@ impl Operation {
             }
             Operation::Annotate { annotations, .. } => validate_annotations(annotations)?,
             Operation::FillForm { values, .. } => validate_form_values(values)?,
+            Operation::ApplyEdits { form_values, annotations, .. } => {
+                if form_values.is_empty() && annotations.is_empty() {
+                    return Err(PwError::invalid("edits.empty", "There are no changes to save."));
+                }
+                if !form_values.is_empty() {
+                    validate_form_values(form_values)?;
+                }
+                if !annotations.is_empty() {
+                    validate_annotations(annotations)?;
+                }
+            }
             _ => {}
         }
         Ok(())
@@ -434,6 +457,30 @@ mod tests {
         assert_eq!(v(vec![fv(" ", "x")]).as_deref(), Some("form.no_name"));
         assert_eq!(v(vec![fv("a", "x"), fv("a", "y")]).as_deref(), Some("form.duplicate"));
         assert_eq!(v(vec![fv("a", &"x".repeat(MAX_FORM_TEXT_CHARS + 1))]).as_deref(), Some("form.too_long"));
+
+        // apply_edits: either list may be empty, not both; each non-empty list is validated.
+        let edits = |form_values: Vec<FieldValue>, annotations: Vec<AnnotationSpec>| {
+            OperationRequest::new(Operation::ApplyEdits {
+                input: "f".into(),
+                form_values,
+                annotations,
+                output: "o".into(),
+            })
+            .validate()
+            .err()
+            .map(|e| e.code)
+        };
+        assert_eq!(edits(vec![], vec![]).as_deref(), Some("edits.empty"));
+        assert_eq!(edits(vec![fv("a", "x")], vec![]), None);
+        assert_eq!(edits(vec![fv("a", "x"), fv("a", "y")], vec![]).as_deref(), Some("form.duplicate"));
+        let bad = AnnotationSpec {
+            page: 0,
+            kind: AnnotationKind::Highlight,
+            rects: vec![],
+            color: "#ffcc00".into(),
+            contents: None,
+        };
+        assert_eq!(edits(vec![], vec![bad]).as_deref(), Some("annotate.rects"));
     }
 
     #[test]

@@ -19,7 +19,7 @@ pub use document::{
 };
 pub use edit::{annotate, delete_pages, extract_pages, merge, rotate_pages, split};
 pub use exec::execute;
-pub use forms::{fill_form, form_fields, FieldKind, FormField, FormInfo, FormWidget};
+pub use forms::{apply_edits, fill_form, form_fields, FieldKind, FormField, FormInfo, FormWidget};
 
 use pdfium_render::prelude::*;
 use pw_core::{ErrorCategory, PwError, PwResult};
@@ -33,10 +33,21 @@ static LIB_PATH: OnceLock<PathBuf> = OnceLock::new();
 /// Shared for pdfium-render use, exclusive for direct PDFium calls (see module docs).
 static ENGINE_LOCK: parking_lot::RwLock<()> = parking_lot::RwLock::new(());
 
+thread_local! {
+    /// Shared engine guards held by this thread (exclusive access while any is held would deadlock).
+    static SHARED_HELD: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
 /// Engine access for one operation: holds the shared engine lock while in scope.
 pub(crate) struct Engine {
     _shared: parking_lot::RwLockReadGuard<'static, ()>,
     pdfium: &'static Pdfium,
+}
+
+impl Drop for Engine {
+    fn drop(&mut self) {
+        SHARED_HELD.with(|c| c.set(c.get().saturating_sub(1)));
+    }
 }
 
 impl std::ops::Deref for Engine {
@@ -50,12 +61,18 @@ impl std::ops::Deref for Engine {
 /// against a waiting exclusive user.
 pub(crate) fn engine() -> PwResult<Engine> {
     let pdfium = init(None)?;
-    Ok(Engine { _shared: ENGINE_LOCK.read_recursive(), pdfium })
+    let guard = ENGINE_LOCK.read_recursive();
+    SHARED_HELD.with(|c| c.set(c.get() + 1));
+    Ok(Engine { _shared: guard, pdfium })
 }
 
 /// Exclusive engine access for direct PDFium calls.
 pub(crate) fn engine_exclusive() -> PwResult<(parking_lot::RwLockWriteGuard<'static, ()>, &'static Path)> {
     init(None)?;
+    if SHARED_HELD.with(|c| c.get()) > 0 {
+        // Would wait forever for this thread's own shared guard: a programming error, not a hang.
+        return Err(PwError::internal("engine.lock_order", "An internal engine error occurred."));
+    }
     let path = LIB_PATH.get().ok_or_else(|| {
         PwError::new(
             ErrorCategory::EngineFailure,
@@ -160,5 +177,17 @@ pub(crate) fn map_pdfium_error(e: &PdfiumError, during: &str) -> PwError {
             format!("pdf.engine.{during}"),
             "The PDF engine reported an error.",
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn exclusive_access_while_holding_shared_access_is_an_error_not_a_deadlock() {
+        let Ok(shared) = super::engine() else { return }; // engine not installed: nothing to check
+        let r = super::engine_exclusive();
+        assert_eq!(r.err().map(|e| e.code), Some("engine.lock_order".to_string()));
+        drop(shared);
+        assert!(super::engine_exclusive().is_ok(), "available again once shared access is released");
     }
 }
