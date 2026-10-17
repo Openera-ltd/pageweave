@@ -306,6 +306,16 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
                 }),
             )
         }
+        Operation::FindBlankPages { input, max_ink } => {
+            let page_progress = |done: u64, total: u64| {
+                if let Some(c) = ctx {
+                    c.set_progress(done, total, "pages");
+                }
+            };
+            let pages = crate::blank::find_blank_pages(input, &opts, *max_ink, &cancelled, &page_progress)?;
+            let blank: Vec<u32> = pages.iter().filter(|p| p.blank).map(|p| p.page).collect();
+            (vec![], json!({ "pages": pages, "blank": blank }))
+        }
         Operation::Deskew { input, pages, output } => {
             let page_progress = |done: u64, total: u64| {
                 if let Some(c) = ctx {

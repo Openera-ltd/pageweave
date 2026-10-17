@@ -160,7 +160,7 @@ fn render_gray(page: &PdfPage) -> PwResult<GrayImage> {
     Ok(bitmap.as_image().map_err(|e| map_pdfium_error(&e, "render"))?.to_luma8())
 }
 
-fn visible_chars(page: &PdfPage) -> usize {
+pub(crate) fn visible_chars(page: &PdfPage) -> usize {
     page.objects()
         .iter()
         .filter_map(|o| o.as_text_object().map(|t| (t.render_mode(), t.text())))

@@ -518,6 +518,47 @@ def compare_pair() -> tuple[bytes, bytes]:
     return build_compare_document(old, "Report v1"), build_compare_document(new, "Report v2")
 
 
+def build_blank_pages_document() -> bytes:
+    """Six pages for blank-page detection: (1) text, (2) truly empty, (3) a scanned "blank": an
+    off-white image with a few dust specks, (4) only a page number, (5) faint grey table lines (real
+    content), (6) text."""
+    import zlib
+    import random
+    w = PdfWriter()
+    catalog, pages_obj = w.reserve(), w.reserve()
+    font = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    # Off-white 100 dpi Letter scan with deterministic specks.
+    iw, ih = 850, 1100
+    px = bytearray([242]) * (iw * ih)
+    rnd = random.Random(7)
+    for _ in range(60):
+        x, y = rnd.randrange(iw - 2), rnd.randrange(ih - 2)
+        for dy in range(2):
+            for dx in range(2):
+                px[(y + dy) * iw + x + dx] = 40
+    data = zlib.compress(bytes(px), 9)
+    scan = w.add(b"<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /DeviceGray /BitsPerComponent 8 "
+                 b"/Filter /FlateDecode /Length %d >>\nstream\n" % (iw, ih, len(data)) + data + b"\nendstream")
+    table = "0.82 G 0.6 w " + " ".join(f"72 {700 - 30 * i} m 540 {700 - 30 * i} l S" for i in range(16)) + \
+            " " + " ".join(f"{72 + 117 * j} 700 m {72 + 117 * j} 250 l S" for j in range(5))
+    contents = [
+        text_page_content(["Chapter one PWBLANK1", "This page has text."]),
+        b"",
+        b"q 612 0 0 792 0 0 cm /Scan Do Q",
+        b"BT /F1 10 Tf 300 30 Td (4) Tj ET",
+        table.encode(),
+        text_page_content(["The end PWBLANK6"]),
+    ]
+    kids = []
+    for c in contents:
+        cid = w.stream(c)
+        kids.append(w.add(f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] "
+                          f"/Resources << /Font << /F1 {font} 0 R >> /XObject << /Scan {scan} 0 R >> >> /Contents {cid} 0 R >>"))
+    w.set(pages_obj, "<< /Type /Pages /Kids [%s] /Count %d >>" % (" ".join(f"{k} 0 R" for k in kids), len(kids)))
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R >>")
+    return w.render(catalog, w.add("<< /Title (Blank pages) >>"))
+
+
 def main() -> int:
     if len(sys.argv) == 4 and sys.argv[1] == "--big":
         # Large document for benchmarks (not committed): gen_fixtures.py --big PAGES OUT.pdf
@@ -549,6 +590,7 @@ def main() -> int:
     files["signature-structure.pdf"] = build_signature_structure_document()
     files["uncompressed-report.pdf"] = build_uncompressed_report()
     files["compare-old.pdf"], files["compare-new.pdf"] = compare_pair()
+    files["blank-pages.pdf"] = build_blank_pages_document()
 
     good = files["five-pages.pdf"]
     files["corrupt-truncated.pdf"] = good[: len(good) // 2]

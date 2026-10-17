@@ -87,6 +87,7 @@ pageweave crop --top 10 --bottom 10 --unit mm -o report-trimmed.pdf report.pdf
 pageweave watermark --text DRAFT --opacity 20 --angle 45 -o report-draft.pdf report.pdf
 pageweave optimize -o report-smaller.pdf report.pdf    # lossless; images unchanged
 pageweave optimize --image-dpi 150 --image-quality 75 -o photos-small.pdf photos.pdf   # also resample images
+pageweave blank-pages scan.pdf                           # list blank pages; remove with delete --pages
 pageweave deskew -o scan-straight.pdf scan.pdf           # straighten skewed scanned pages (lossless)
 pageweave signatures contract.pdf                       # integrity of each signature (trust not checked yet)
 pageweave compare report-v1.pdf report-v2.pdf          # page, text, format and visual differences

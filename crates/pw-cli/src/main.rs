@@ -192,6 +192,13 @@ enum Command {
         #[arg(long, default_value = "pt")]
         unit: String,
     },
+    /// List blank pages (no text, comments or ink beyond a threshold); remove them with `delete`.
+    BlankPages {
+        file: PathBuf,
+        /// Largest ink share of a blank page, in percent (0–5).
+        #[arg(long, default_value_t = 0.2)]
+        max_ink: f32,
+    },
     /// Straighten skewed scanned pages in a new file (lossless: the page content is turned).
     Deskew {
         file: PathBuf,
@@ -432,6 +439,9 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
             }
             _ => return Err(PwError::invalid("attach.output", "Give -o with --save or --add.")),
         },
+        Command::BlankPages { file, max_ink } => {
+            Operation::FindBlankPages { input: file.clone(), max_ink: max_ink / 100.0 }
+        }
         Command::Deskew { file, output, pages } => {
             Operation::Deskew { input: file.clone(), pages: pages.clone(), output: output.clone() }
         }
@@ -608,6 +618,16 @@ fn print_human(r: &OperationResult) {
                     line += " (read-only)";
                 }
                 println!("{line}");
+            }
+        }
+        "find_blank_pages" => {
+            let blank: Vec<u64> = r.data["blank"].as_array().into_iter().flatten().filter_map(|v| v.as_u64()).collect();
+            if blank.is_empty() {
+                println!("No blank pages.");
+            } else {
+                let list: Vec<String> = blank.iter().map(|p| (p + 1).to_string()).collect();
+                println!("Blank pages: {}", list.join(", "));
+                println!("Remove them with: pageweave delete --pages \"{}\" -o OUTPUT FILE", list.join(","));
             }
         }
         "verify_signatures" => {

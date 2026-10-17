@@ -248,6 +248,13 @@ pub struct ImageReduce {
     pub quality: u8,
 }
 
+/// Default ink share under which a page counts as blank (0.2%: dust and scanner noise).
+pub const DEFAULT_MAX_INK: f32 = 0.002;
+
+fn default_max_ink() -> f32 {
+    DEFAULT_MAX_INK
+}
+
 pub const MIN_IMAGE_DPI: u32 = 36;
 pub const MAX_IMAGE_DPI: u32 = 1200;
 pub const MIN_JPEG_QUALITY: u8 = 30;
@@ -545,6 +552,13 @@ pub enum Operation {
         images: Option<ImageReduce>,
         output: PathBuf,
     },
+    /// Which pages are blank (read-only): no visible text or annotations and an ink share of at
+    /// most `max_ink` (0–0.05).
+    FindBlankPages {
+        input: PathBuf,
+        #[serde(default = "default_max_ink")]
+        max_ink: f32,
+    },
     /// Straighten skewed scanned pages (all, or the chosen ones) in a new file.
     Deskew {
         input: PathBuf,
@@ -615,6 +629,7 @@ pub const OPERATION_IDS: &[&str] = &[
     "compare",
     "verify_signatures",
     "deskew",
+    "find_blank_pages",
     "list_attachments",
     "extract_attachment",
     "add_attachments",
@@ -656,6 +671,7 @@ impl Operation {
             Operation::Compare { .. } => "compare",
             Operation::VerifySignatures { .. } => "verify_signatures",
             Operation::Deskew { .. } => "deskew",
+            Operation::FindBlankPages { .. } => "find_blank_pages",
             Operation::ListAttachments { .. } => "list_attachments",
             Operation::ExtractAttachment { .. } => "extract_attachment",
             Operation::AddAttachments { .. } => "add_attachments",
@@ -678,6 +694,7 @@ impl Operation {
                 | Operation::ListAttachments { .. }
                 | Operation::Compare { .. }
                 | Operation::VerifySignatures { .. }
+                | Operation::FindBlankPages { .. }
         )
     }
 
@@ -716,6 +733,7 @@ impl Operation {
             | Operation::ListAttachments { input }
             | Operation::VerifySignatures { input }
             | Operation::Deskew { input, .. }
+            | Operation::FindBlankPages { input, .. }
             | Operation::SetBookmarks { input, .. }
             | Operation::ExportText { input, .. }
             | Operation::Optimize { input, .. }
@@ -746,7 +764,8 @@ impl Operation {
             | Operation::SanitizeInspect { .. }
             | Operation::ListAttachments { .. }
             | Operation::Compare { .. }
-            | Operation::VerifySignatures { .. } => None,
+            | Operation::VerifySignatures { .. }
+            | Operation::FindBlankPages { .. } => None,
             Operation::Split { output_dir, .. } | Operation::ExportImages { output_dir, .. } => {
                 Some(output_dir.clone())
             }
@@ -955,6 +974,14 @@ impl Operation {
                     return Err(PwError::invalid(
                         "optimize.quality",
                         format!("Image quality must be between {MIN_JPEG_QUALITY} and {MAX_JPEG_QUALITY}."),
+                    ));
+                }
+            }
+            Operation::FindBlankPages { max_ink, .. } => {
+                if !(max_ink.is_finite() && *max_ink >= 0.0 && *max_ink <= 0.05) {
+                    return Err(PwError::invalid(
+                        "blank.threshold",
+                        "The blank-page threshold must be between 0 and 5% ink.",
                     ));
                 }
             }

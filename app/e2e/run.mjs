@@ -1377,6 +1377,46 @@ await test("straighten pages: Pages menu; skewed scans turned straight, text pag
   assert(!existsSync(join(work, "never.pdf")), "nothing written");
 });
 
+await test("remove blank pages: found with thumbnails; sensitivity; untick one; removed into a new file", async () => {
+  const out = join(work, "no-blank.pdf");
+  await withApp([join(FIX, "blank-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Remove blank");
+    await s.click('[role="option"][data-command="pages.removeBlank"]');
+    // Standard: the empty page (2) and the dusty scan (3); the page number page and faint table stay.
+    await s.waitUntil(async () => (await s.exec("return [...document.querySelectorAll('[data-blank-page]')].map(c => c.dataset.blankPage).join(',')")) === "1,2", "pages 2 and 3 found");
+    assert((await s.text('[data-testid="blank-remove"]')) === "Remove 2 pages", "count on the button");
+    // Only truly empty pages: the dusty scan is no longer listed.
+    await s.click('#blank-preset option[value="empty"]');
+    await s.waitUntil(async () => (await s.exec("return [...document.querySelectorAll('[data-blank-page]')].map(c => c.dataset.blankPage).join(',')")) === "1", "only page 2");
+    await s.click('#blank-preset option[value="standard"]');
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('[data-blank-page]').length")) === 2, "back to two");
+    await s.click('[data-blank-page="2"]'); // keep the dusty scan after all
+    assert((await s.text('[data-testid="blank-remove"]')) === "Remove 1 page", "unticked");
+    await s.type("#blank-output", out);
+    await axeCheck(s, "remove-blank-dialog");
+    writeFileSync(join(ART, "remove-blank-dialog.png"), await s.screenshot());
+    await s.click('[data-testid="blank-remove"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved no-blank.pdf")), "saved notice");
+  });
+  if (CLI) {
+    const info = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data;
+    assert(info.page_count === 5, `one page removed (${info.page_count})`);
+    const t = JSON.parse(execFileSync(CLI, ["--json", "text", out], { encoding: "utf8" })).result.data.pages.map((p) => p.text).join(" ");
+    assert(t.includes("PWBLANK1") && t.includes("PWBLANK6"), "text pages kept");
+  }
+  // A document without blank pages says so and offers nothing to remove.
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Remove blank");
+    await s.click('[role="option"][data-command="pages.removeBlank"]');
+    await s.waitFor('[data-testid="blank-none"]');
+    assert((await s.attr('[data-testid="blank-remove"]', "title")) === "No blank pages found.", "disabled with a reason");
+  });
+});
+
 await test("protect with password: AES-256 copy needs the password; wrong password refused; content intact", async () => {
   const src = join(FIX, "five-pages.pdf");
   const before = sha(src);

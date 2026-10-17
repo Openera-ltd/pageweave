@@ -250,6 +250,15 @@ fn deskew_straightens_and_reports_each_page() {
 }
 
 #[test]
+fn blank_pages_lists_pages_and_how_to_remove_them() {
+    let r = bin().arg("blank-pages").arg(fixture("blank-pages.pdf")).output().expect("run");
+    let text = String::from_utf8_lossy(&r.stdout);
+    assert!(text.contains("Blank pages: 2, 3") && text.contains("delete --pages \"2,3\""), "{text}");
+    let bad = bin().args(["blank-pages", "--max-ink", "50"]).arg(fixture("blank-pages.pdf")).output().expect("run");
+    assert_eq!(bad.status.code(), Some(2));
+}
+
+#[test]
 fn text_saves_a_file_with_output_and_prints_without() {
     let dir = tempfile::tempdir().expect("tmp");
     let out = dir.path().join("five.txt");
