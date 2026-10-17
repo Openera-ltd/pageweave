@@ -97,3 +97,17 @@ The error analysis saw German ß read as Greek β on blind pages (held-out itali
 validation split the Rust engine produced no non-Latin letters at all, so a Latin homoglyph filter
 has no measurable benefit on the split used for tuning; adding it because of blind observations
 would be tuning on the sealed set. Revisit with a validation set that shows the confusion.
+
+## Fine-tuning feasibility (2026-10-17)
+
+PaddleOCR's official model list (docs/version3.x/model_list.md) links inference weights for
+PP-OCRv6 small recognition but its "training model" link is **empty**; the official Hugging Face
+repository also holds inference weights only. The shipped model therefore cannot currently be
+fine-tuned from officially released training weights. Converting inference weights back into a
+training checkpoint would be an unofficial derivative with unclear provenance, so it is not done.
+
+If a real-world, rights-cleared evaluation shows a gap worth closing, the options are: (a) fine-tune
+PP-OCRv5 mobile recognition (official training weights published, Apache-2.0) on Kaggle and adopt it
+only if it beats PP-OCRv6 small on the same validation and blind sets; or (b) wait for official v6
+training weights. Kaggle preparation that does not depend on this (environment probe, rights-gated
+dataset upload, budgeted runs, verified output pull) is in `ml/`.
