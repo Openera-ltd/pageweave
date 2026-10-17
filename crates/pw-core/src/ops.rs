@@ -118,6 +118,9 @@ pub struct PageRef {
     pub page: u32,
     #[serde(default)]
     pub rotate: i32,
+    /// A new empty page with the size and orientation of `source`/`page`, instead of a copy of it.
+    #[serde(default)]
+    pub blank: bool,
 }
 pub const MAX_FORM_TEXT_CHARS: usize = 100_000;
 

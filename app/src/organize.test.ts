@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { duplicate, initialTiles, insertPages, isUnchanged, moveTo, remove, rotate, toPageRefs } from "./organize";
+import { duplicate, initialTiles, insertBlank, insertPages, isUnchanged, moveTo, remove, rotate, toPageRefs } from "./organize";
 
 describe("page organizer model", () => {
   it("starts as the document, unchanged", () => {
@@ -39,4 +39,12 @@ describe("page organizer model", () => {
     expect(insertPages(initialTiles(1), -1, 1, 1)[0]!.source).toBe(1);
   });
 
+  it("inserts a blank page sized and turned like the selected one", () => {
+    const t = rotate(initialTiles(3), 1, 90);
+    const out = insertBlank(t, 1);
+    expect(out.map((x) => [x.page, x.rotate, !!x.blank])).toEqual([[0, 0, false], [1, 90, false], [1, 90, true], [2, 0, false]]);
+    expect(isUnchanged([{ id: 9, source: 0, page: 0, rotate: 0, blank: true }], 1)).toBe(false);
+    expect(toPageRefs(out)[2]).toEqual({ source: 0, page: 1, rotate: 90, blank: true });
+    expect(toPageRefs(out)[0]).toEqual({ source: 0, page: 0, rotate: 0 });
+  });
 });

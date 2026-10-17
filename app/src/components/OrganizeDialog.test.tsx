@@ -113,4 +113,16 @@ describe("OrganizeDialog", () => {
       output: "/docs/report-organized.pdf",
     });
   });
+  it("inserts a blank page after the selected one and saves it as blank", async () => {
+    const { refs, startOperation } = setup();
+    fireEvent.click(document.querySelector<HTMLElement>('[data-index="1"]')!);
+    fireEvent.click(document.querySelector<HTMLButtonElement>('[data-action="blank"]')!);
+    expect(refs()).toEqual(["0:0:0", "0:1:0", "0:1:0:blank", "0:2:0"]);
+    expect(screen.getByText(/blank page/)).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("organize-save"));
+    });
+    const req = startOperation.mock.calls[0]![0];
+    expect(req.operation.op === "organize_pages" && req.operation.pages[2]).toEqual({ source: 0, page: 1, rotate: 0, blank: true });
+  });
 });

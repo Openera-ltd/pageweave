@@ -185,4 +185,5 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - Attachments (PRD 05): list / save one as stored / attach into a copy (PDFium embedded files; name tree is kept sorted so lookups go by name). Found while testing: the sidebar's third tab overflowed the 200 px sidebar (click intercepted) → icon tabs with accessible names; success notices offered "Open" for non-PDF outputs (exported images, saved attachments) → Open only for PDFs.
 - Kaggle: the GPU queue held the probe re-run ~2 h; a CPU probe (supersede option added) ran at once and verified the dataset mount (720/720 image hashes). Training run pushed (T4, 3 GPU-h ceiling) — queued.
 - Edit bookmarks (PRD 05): outline rebuilt with lopdf (/Fit destinations), verified by PDFium read-back; editing logic in a pure module (subtree-aware indent/outdent/move/delete).
+- Organize: blank pages (PageRef.blank) sized and turned like the page they follow; verified by engine and component tests (no separate E2E: the organize E2E covers the dialog's keyboard flow and save path).
 

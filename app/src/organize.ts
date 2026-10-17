@@ -19,6 +19,8 @@ export interface Tile {
   page: number;
   /** Extra clockwise turn: 0, 90, 180 or 270. */
   rotate: number;
+  /** A new empty page sized and turned like `source`/`page`. */
+  blank?: boolean;
 }
 
 export function initialTiles(pageCount: number): Tile[] {
@@ -46,6 +48,15 @@ export function duplicate(tiles: Tile[], i: number): Tile[] {
   return out;
 }
 
+/** Insert an empty page after position `i`, sized and turned like the page there. */
+export function insertBlank(tiles: Tile[], i: number): Tile[] {
+  const t = tiles[i];
+  if (!t) return tiles;
+  const out = tiles.slice();
+  out.splice(i + 1, 0, { id: nextId(tiles), source: t.source, page: t.page, rotate: t.rotate, blank: true });
+  return out;
+}
+
 /** Remove a tile; the last remaining page cannot be removed (a PDF needs at least one page). */
 export function remove(tiles: Tile[], i: number): Tile[] {
   if (tiles.length <= 1 || !tiles[i]) return tiles;
@@ -67,9 +78,9 @@ export function insertPages(tiles: Tile[], i: number, source: number, pageCount:
 
 /** True when the tiles still describe the document unchanged. */
 export function isUnchanged(tiles: Tile[], pageCount: number): boolean {
-  return tiles.length === pageCount && tiles.every((t, i) => t.source === 0 && t.page === i && t.rotate === 0);
+  return tiles.length === pageCount && tiles.every((t, i) => t.source === 0 && t.page === i && t.rotate === 0 && !t.blank);
 }
 
-export function toPageRefs(tiles: Tile[]): Array<{ source: number; page: number; rotate: number }> {
-  return tiles.map(({ source, page, rotate }) => ({ source, page, rotate }));
+export function toPageRefs(tiles: Tile[]): Array<{ source: number; page: number; rotate: number; blank?: boolean }> {
+  return tiles.map(({ source, page, rotate, blank }) => (blank ? { source, page, rotate, blank } : { source, page, rotate }));
 }

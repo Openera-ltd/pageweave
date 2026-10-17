@@ -308,6 +308,13 @@ textarea {
   flex: 1;
 }
 
+/* Organize: an inserted blank page */
+.blank-page {
+  display: block;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
 /* Edit bookmarks */
 .bookmarks-pane {
   display: grid;

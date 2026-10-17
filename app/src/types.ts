@@ -192,7 +192,7 @@ export type Operation =
       output: string;
     }
   | { op: "export_images"; input: string; pages: string | null; dpi: number; output_dir: string }
-  | { op: "organize_pages"; input: string; extra_inputs: string[]; pages: Array<{ source: number; page: number; rotate: number }>; output: string }
+  | { op: "organize_pages"; input: string; extra_inputs: string[]; pages: Array<{ source: number; page: number; rotate: number; blank?: boolean }>; output: string }
   | { op: "redact"; input: string; areas: RedactArea[]; output: string }
   | { op: "ocr_pages"; input: string; pages: string | null; skip_text_pages: boolean; dpi: number; output: string }
   | { op: "protect"; input: string; permissions: ProtectPermissions; output: string }

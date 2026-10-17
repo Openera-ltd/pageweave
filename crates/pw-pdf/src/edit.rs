@@ -303,8 +303,25 @@ pub fn organize_pages(
             return Err(PwError::cancelled());
         }
         let first = pages[i];
+        if first.blank {
+            let like = sources[first.source as usize]
+                .pages()
+                .get(first.page as PdfPageIndex)
+                .map_err(|e| map_pdfium_error(&e, "page"))?;
+            let size = PdfPagePaperSize::Custom(like.width(), like.height());
+            // width()/height() are as displayed; undo the turn so the blank page shows the same way.
+            let size = if matches!(rotation_of(&like), 90 | 270) {
+                PdfPagePaperSize::Custom(like.height(), like.width())
+            } else {
+                size
+            };
+            out.pages_mut().create_page_at_end(size).map_err(|e| map_pdfium_error(&e, "blank_page"))?;
+            i += 1;
+            continue;
+        }
         let mut end = i;
         while end + 1 < pages.len()
+            && !pages[end + 1].blank
             && pages[end + 1].source == first.source
             && pages[end + 1].page == pages[end].page + 1
         {
@@ -323,7 +340,20 @@ pub fn organize_pages(
     let mut rotations = Vec::with_capacity(pages.len());
     for (i, p) in pages.iter().enumerate() {
         let mut page = out.pages().get(i as PdfPageIndex).map_err(|e| map_pdfium_error(&e, "page"))?;
-        let current = rotation_of(&page);
+        // A blank page takes the turn of the page it is sized like.
+        let current = if p.blank {
+            let like = sources[p.source as usize]
+                .pages()
+                .get(p.page as PdfPageIndex)
+                .map_err(|e| map_pdfium_error(&e, "page"))?;
+            let r = rotation_of(&like);
+            if r != 0 {
+                page.set_rotation(to_rotation(r));
+            }
+            r
+        } else {
+            rotation_of(&page)
+        };
         let new = (current as i32 + p.rotate).rem_euclid(360) as u32;
         if new != current {
             page.set_rotation(to_rotation(new));

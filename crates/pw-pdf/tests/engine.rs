@@ -519,7 +519,7 @@ fn organize_reorders_duplicates_rotates_and_inserts_in_one_verified_write() {
     let out = dir.path().join("organized.pdf");
     let src = fixture("five-pages.pdf");
     let before = sha(&src);
-    let p = |source, page, rotate| PageRef { source, page, rotate };
+    let p = |source, page, rotate| PageRef { source, page, rotate, blank: false };
     let mut req = OperationRequest::new(Operation::OrganizePages {
         input: src.clone(),
         extra_inputs: vec![fixture("mixed-sizes-rotated.pdf")],
@@ -559,7 +559,7 @@ fn organize_rejects_bad_page_lists_before_writing() {
         .expect_err("must fail")
         .code
     };
-    let p = |source, page, rotate| PageRef { source, page, rotate };
+    let p = |source, page, rotate| PageRef { source, page, rotate, blank: false };
     assert_eq!(run_pages(vec![], vec![]), "organize.empty");
     assert_eq!(run_pages(vec![p(0, 5, 0)], vec![]), "organize.page");
     assert_eq!(run_pages(vec![p(1, 0, 0)], vec![]), "organize.source");
@@ -720,4 +720,34 @@ fn export_images_names_sizes_and_all_or_nothing() {
     assert!(!dir.path().join("mixed-sizes-rotated_p001.png").exists(), "partial export removed");
 
     assert_eq!(execute(&req(None, 2000), None).expect_err("dpi").code, "export.dpi");
+}
+
+#[test]
+fn organize_inserts_blank_pages_sized_like_their_neighbour() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("blank.pdf");
+    let src = fixture("mixed-sizes-rotated.pdf"); // page 2 is A4, page 3 has /Rotate 90
+    use pw_core::ops::PageRef;
+    let b = |page| PageRef { source: 0, page, rotate: 0, blank: true };
+    let c = |page| PageRef { source: 0, page, rotate: 0, blank: false };
+    let req = OperationRequest::new(Operation::OrganizePages {
+        input: src.clone(),
+        extra_inputs: vec![],
+        pages: vec![c(0), b(1), c(1), b(2), c(2)],
+        output: out.clone(),
+    });
+    execute(&req, None).expect("organize");
+    let info = open_document(&out, &opts()).expect("open");
+    assert_eq!(info.page_count, 5);
+    let size = |i: usize| (info.pages[i].width_pt.round(), info.pages[i].height_pt.round(), info.pages[i].rotation);
+    assert_eq!(size(1), size(2), "blank page like the A4 page");
+    assert_eq!(size(1), (595.0, 842.0, 0));
+    assert_eq!(size(3), size(4), "blank page like the rotated page, same orientation");
+    assert_eq!(size(3).2, 90);
+    let t =
+        execute(&OperationRequest::new(Operation::ExtractText { input: out.clone(), pages: Some("2,4".into()) }), None)
+            .expect("text");
+    for p in t.data["pages"].as_array().expect("pages") {
+        assert_eq!(p["text"].as_str().unwrap_or("").trim(), "", "blank pages hold no text");
+    }
 }

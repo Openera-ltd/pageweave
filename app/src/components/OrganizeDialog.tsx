@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Copy, FilePlus, FolderOpen, Redo2, RotateCcw, RotateCw, Trash2, Undo2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Copy, File, FilePlus, FolderOpen, Redo2, RotateCcw, RotateCw, Trash2, Undo2 } from "lucide-react";
 import { useApi } from "../api";
 import { CSS_PX_PER_PT, displaySizePt, renderScalePermille } from "../geometry";
-import { duplicate, initialTiles, insertPages, isUnchanged, moveTo, remove, rotate, toPageRefs, type OrganizeSource, type Tile } from "../organize";
+import { duplicate, initialTiles, insertBlank, insertPages, isUnchanged, moveTo, remove, rotate, toPageRefs, type OrganizeSource, type Tile } from "../organize";
 import { siblingOutput } from "../paths";
 import { toPwError, type CollisionPolicy, type JobSnapshot, type OpenedDoc, type PwError } from "../types";
 import { Dialog } from "./ui";
@@ -120,6 +120,7 @@ export function OrganizeDialog({ doc, jobs, onClose, onFinished }: Props) {
       rotl: { label: "Rotate left", icon: <RotateCcw />, avail: true as const, run: () => apply(rotate(tiles, sel, -90)) },
       rotr: { label: "Rotate right", icon: <RotateCw />, avail: true as const, run: () => apply(rotate(tiles, sel, 90)) },
       dup: { label: "Duplicate", icon: <Copy />, avail: true as const, run: () => apply(duplicate(tiles, sel), sel + 1) },
+      blank: { label: "Insert a blank page after it", icon: <File />, avail: true as const, run: () => apply(insertBlank(tiles, sel), sel + 1) },
       del: { label: "Remove from the new file", icon: <Trash2 />, avail: tiles.length > 1 ? true : "A PDF must keep at least one page.", run: () => apply(remove(tiles, sel), sel) },
       undo: { label: "Undo", icon: <Undo2 />, avail: history.at > 0 ? true : "Nothing to undo.", run: undo },
       redo: { label: "Redo", icon: <Redo2 />, avail: history.at < history.stack.length - 1 ? true : "Nothing to redo.", run: redo },
@@ -222,7 +223,7 @@ export function OrganizeDialog({ doc, jobs, onClose, onFinished }: Props) {
               role="option"
               aria-selected={i === sel}
               data-index={i}
-              data-page-ref={`${t.source}:${t.page}:${t.rotate}`}
+              data-page-ref={`${t.source}:${t.page}:${t.rotate}${t.blank ? ":blank" : ""}`}
               className={`organize-tile ${i === sel ? "selected" : ""} ${dragFrom !== null && dragFrom !== i ? "drop-target" : ""}`}
               draggable={!busy}
               onClick={() => setSelected(i)}
@@ -243,12 +244,16 @@ export function OrganizeDialog({ doc, jobs, onClose, onFinished }: Props) {
               onDragEnd={() => setDragFrom(null)}
             >
               <span className="frame" style={{ width: turned ? h : w, height: turned ? w : h }}>
-                <img src={api.pageUrl(src.docId, t.page, scale)} alt="" draggable={false} style={{ width: w, height: h, transform: t.rotate ? `rotate(${t.rotate}deg)` : undefined }} />
+                {t.blank ? (
+                  <span className="blank-page" style={{ width: w, height: h, transform: t.rotate ? `rotate(${t.rotate}deg)` : undefined }} />
+                ) : (
+                  <img src={api.pageUrl(src.docId, t.page, scale)} alt="" draggable={false} style={{ width: w, height: h, transform: t.rotate ? `rotate(${t.rotate}deg)` : undefined }} />
+                )}
               </span>
               {/* The visible text is the accessible name; the turn is announced, not shown as text. */}
               <span className="num">
                 {i + 1}
-                <span className="from">{t.source === 0 ? ` · page ${t.page + 1}` : ` · ${src.name} page ${t.page + 1}`}</span>
+                <span className="from">{t.blank ? " · blank page" : t.source === 0 ? ` · page ${t.page + 1}` : ` · ${src.name} page ${t.page + 1}`}</span>
                 {t.rotate !== 0 && <span className="sr-only">{`, turned ${turnText(t.rotate)}`}</span>}
               </span>
             </div>
