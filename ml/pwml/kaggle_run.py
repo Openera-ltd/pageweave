@@ -282,6 +282,13 @@ def pull(run_id: str, dest_root: Path) -> dict:
         shutil.rmtree(dest)
     tmp.replace(dest)
     run["outputs"] = {"local_dir": str(dest), "files": files}
+    # The kernel's own account of how it ended (e.g. "stopped_at_deadline"), next to the platform's.
+    m = dest / "metrics.json"
+    if m.exists():
+        try:
+            run["result_status"] = json.loads(m.read_text()).get("status", "unknown")
+        except ValueError:
+            run["result_status"] = "unreadable"
     run["status"] = run.get("status", "complete")
     save_run(run)
     return run

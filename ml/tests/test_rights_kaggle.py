@@ -105,5 +105,35 @@ class KaggleSafety(unittest.TestCase):
                 kaggle_run.push(Path("kaggle/probe"), "test", 99)
 
 
+    def test_training_kernel_has_a_hard_deadline_under_the_ceiling(self):
+        # 2026-10-17: a run whose only time check sat inside the step loop held its GPU session 12 h.
+        import re
+        src = Path("kaggle/rec-finetune/train.py").read_text()
+        m = re.search(r'HARD_DEADLINE_S = float\(os\.environ\.get\("PW_HARD_DEADLINE_S", str\(([\d.]+) \* 3600\)\)\)', src)
+        self.assertIsNotNone(m, "hard deadline default not found")
+        self.assertLess(float(m.group(1)), kaggle_run.budget()["max_gpu_hours_per_run"])
+        self.assertIn("threading.Timer(HARD_DEADLINE_S, on_deadline)", src)
+        self.assertIn('checkpoint("stopped_at_deadline")', src)
+
+    def test_pull_records_how_the_kernel_says_it_ended(self):
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            def fake_output(*args, **kw):
+                out = Path(args[args.index("-p") + 1])
+                (out / "metrics.json").write_text(json.dumps({"status": "stopped_at_deadline"}))
+                digest = kaggle_run.sha256(out / "metrics.json")
+                (out / "SHA256SUMS").write_text(f"{digest}  metrics.json\n")
+                return ""
+            saved = []
+            run = {"run_id": "r9", "kernel": "u/k", "status": "complete"}
+            with mock.patch.object(kaggle_run, "load_run", return_value=run), \
+                 mock.patch.object(kaggle_run, "save_run", side_effect=saved.append), \
+                 mock.patch.object(kaggle_run, "kaggle", side_effect=fake_output):
+                kaggle_run.pull("r9", tmp)
+            self.assertEqual(saved[-1]["result_status"], "stopped_at_deadline")
+        finally:
+            shutil.rmtree(tmp)
+
+
 if __name__ == "__main__":
     unittest.main()

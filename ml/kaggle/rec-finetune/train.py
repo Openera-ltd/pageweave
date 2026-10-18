@@ -7,7 +7,11 @@ gradients; trained values are written back into the ORIGINAL graph's initializer
 model keeps the shipped graph (and its dynamic width) exactly. Model selection uses the validation
 split only; the sealed blind split never reaches this run.
 
-Outputs in /kaggle/working: rec-finetuned.onnx (best validation CER), metrics.json, SHA256SUMS.
+Outputs in /kaggle/working: rec-finetuned.onnx (best validation CER), metrics.json, SHA256SUMS. They are
+checkpointed after the baseline and after every epoch, and a wall-clock watchdog ends the whole
+process at PW_HARD_DEADLINE_S (default 2.75 h, under the 3 h run ceiling) wherever it is — loading,
+training, evaluating or exporting — leaving the last checkpoint with metrics.json "status":
+"stopped_at_deadline". (2026-10-17: a run without this watchdog kept its GPU session for 12 h.)
 Local smoke test: PW_INPUT=dir PW_OUT=dir PW_MAX_STEPS=3 python train.py
 """
 import glob
@@ -18,6 +22,7 @@ import os
 import random
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -28,9 +33,43 @@ EPOCHS = int(os.environ.get("PW_EPOCHS", "4"))
 LR = float(os.environ.get("PW_LR", "5e-5"))
 BATCH = int(os.environ.get("PW_BATCH", "48"))
 TIME_BUDGET_S = float(os.environ.get("PW_TIME_BUDGET_S", str(2.4 * 3600)))  # under the 3 h run ceiling
+HARD_DEADLINE_S = float(os.environ.get("PW_HARD_DEADLINE_S", str(2.75 * 3600)))
 SEED = 1234
 started = time.time()
 OUT.mkdir(parents=True, exist_ok=True)
+OUTPUT_FILES = ("rec-finetuned.onnx", "metrics.json")
+metrics = {"status": "starting"}
+
+
+def write_atomic(path, data):
+    tmp = path.with_name(path.name + f".tmp{threading.get_ident()}")
+    tmp.write_bytes(data)
+    os.replace(tmp, path)
+
+
+def checkpoint(status):
+    """metrics.json and SHA256SUMS for the files that exist now (complete files only: every
+    output is replaced atomically)."""
+    metrics["status"] = status
+    metrics["seconds"] = round(time.time() - started)
+    write_atomic(OUT / "metrics.json", json.dumps(metrics, indent=2).encode())
+    sums = "".join(
+        f"{hashlib.sha256((OUT / f).read_bytes()).hexdigest()}  {f}\n" for f in OUTPUT_FILES if (OUT / f).exists()
+    )
+    write_atomic(OUT / "SHA256SUMS", sums.encode())
+
+
+def on_deadline():
+    print(f"hard deadline ({HARD_DEADLINE_S:.0f} s) reached: stopping with the last checkpoint", flush=True)
+    try:
+        checkpoint("stopped_at_deadline")
+    finally:
+        os._exit(0)  # exit 0 so the platform keeps the outputs; the status says what happened
+
+
+watchdog = threading.Timer(HARD_DEADLINE_S, on_deadline)
+watchdog.daemon = True
+watchdog.start()
 
 
 def find(pattern):
@@ -131,7 +170,9 @@ def export(path):
     for tname, iname in mapping.items():
         arr = state[tname].detach().float().cpu().numpy().astype(numpy_helper.to_array(by_name[iname]).dtype)
         by_name[iname].CopyFrom(numpy_helper.from_array(arr, iname))
-    onnx.save(out, str(path))
+    tmp = path.with_name(path.name + ".tmp")
+    onnx.save(out, str(tmp))
+    os.replace(tmp, path)
 
 
 # ---- data ---------------------------------------------------------------------------------
@@ -228,7 +269,7 @@ def evaluate(limit=None):
 
 
 # ---- training -----------------------------------------------------------------------------
-metrics = {
+metrics.update({
     "train_lines": len(train_items),
     "train_dropped_unknown_chars": train_dropped,
     "val_lines": len(val_items),
@@ -238,10 +279,13 @@ metrics = {
     "hyper": {"epochs": EPOCHS, "lr": LR, "batch": BATCH, "seed": SEED, "bn": "frozen", "max_width": MAX_W},
     "onnx_input_sha256": hashlib.sha256(onnx_path.read_bytes()).hexdigest(),
     "epochs": [],
-}
+})
 limit = 64 if MAX_STEPS else None
 base = evaluate(limit)
 metrics["baseline_val"] = base
+metrics["best_val_cer"] = base["cer"]
+metrics["best_epoch"] = 0
+metrics["improved"] = False
 print("baseline", base, flush=True)
 params = [p for p in model.parameters() if p.requires_grad]
 opt = torch.optim.AdamW(params, lr=LR, weight_decay=1e-4)
@@ -252,6 +296,7 @@ scaler = torch.amp.GradScaler(enabled=dev.type == "cuda")
 best = base["cer"]
 best_epoch = 0
 export(OUT / "rec-finetuned.onnx")  # baseline weights until something beats them
+checkpoint("training")
 step = 0
 stop = False
 for epoch in range(1, EPOCHS + 1):
@@ -287,13 +332,11 @@ for epoch in range(1, EPOCHS + 1):
     if v["cer"] < best:
         best, best_epoch = v["cer"], epoch
         export(OUT / "rec-finetuned.onnx")
+    metrics.update(best_val_cer=best, best_epoch=best_epoch, improved=best_epoch > 0)
+    checkpoint("training")
     if stop:
         break
-metrics["best_val_cer"] = best
-metrics["best_epoch"] = best_epoch
-metrics["improved"] = best_epoch > 0
-metrics["seconds"] = round(time.time() - started)
-(OUT / "metrics.json").write_text(json.dumps(metrics, indent=2))
-sums = "".join(f"{hashlib.sha256((OUT / f).read_bytes()).hexdigest()}  {f}\n" for f in ("rec-finetuned.onnx", "metrics.json"))
-(OUT / "SHA256SUMS").write_text(sums)
+watchdog.cancel()
+metrics.update(best_val_cer=best, best_epoch=best_epoch, improved=best_epoch > 0)
+checkpoint("complete")
 print(json.dumps({k: metrics[k] for k in ("baseline_val", "best_val_cer", "best_epoch", "seconds")}, indent=2))
