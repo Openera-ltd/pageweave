@@ -300,6 +300,46 @@ fn orient_turns_a_page_and_explains_nothing_to_do() {
 }
 
 #[test]
+fn objects_lists_runs_and_edit_applies_a_json_edits_file() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let src = fixture("embedded-font.pdf");
+    let r = bin().args(["--json", "objects", "--page", "1"]).arg(&src).output().expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let v = json(&r);
+    let texts = v["result"]["data"]["texts"].as_array().expect("texts").clone();
+    let invoice = texts.iter().find(|t| t["text"] == "Invoice 2026 total due").expect("run listed");
+    let edits = dir.path().join("edits.json");
+    std::fs::write(
+        &edits,
+        serde_json::json!([{ "page": 0, "edits": [
+            { "kind": "text", "objects": invoice["objects"], "text": "Invoice 2026 total sum", "dx": 0, "dy": 0 },
+            { "kind": "add_text", "x": 72, "y": 400, "text": "PWCLI added" }
+        ]}])
+        .to_string(),
+    )
+    .expect("write");
+    let out = dir.path().join("edited.pdf");
+    let r = bin().args(["--json", "edit", "--edits"]).arg(&edits).arg("-o").arg(&out).arg(&src).output().expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stdout));
+    let t = bin().args(["--json", "text"]).arg(&out).output().expect("run");
+    let text = json(&t)["result"]["data"]["pages"][0]["text"].as_str().expect("text").to_string();
+    assert!(text.contains("Invoice 2026 total sum") && text.contains("PWCLI added"), "{text}");
+    // Page 0 and a malformed edits file are refused with codes.
+    let zero = bin().args(["--json", "objects", "--page", "0"]).arg(&src).output().expect("run");
+    assert_eq!(json(&zero)["error"]["code"], "page.range");
+    std::fs::write(&edits, "[{\"page\": 0, \"edits\": [{\"kind\": \"bogus\"}]}]").expect("write");
+    let bad = bin()
+        .args(["--json", "edit", "--edits"])
+        .arg(&edits)
+        .arg("-o")
+        .arg(dir.path().join("x.pdf"))
+        .arg(&src)
+        .output()
+        .expect("run");
+    assert_eq!(json(&bad)["error"]["code"], "edit.invalid");
+}
+
+#[test]
 fn sign_reads_the_password_from_stdin_and_reports_the_signer() {
     use std::io::Write;
     let dir = tempfile::tempdir().expect("tmp");

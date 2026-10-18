@@ -3259,6 +3259,7 @@ dependencies = [
 name = "pageweave-app"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "dunce",
  "pw-core",
  "pw-pdf",

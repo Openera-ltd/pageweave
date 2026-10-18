@@ -1181,40 +1181,7 @@ impl Operation {
                     ));
                 }
             }
-            Operation::EditObjects { pages, .. } => {
-                let n: usize = pages.iter().map(|p| p.edits.len()).sum();
-                if n == 0 {
-                    return Err(PwError::invalid("edit.nothing", "There are no changes to save."));
-                }
-                if n > 10_000 {
-                    return Err(PwError::invalid("edit.too_many", "Too many changes at once."));
-                }
-                for e in pages.iter().flat_map(|p| p.edits.iter()) {
-                    let finite = |v: f32| v.is_finite() && v.abs() < 20_000.0;
-                    let ok = match e {
-                        PageEdit::Text { objects, text, size, dx, dy, .. } => {
-                            !objects.is_empty()
-                                && text.chars().count() <= 2000
-                                && size.is_none_or(|s| (2.0..=400.0).contains(&s))
-                                && finite(*dx)
-                                && finite(*dy)
-                        }
-                        PageEdit::DeleteObjects { objects } => !objects.is_empty(),
-                        PageEdit::MoveObjects { objects, dx, dy } => !objects.is_empty() && finite(*dx) && finite(*dy),
-                        PageEdit::ReplaceImage { .. } => true,
-                        PageEdit::RotateImage { degrees, .. } => matches!(degrees, 90 | 180 | 270),
-                        PageEdit::AddText { x, y, text, size, .. } => {
-                            finite(*x) && finite(*y) && text.chars().count() <= 2000 && (4.0..=200.0).contains(size)
-                        }
-                    };
-                    if !ok {
-                        return Err(PwError::invalid(
-                            "edit.invalid",
-                            "One of the changes is not valid (empty, too large or out of range).",
-                        ));
-                    }
-                }
-            }
+            Operation::EditObjects { pages, .. } => validate_page_edits(pages)?,
             Operation::AddSignatureMark { rect, mark, .. } => {
                 let (w, h) = ((rect.right - rect.left).abs(), (rect.top - rect.bottom).abs());
                 if ![rect.left, rect.bottom, rect.right, rect.top].iter().all(|v| v.is_finite()) || w < 10.0 || h < 5.0
@@ -1311,9 +1278,12 @@ impl Operation {
                     return Err(PwError::invalid("ocr.dpi", "Choose a recognition resolution from 100 to 400 dpi."));
                 }
             }
-            Operation::ApplyEdits { form_values, annotations, .. } => {
-                if form_values.is_empty() && annotations.is_empty() {
+            Operation::ApplyEdits { form_values, annotations, object_edits, .. } => {
+                if form_values.is_empty() && annotations.is_empty() && object_edits.iter().all(|p| p.edits.is_empty()) {
                     return Err(PwError::invalid("edits.empty", "There are no changes to save."));
+                }
+                if object_edits.iter().any(|p| !p.edits.is_empty()) {
+                    validate_page_edits(object_edits)?;
                 }
                 if !form_values.is_empty() {
                     validate_form_values(form_values)?;
@@ -1497,6 +1467,43 @@ pub struct OperationResult {
     pub data: serde_json::Value,
     pub warnings: Vec<String>,
     pub duration_ms: u64,
+}
+
+/// Edits to existing text and pictures (Edit mode): count and value ranges.
+fn validate_page_edits(pages: &[PageEdits]) -> PwResult<()> {
+    let n: usize = pages.iter().map(|p| p.edits.len()).sum();
+    if n == 0 {
+        return Err(PwError::invalid("edit.nothing", "There are no changes to save."));
+    }
+    if n > 10_000 {
+        return Err(PwError::invalid("edit.too_many", "Too many changes at once."));
+    }
+    for e in pages.iter().flat_map(|p| p.edits.iter()) {
+        let finite = |v: f32| v.is_finite() && v.abs() < 20_000.0;
+        let ok = match e {
+            PageEdit::Text { objects, text, size, dx, dy, .. } => {
+                !objects.is_empty()
+                    && text.chars().count() <= 2000
+                    && size.is_none_or(|s| (2.0..=400.0).contains(&s))
+                    && finite(*dx)
+                    && finite(*dy)
+            }
+            PageEdit::DeleteObjects { objects } => !objects.is_empty(),
+            PageEdit::MoveObjects { objects, dx, dy } => !objects.is_empty() && finite(*dx) && finite(*dy),
+            PageEdit::ReplaceImage { .. } => true,
+            PageEdit::RotateImage { degrees, .. } => matches!(degrees, 90 | 180 | 270),
+            PageEdit::AddText { x, y, text, size, .. } => {
+                finite(*x) && finite(*y) && text.chars().count() <= 2000 && (4.0..=200.0).contains(size)
+            }
+        };
+        if !ok {
+            return Err(PwError::invalid(
+                "edit.invalid",
+                "One of the changes is not valid (empty, too large or out of range).",
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -235,7 +235,7 @@ export type Operation =
   | { op: "merge"; inputs: string[]; output: string }
   | { op: "split"; input: string; split: SplitMode; output_dir: string }
   | { op: "annotate"; input: string; annotations: AnnotationSpec[]; output: string }
-  | { op: "apply_edits"; input: string; form_values: FieldValue[]; annotations: AnnotationSpec[]; output: string }
+  | { op: "apply_edits"; input: string; form_values: FieldValue[]; annotations: AnnotationSpec[]; object_edits?: Array<{ page: number; edits: PageEdit[] }>; output: string }
   | {
       op: "stamp_text";
       input: string;
@@ -434,4 +434,47 @@ export interface PageText {
   page: number;
   segments: TextSegment[];
   truncated: boolean;
+}
+
+/** A change to existing page content (engine `PageEdit`). Moves are in points as displayed. */
+export type PageEdit =
+  | { kind: "text"; objects: number[]; text: string; size: number | null; color: string | null; dx: number; dy: number }
+  | { kind: "delete_objects"; objects: number[] }
+  | { kind: "move_objects"; objects: number[]; dx: number; dy: number }
+  | { kind: "replace_image"; object: number; path: string }
+  | { kind: "rotate_image"; object: number; degrees: 90 | 180 | 270 }
+  | { kind: "add_text"; x: number; y: number; text: string; size: number; color: string };
+
+export interface PdfRect {
+  left: number;
+  bottom: number;
+  right: number;
+  top: number;
+}
+
+export interface EditableText {
+  objects: number[];
+  text: string;
+  rect: PdfRect;
+  font: string;
+  size: number;
+  color: string;
+  embedded: boolean;
+  bold: boolean;
+  italic: boolean;
+  locked: string | null;
+}
+
+export interface EditableImage {
+  object: number;
+  rect: PdfRect;
+  width_px: number;
+  height_px: number;
+}
+
+export interface EditableObjects {
+  page: number;
+  rotation: number;
+  texts: EditableText[];
+  images: EditableImage[];
 }

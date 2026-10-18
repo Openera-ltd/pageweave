@@ -1610,6 +1610,78 @@ await test("trust a signer: unknown → trust the CA after seeing its fingerprin
   });
 });
 
+await test("edit text and pictures: inline text edit, drag and turn a picture, add text, undo/redo; saved copy verified", async () => {
+  const out = join(work, "content-edited.pdf");
+  await withApp([join(FIX, "embedded-font.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "e"]);
+    await s.waitFor('[data-testid="edit-layer"]');
+    assert((await s.attr('[data-command="edit.toggleEditMode"]', "aria-pressed")) === "true", "Edit mode shown as on");
+    await s.waitFor('[data-edit-text="0"]');
+    assert((await s.attr('[data-edit-text="0"]', "aria-label")) === "Edit text: Invoice 2026 total due", "text run listed");
+    // Text: click the run, change the wording inline, Enter commits.
+    await s.click('[data-edit-text="0"]');
+    await s.replaceText('[data-testid="edit-text-input"]', "Invoice 2026 total sum");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => (await s.attr('[data-edit-text="0"]', "aria-label")) === "Edit text: Invoice 2026 total sum", "edit recorded");
+    await s.waitFor('[data-testid="edit-preview"]');
+    // Escape in the inline field cancels without recording a change.
+    await s.click('[data-edit-text="2"]');
+    await s.replaceText('[data-testid="edit-text-input"]', "never saved");
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => (await s.exec("return !document.querySelector('[data-testid=edit-text-input]')")) === true, "cancelled");
+    assert((await s.exec("return !!document.querySelector('[data-testid=edit-layer]')")) === true, "Escape in the field keeps Edit mode");
+    await s.waitUntil(async () => (await unsavedText(s)) === "1 unsaved change", "one change");
+    // Picture: drag it to the right with the pointer, then turn it from its toolbar.
+    const [x, y, w, h] = await s.exec("const b = document.querySelector('[data-edit-image=\"0\"]').getBoundingClientRect(); return [b.left, b.top, b.width, b.height]");
+    await s.dragAt(x + w / 2, y + h / 2, x + w / 2 + 120, y + h / 2, 10);
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-edit-image=\"0\"]').getBoundingClientRect().left")) > x + 100, "box follows the move");
+    await s.click('[data-edit-image="0"]');
+    await s.click('[aria-label="Turn picture 90° clockwise"]');
+    await s.waitUntil(async () => (await unsavedText(s)) === "3 unsaved changes", "move and turn recorded");
+    // The toolbar's Delete removes the picture's box; undo brings it back.
+    await s.click('[aria-label="Delete picture"]');
+    await s.waitUntil(async () => (await s.exec("return !document.querySelector('[data-edit-image]')")) === true, "picture deleted");
+    await s.keys(["Control", "z"]);
+    await s.waitUntil(async () => (await s.exec("return !!document.querySelector('[data-edit-image]')")) === true, "delete undone");
+    await s.waitUntil(async () => (await unsavedText(s)) === "3 unsaved changes", "still three changes");
+    // Add text: arm the tool, click on the page, type, Enter.
+    await s.click('[data-command="edit.addText"]');
+    await s.click('[data-testid="add-text-capture"]');
+    await s.type('[data-testid="add-text-input"]', "PWADDED note");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => (await unsavedText(s)) === "4 unsaved changes", "added text recorded");
+    // Undo and redo walk the content edits.
+    await s.keys(["Control", "z"]);
+    await s.waitUntil(async () => (await unsavedText(s)) === "3 unsaved changes", "undo");
+    await s.keys(["Control", "y"]);
+    await s.waitUntil(async () => (await unsavedText(s)) === "4 unsaved changes", "redo");
+    await axeCheck(s, "edit-mode");
+    writeFileSync(join(ART, "edit-mode.png"), await s.screenshot());
+    // Escape on the page leaves Edit mode; the edits stay pending.
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => (await s.exec("return !document.querySelector('[data-testid=edit-layer]')")) === true, "Edit mode off");
+    await s.keys(["Control", "s"]);
+    await s.waitFor("#output");
+    assert((await s.text('[role="dialog"] .hint')).includes("4 content edits"), "save dialog counts the content edits");
+    await s.replaceText("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved content-edited.pdf")), "saved notice");
+    await s.waitUntil(async () => (await unsavedText(s)) === "", "pending edits cleared after saving");
+  });
+  assert(existsSync(out), "edited copy exists");
+  if (CLI) {
+    const t = JSON.parse(execFileSync(CLI, ["--json", "text", "--pages", "1", out], { encoding: "utf8" })).result.data.pages[0].text;
+    assert(t.includes("Invoice 2026 total sum") && !t.includes("total due"), `text replaced: ${t}`);
+    assert(t.includes("PWADDED note"), "added text present");
+    assert(t.includes("Standard font line"), "cancelled edit not applied");
+    const objs = JSON.parse(execFileSync(CLI, ["--json", "objects", "--page", "1", out], { encoding: "utf8" })).result.data;
+    assert(objs.images.length === 1 && objs.images[0].width_px === 80 && objs.images[0].height_px === 120, `picture turned: ${JSON.stringify(objs.images)}`);
+    const before = JSON.parse(execFileSync(CLI, ["--json", "objects", "--page", "1", join(FIX, "embedded-font.pdf")], { encoding: "utf8" })).result.data;
+    assert(objs.images[0].rect.left > before.images[0].rect.left + 40, "picture moved right");
+  }
+});
+
 await test("protect with password: AES-256 copy needs the password; wrong password refused; content intact", async () => {
   const src = join(FIX, "five-pages.pdf");
   const before = sha(src);

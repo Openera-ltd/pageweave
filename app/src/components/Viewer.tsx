@@ -1,6 +1,8 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { StickyNote } from "lucide-react";
 import { useApi } from "../api";
+import type { ObjEntry } from "../objectEdits";
+import { EditLayer } from "./EditLayer";
 import { KIND_LABEL, type PendingAnnotation } from "../annotations";
 import { currentValue, fieldLabel, isFillable, type FormEdits } from "../forms";
 import { CSS_PX_PER_PT, displaySizePt, displaySizePx, mostVisiblePage, pageOrigin, pdfRectToScreen, renderScalePermille, screenRectToPdf, unrotatedLayer } from "../geometry";
@@ -34,6 +36,15 @@ interface ViewerProps {
   /** Area-marking mode: dragging on a page marks a rectangle for redaction instead of selecting text. */
   markMode?: boolean;
   onMarkArea?: (page: number, rect: SearchRect) => void;
+  /** Edit mode: boxes over editable text and pictures, with the pending edits previewed. */
+  edit?: EditProps;
+}
+
+export interface EditProps {
+  items: ObjEntry[];
+  onEdit: (e: ObjEntry) => void;
+  addText: boolean;
+  onAddTextDone: () => void;
 }
 
 const PAGE_GAP = 16;
@@ -48,7 +59,7 @@ interface PageWidget {
 }
 let firstPageReported = false;
 
-export function Viewer({ doc, zoom, onZoomStep, onCurrentPage, scrollRequest, hits, currentHit, onPageContextMenu, annotations, form, formEdits, onFormEdit, onMeasured, markMode, onMarkArea }: ViewerProps) {
+export function Viewer({ doc, zoom, onZoomStep, onCurrentPage, scrollRequest, hits, currentHit, onPageContextMenu, annotations, form, formEdits, onFormEdit, onMeasured, markMode, onMarkArea, edit }: ViewerProps) {
   const ref = useRef<HTMLDivElement>(null);
   // Per-page lists with stable identity, so adding an annotation re-renders only its page.
   const byPage = useMemo(() => {
@@ -181,6 +192,7 @@ export function Viewer({ doc, zoom, onZoomStep, onCurrentPage, scrollRequest, hi
             formEdits={formEdits ?? NO_EDITS}
             onFormEdit={onFormEdit}
             onMarkArea={markMode ? onMarkArea : undefined}
+            edit={edit}
           />
         ))}
       </div>
@@ -202,9 +214,10 @@ interface PageProps {
   onFormEdit?: (field: FormField, value: FormValue) => void;
   /** Set while marking areas for redaction. */
   onMarkArea?: (page: number, rect: SearchRect) => void;
+  edit?: EditProps;
 }
 
-const Page = memo(function Page({ docId, page, zoom, root, hits, currentHit, onContextMenu, annotations, widgets, formEdits, onFormEdit, onMarkArea }: PageProps) {
+const Page = memo(function Page({ docId, page, zoom, root, hits, currentHit, onContextMenu, annotations, widgets, formEdits, onFormEdit, onMarkArea, edit }: PageProps) {
   const api = useApi();
   const ref = useRef<HTMLDivElement>(null);
   const [near, setNear] = useState(false);
@@ -279,7 +292,8 @@ const Page = memo(function Page({ docId, page, zoom, root, hits, currentHit, onC
         </div>
       )}
       {annotations.length > 0 && <AnnotationLayer page={page} zoom={zoom} annotations={annotations} />}
-      {near && <TextLayer docId={docId} page={page} zoom={zoom} />}
+      {near && !edit && <TextLayer docId={docId} page={page} zoom={zoom} />}
+      {near && edit && <EditLayer docId={docId} page={page} zoom={zoom} items={edit.items} onEdit={edit.onEdit} addText={edit.addText} onAddTextDone={edit.onAddTextDone} />}
       {near && widgets.length > 0 && onFormEdit && <FormLayer docId={docId} page={page} zoom={zoom} widgets={widgets} edits={formEdits} onEdit={onFormEdit} />}
       {onMarkArea && <MarkCapture page={page} onMark={onMarkArea} />}
       {pageHits.flatMap(({ h, i }) =>

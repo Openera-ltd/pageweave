@@ -24,8 +24,10 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `file.signatureMark` | Add signature or initials… | — | Exercised by tests |
 | `file.trustedCertificates` | Trusted certificates… | — | Exercised by tests |
 | `edit.copy` | Copy selected text | — | Exercised by tests |
-| `edit.undo` | Undo annotation or mark | Ctrl+Z | Exercised by tests |
-| `edit.redo` | Redo annotation or mark | Ctrl+Y, Ctrl+Shift+Z | Exercised by tests |
+| `edit.undo` | Undo | Ctrl+Z | Exercised by tests |
+| `edit.redo` | Redo | Ctrl+Y, Ctrl+Shift+Z | Exercised by tests |
+| `edit.toggleEditMode` | Edit text and pictures | Ctrl+E | Exercised by tests |
+| `edit.addText` | Add text | — | Exercised by tests |
 | `annotate.highlight` | Highlight selected text | Ctrl+Shift+H | Exercised by tests |
 | `annotate.underline` | Underline selected text | Ctrl+Shift+U | Exercised by tests |
 | `annotate.strikeOut` | Strike through selected text | — | Exercised by tests |
@@ -76,4 +78,4 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `app.commandPalette` | Command palette | Ctrl+K, Ctrl+Shift+P | Exercised by tests |
 | `app.openLogs` | Show log folder | — | Exercised by tests |
 
-Coverage: 69 of 69 commands exercised by unit or real-app E2E tests.
+Coverage: 71 of 71 commands exercised by unit or real-app E2E tests.

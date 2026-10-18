@@ -300,11 +300,15 @@ pub(crate) fn apply_object_edits(input: &Path, opts: &OpenOptions, pages: &[Page
             let page = doc.pages().get(pe.page as PdfPageIndex).map_err(err)?;
             rotation_of(&page)
         };
+        // Moves first: a picture that is also replaced or turned takes its (moved) placement from
+        // the original object, which those edits then remove.
+        let mut ordered: Vec<(usize, &PageEdit)> = pe.edits.iter().enumerate().collect();
+        ordered.sort_by_key(|(_, e)| !matches!(e, PageEdit::MoveObjects { .. }));
         let mut remove: BTreeSet<u32> = BTreeSet::new();
         let mut expect_texts = Vec::new();
         let mut images_removed = 0usize;
         let mut images_added = 0usize;
-        for (k, e) in pe.edits.iter().enumerate() {
+        for (k, e) in ordered {
             match e {
                 PageEdit::Text { objects, text, size, color: c, dx, dy } => {
                     let run = text_of(objects).ok_or_else(|| {
@@ -614,6 +618,37 @@ fn unrotate(rot: u32, dx: f32, dy: f32) -> (f32, f32) {
         270 => (dy, -dx),
         _ => (dx, dy),
     }
+}
+
+/// Page `page` rendered with `edits` applied (PNG), for previewing pending changes. Nothing is
+/// written; the edits are applied and checked in memory exactly as saving would.
+pub fn preview_object_edits(
+    input: &Path,
+    opts: &OpenOptions,
+    page: u32,
+    edits: &[PageEdit],
+    scale: f32,
+) -> PwResult<Vec<u8>> {
+    if !scale.is_finite() || !(0.05..=8.0).contains(&scale) {
+        return Err(PwError::invalid("render.scale", "That zoom level cannot be previewed."));
+    }
+    let edited = apply_object_edits(input, opts, &[PageEdits { page, edits: edits.to_vec() }])?;
+    let pdfium = engine()?;
+    let doc = pdfium
+        .load_pdf_from_byte_slice(&edited.bytes, None)
+        .or_else(|_| pdfium.load_pdf_from_byte_slice(&edited.bytes, opts.password))
+        .map_err(err)?;
+    let p = doc.pages().get(page as PdfPageIndex).map_err(err)?;
+    let (w, h) = (p.width().value * scale, p.height().value * scale);
+    if (w * h) as u64 > 64_000_000 {
+        return Err(PwError::invalid("render.too_large", "That zoom level is too large for this page."));
+    }
+    let cfg = PdfRenderConfig::new().scale_page_by_factor(scale).render_form_data(true).render_annotations(true);
+    let img = p.render_with_config(&cfg).map_err(err)?.as_image().map_err(err)?;
+    let mut png = Vec::new();
+    img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .map_err(|_| PwError::internal("render.encode", "Could not encode the preview."))?;
+    Ok(png)
 }
 
 #[cfg(test)]

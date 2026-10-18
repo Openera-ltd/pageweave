@@ -1857,3 +1857,94 @@ kbd,
   border-bottom: 1px solid var(--border);
   align-items: flex-start;
 }
+
+/* Edit mode: boxes over editable text runs and pictures, above the page image and its exact preview. */
+.edit-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+}
+
+.edit-preview {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  user-select: none;
+}
+
+.edit-box {
+  position: absolute;
+  padding: 0;
+  margin: 0;
+  border: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 2px;
+  background: transparent;
+  cursor: text;
+  touch-action: none;
+}
+
+.edit-box.image {
+  cursor: move;
+}
+
+.edit-box:hover,
+.edit-box.selected {
+  border-style: solid;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.edit-box:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.edit-box.locked {
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  cursor: not-allowed;
+}
+
+.edit-input {
+  position: absolute;
+  z-index: 4;
+  padding: 0 2px;
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+}
+
+.edit-toolbar {
+  position: absolute;
+  z-index: 4;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2);
+  background: var(--surface);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 18%);
+}
+
+.edit-add-capture {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  cursor: crosshair;
+}
+
+.edit-error {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  z-index: 5;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: 12px;
+}

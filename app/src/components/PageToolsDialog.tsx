@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, FolderOpen, Plus, Trash2 } from "lucide-react";
 import { useApi } from "../api";
 import { basename, dirname, join, siblingOutput, stem } from "../paths";
-import { toPwError, type AnnotationSpec, type CollisionPolicy, type FieldValue, type StampPosition, type JobSnapshot, type WatermarkLayer, type OpenedDoc, type Operation, type PwError } from "../types";
+import { toPwError, type AnnotationSpec, type CollisionPolicy, type FieldValue, type PageEdit, type StampPosition, type JobSnapshot, type WatermarkLayer, type OpenedDoc, type Operation, type PwError } from "../types";
 import { Dialog, useDebounced } from "./ui";
 
 export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop" | "text" | "optimize" | "deskew" | "extractImages" | "orient";
@@ -103,6 +103,8 @@ interface Props {
   /** For the save tool: pending annotations and changed form values to write into the copy. */
   annotations?: AnnotationSpec[];
   formValues?: FieldValue[];
+  /** For the save tool: edits to existing text and pictures (Edit mode). */
+  objectEdits?: Array<{ page: number; edits: PageEdit[] }>;
   jobs: Record<string, JobSnapshot>;
   onClose: () => void;
   onFinished: (job: JobSnapshot) => void;
@@ -132,11 +134,12 @@ function useRangeCheck(docId: number, spec: string, enabled: boolean): RangeChec
   return check;
 }
 
-export function PageToolsDialog({ tool, doc, initialPages, annotations, formValues, jobs, onClose, onFinished }: Props) {
+export function PageToolsDialog({ tool, doc, initialPages, annotations, formValues, objectEdits, jobs, onClose, onFinished }: Props) {
   const nAnnots = annotations?.length ?? 0;
   const nFields = formValues?.length ?? 0;
-  // "-annotated" / "-filled" when only one kind of change is saved, "-edited" for both.
-  const suffix = tool === "save" ? (nFields === 0 ? "annotated" : nAnnots === 0 ? "filled" : "edited") : SUFFIX[tool];
+  const nObjects = (objectEdits ?? []).reduce((n, p) => n + p.edits.length, 0);
+  // "-annotated" / "-filled" when only one kind of change is saved, "-edited" otherwise.
+  const suffix = tool === "save" ? (nObjects === 0 && nFields === 0 ? "annotated" : nObjects === 0 && nAnnots === 0 ? "filled" : "edited") : SUFFIX[tool];
   const api = useApi();
   const [pages, setPages] = useState(initialPages ?? (tool === "rotate" ? "" : ""));
   const [allPages, setAllPages] = useState(ALL_PAGES_TOOLS.includes(tool) && !initialPages);
@@ -214,7 +217,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
     if (tool === "split" && splitMode === "every_n" && !everyNValid) return `Enter a number from 1 to ${doc.info.page_count}.`;
     if (tool === "split" && splitMode === "ranges" && rangeLines.length === 0) return "Enter one page range per line.";
     if (tool === "merge" && files.length < 2) return "Add at least one more file.";
-    if (tool === "save" && nAnnots + nFields === 0) return "There are no changes to save.";
+    if (tool === "save" && nAnnots + nFields + nObjects === 0) return "There are no changes to save.";
     if (tool === "stamp") {
       if (!stampText.trim()) return "Enter the text to stamp.";
       if (!stampCharsOk(stampText)) return "Stamps support Latin characters only for now.";
@@ -297,6 +300,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
           input: doc.path,
           form_values: formValues ?? [],
           annotations: (annotations ?? []).map(({ page, kind, rects, color, contents }) => ({ page, kind, rects, color, contents: contents ?? null })),
+          object_edits: objectEdits ?? [],
           output,
         };
     }
@@ -356,7 +360,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
     <Dialog title={TITLES[tool]} onClose={onClose} footer={footer} busy={busy} wide={tool === "merge"}>
       {tool === "save" ? (
         <p className="hint" style={{ marginTop: 0 }}>
-          Saves {[nFields ? `${nFields} filled field${nFields === 1 ? "" : "s"}` : "", nAnnots ? `${nAnnots} annotation${nAnnots === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ")} into a copy of{" "}
+          Saves {[nObjects ? `${nObjects} content edit${nObjects === 1 ? "" : "s"}` : "", nFields ? `${nFields} filled field${nFields === 1 ? "" : "s"}` : "", nAnnots ? `${nAnnots} annotation${nAnnots === 1 ? "" : "s"}` : ""].filter(Boolean).join(", ").replace(/, ([^,]*)$/, " and $1")} into a copy of{" "}
           <strong>{doc.name}</strong>. The original file is not changed.
         </p>
       ) : (

@@ -10,6 +10,8 @@ import {
   ZoomIn,
   ZoomOut,
   MoveHorizontal,
+  PencilLine,
+  Type as TypeIcon,
 } from "lucide-react";
 import { useApi } from "./api";
 import {
@@ -40,6 +42,7 @@ import { clampZoom, fitWidthZoom, nextZoom, pageOrigin, screenRectToPdf, ZOOM_PR
 import { basename, siblingOutput } from "./paths";
 import { sizeChange } from "./format";
 import { signatureSummary } from "./signatures";
+import { EMPTY_HISTORY as NO_OBJ_EDITS, push as pushObjEdit, redoLast, toPageEdits, undoLast, type ObjEntry, type ObjHistory } from "./objectEdits";
 import { eventToShortcut, isTextEntry } from "./shortcuts";
 import { applyAppearance } from "./theme";
 import { toPwError, type AppInfo, type AttachmentInfo, type CollisionPolicy, type FormField, type FormInfo, type FormValue, type JobSnapshot, type OpenedDoc, type Operation, type PwError, type RecoveredJob, type RedactArea, type SearchHit, type SearchRect, type Settings, type SignatureReport } from "./types";
@@ -172,6 +175,10 @@ export function App() {
   const [annots, setAnnots] = useState<Record<number, AnnotationHistory>>({});
   /** Area-marking mode: dragging on a page marks a rectangle for redaction. */
   const [markMode, setMarkMode] = useState(false);
+  /** Edit mode: existing text and pictures can be changed; edits stay pending until saved. */
+  const [editMode, setEditMode] = useState(false);
+  const [addTextArmed, setAddTextArmed] = useState(false);
+  const [objHist, setObjHist] = useState<Record<number, ObjHistory>>({});
   const annGroup = useRef(1);
   /** Form fields per document (null: none, or still loading) and the user's unsaved field edits. */
   const [forms, setForms] = useState<Record<number, FormInfo | null>>({});
@@ -207,8 +214,9 @@ export function App() {
   const pendingOf = (id: number) => annots[id]?.items ?? NO_PENDING;
   const activePending = active ? pendingOf(active.doc_id) : NO_PENDING;
   const editsOf = (id: number) => formEdits[id] ?? NO_EDITS;
-  /** Unsaved changes of a document: pending annotations and redaction marks plus changed form fields. */
-  const changesOf = (id: number) => pendingOf(id).length + Object.keys(editsOf(id)).length;
+  const objEditsOf = (id: number) => objHist[id]?.items ?? NO_OBJ_EDITS.items;
+  /** Unsaved changes of a document: pending annotations and redaction marks, changed form fields and content edits. */
+  const changesOf = (id: number) => pendingOf(id).length + Object.keys(editsOf(id)).length + objEditsOf(id).length;
   const marksOf = (id: number) => pendingOf(id).filter(isRedactMark).length;
   /** Changes a saved copy can hold (redaction marks are applied, not saved). */
   const savableOf = (id: number) => changesOf(id) - marksOf(id);
@@ -558,6 +566,8 @@ export function App() {
 
   const updateAnnots = (docId: number, f: (h: AnnotationHistory) => AnnotationHistory) =>
     setAnnots((a) => ({ ...a, [docId]: f(a[docId] ?? EMPTY_HISTORY) }));
+  const updateObjEdits = (docId: number, f: (h: ObjHistory) => ObjHistory) =>
+    setObjHist((o) => ({ ...o, [docId]: f(o[docId] ?? NO_OBJ_EDITS) }));
 
   const annotateSelection = (kind: Exclude<PendingKind, "note">, snapshot?: Map<number, SearchRect[]>) => {
     if (!active) return;
@@ -647,8 +657,10 @@ export function App() {
     if (!n) return;
     const before = annots[docId];
     const beforeEdits = formEdits[docId];
+    const beforeObjects = objHist[docId];
     setAnnots(({ [docId]: _gone, ...rest }) => rest);
     setFormEdits(({ [docId]: _gone, ...rest }) => rest);
+    setObjHist(({ [docId]: _gone, ...rest }) => rest);
     notify({
       kind: "info",
       title: `Discarded ${n} change${n === 1 ? "" : "s"}`,
@@ -658,6 +670,7 @@ export function App() {
           run: () => {
             if (before) setAnnots((a) => ({ ...a, [docId]: before }));
             if (beforeEdits) setFormEdits((e) => ({ ...e, [docId]: beforeEdits }));
+            if (beforeObjects) setObjHist((o) => ({ ...o, [docId]: beforeObjects }));
           },
         },
       ],
@@ -679,13 +692,26 @@ export function App() {
 
   const handlers: CommandHandlers = {
     "edit.copy": { run: () => copySelection(), available: () => (pageSelection() ? true : "Select text on a page first.") },
+    // In Edit mode, undo and redo walk the content edits; otherwise annotations and marks.
     "edit.undo": {
-      run: () => active && updateAnnots(active.doc_id, undo),
-      available: all(needDoc, () => (activePending.length ? true : "There is nothing to undo.")),
+      run: () => active && (editMode ? updateObjEdits(active.doc_id, undoLast) : updateAnnots(active.doc_id, undo)),
+      available: all(needDoc, () => ((editMode ? active && objEditsOf(active.doc_id).length : activePending.length) ? true : "There is nothing to undo.")),
     },
     "edit.redo": {
-      run: () => active && updateAnnots(active.doc_id, redo),
-      available: all(needDoc, () => (active && annots[active.doc_id]?.redo.length ? true : "There is nothing to redo.")),
+      run: () => active && (editMode ? updateObjEdits(active.doc_id, redoLast) : updateAnnots(active.doc_id, redo)),
+      available: all(needDoc, () => (active && (editMode ? objHist[active.doc_id] : annots[active.doc_id])?.redo.length ? true : "There is nothing to redo.")),
+    },
+    "edit.toggleEditMode": {
+      run: () => {
+        setMarkMode(false);
+        setAddTextArmed(false);
+        setEditMode((m) => !m);
+      },
+      available: all(needDoc, noDialog),
+    },
+    "edit.addText": {
+      run: () => setAddTextArmed((a) => !a),
+      available: all(needDoc, noDialog, () => (editMode ? true : "Turn on Edit mode first.")),
     },
     "annotate.highlight": { run: () => annotateSelection("highlight"), available: all(needDoc, noDialog, roomAvail, selectionAvail) },
     "annotate.underline": { run: () => annotateSelection("underline"), available: all(needDoc, noDialog, roomAvail, selectionAvail) },
@@ -693,7 +719,10 @@ export function App() {
     "annotate.note": { run: () => startNote(), available: all(needDoc, noDialog, roomAvail) },
     "redact.markSelection": { run: () => annotateSelection("redact"), available: all(needDoc, noDialog, roomAvail, selectionAvail) },
     "redact.markArea": {
-      run: () => setMarkMode((m) => !m),
+      run: () => {
+        setEditMode(false);
+        setMarkMode((m) => !m);
+      },
       available: all(needDoc, noDialog, () => (markMode ? true : roomAvail())),
     },
     "redact.markPage": { run: () => markPage(view.page), available: all(needDoc, noDialog, roomAvail) },
@@ -833,7 +862,22 @@ export function App() {
     if (h.available() === true) h.run();
   };
 
-  useEffect(() => setMarkMode(false), [activeId]);
+  useEffect(() => {
+    setMarkMode(false);
+    setAddTextArmed(false);
+  }, [activeId]);
+  useEffect(() => {
+    if (!editMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !dialog && !menu && !isTextEntry(e.target as Element | null)) {
+        e.preventDefault();
+        if (addTextArmed) setAddTextArmed(false);
+        else setEditMode(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [editMode, addTextArmed, dialog, menu]);
   useEffect(() => {
     if (!markMode) return;
     const onKey = (e: KeyboardEvent) => {
@@ -1072,6 +1116,7 @@ export function App() {
     const marks = pendingOf(docId).filter(isRedactMark);
     setAnnots(({ [docId]: _saved, ...rest }) => rest);
     setFormEdits(({ [docId]: _saved, ...rest }) => rest);
+    setObjHist(({ [docId]: _saved, ...rest }) => rest);
     const next = afterSave.current;
     afterSave.current = null;
     if (next?.kind === "close") return closeTabNow(next.docId);
@@ -1155,6 +1200,8 @@ export function App() {
             <Layers /> Pages
           </button>
           <CommandButton command="search.open" handlers={handlers} bindings={bindings} icon={<Search />} pressed={searchOpen} />
+          <CommandButton command="edit.toggleEditMode" handlers={handlers} bindings={bindings} icon={<PencilLine />} pressed={editMode} />
+          {editMode && <CommandButton command="edit.addText" handlers={handlers} bindings={bindings} icon={<TypeIcon />} pressed={addTextArmed} />}
         </div>
         <span className="spacer" />
         <div className="group">
@@ -1282,6 +1329,16 @@ export function App() {
               formEdits={editsOf(active.doc_id)}
               onFormEdit={onFormEdit}
               markMode={markMode}
+              edit={
+                editMode
+                  ? {
+                      items: objEditsOf(active.doc_id),
+                      onEdit: (e: ObjEntry) => updateObjEdits(active.doc_id, (h) => pushObjEdit(h, e)),
+                      addText: addTextArmed,
+                      onAddTextDone: () => setAddTextArmed(false),
+                    }
+                  : undefined
+              }
               onMarkArea={(page, rect) => addMarks([[page, [rect]]])}
               onMeasured={(width) => {
                 if (view.fitPending) setView({ zoom: Math.min(1.5, fitWidthZoom(active.info.pages, width)), fitPending: false });
@@ -1322,6 +1379,7 @@ export function App() {
           initialPages={dialog.initialPages}
           annotations={dialog.tool === "save" ? annotationSpecs(activePending) : undefined}
           formValues={dialog.tool === "save" ? toFieldValues(editsOf(active.doc_id), forms[active.doc_id]?.fields ?? []) : undefined}
+          objectEdits={dialog.tool === "save" ? toPageEdits(objEditsOf(active.doc_id)) : undefined}
           jobs={jobs}
           onClose={() => {
             afterSave.current = null;

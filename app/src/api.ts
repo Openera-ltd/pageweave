@@ -22,6 +22,8 @@ import type {
   SignatureReport,
   ChainCertificate,
   TrustedCert,
+  EditableObjects,
+  PageEdit,
   SearchHit,
   Settings,
 } from "./types";
@@ -56,6 +58,10 @@ export interface Api {
   sanitizeInspect(docId: number): Promise<SanitizeFindings>;
   /** The document's digital signatures, checked (read-only). */
   verifySignatures(docId: number): Promise<SignatureReport>;
+  /** Editable text runs and pictures of a page. */
+  pageObjects(docId: number, page: number): Promise<EditableObjects>;
+  /** A page with pending object edits applied, as a PNG data URL (nothing is written). */
+  previewPageEdits(docId: number, page: number, edits: PageEdit[], scalePermille: number): Promise<string>;
   /** Certificates the user trusts for signatures. */
   trustedCertificates(): Promise<TrustedCert[]>;
   /** The certificate chain of signature `index` (signer first). */
@@ -125,6 +131,8 @@ export const tauriApi: Api = {
   sanitizeInspect: (docId) => invoke("sanitize_inspect", { docId }),
   listAttachments: (docId) => invoke("list_attachments", { docId }),
   trustedCertificates: () => invoke("trusted_certificates"),
+  pageObjects: (docId, page) => invoke("page_objects", { docId, page }),
+  previewPageEdits: (docId, page, edits, scalePermille) => invoke("preview_page_edits", { docId, page, edits, scalePermille }),
   signatureChain: (docId, index) => invoke("signature_chain", { docId, index }),
   trustCertificate: (docId, index, position) => invoke("trust_certificate", { docId, index, position }),
   removeTrustedCertificate: (fingerprint) => invoke("remove_trusted_certificate", { fingerprint }),

@@ -25,6 +25,8 @@ export type CommandId =
   | "edit.copy"
   | "edit.undo"
   | "edit.redo"
+  | "edit.toggleEditMode"
+  | "edit.addText"
   | "annotate.highlight"
   | "annotate.underline"
   | "annotate.strikeOut"
@@ -105,8 +107,10 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "file.trustedCertificates", label: "Trusted certificates…", category: "File", shortcuts: [] },
   // Ctrl+C is handled natively by the text layer; this command backs the context-menu entry.
   { id: "edit.copy", label: "Copy selected text", category: "Edit", shortcuts: [] },
-  { id: "edit.undo", label: "Undo annotation or mark", category: "Edit", shortcuts: ["Ctrl+Z"] },
-  { id: "edit.redo", label: "Redo annotation or mark", category: "Edit", shortcuts: ["Ctrl+Y", "Ctrl+Shift+Z"] },
+  { id: "edit.undo", label: "Undo", category: "Edit", shortcuts: ["Ctrl+Z"] },
+  { id: "edit.redo", label: "Redo", category: "Edit", shortcuts: ["Ctrl+Y", "Ctrl+Shift+Z"] },
+  { id: "edit.toggleEditMode", label: "Edit text and pictures", category: "Edit", shortcuts: ["Ctrl+E"] },
+  { id: "edit.addText", label: "Add text", category: "Edit", shortcuts: [] },
   { id: "annotate.highlight", label: "Highlight selected text", category: "Annotate", shortcuts: ["Ctrl+Shift+H"] },
   { id: "annotate.underline", label: "Underline selected text", category: "Annotate", shortcuts: ["Ctrl+Shift+U"] },
   { id: "annotate.strikeOut", label: "Strike through selected text", category: "Annotate", shortcuts: [] },

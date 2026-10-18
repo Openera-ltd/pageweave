@@ -263,6 +263,22 @@ enum Command {
         #[arg(long)]
         pages: Option<String>,
     },
+    /// List the editable text runs and pictures of a page (the object indices `edit` refers to).
+    Objects {
+        file: PathBuf,
+        /// 1-based page.
+        #[arg(long, default_value_t = 1)]
+        page: u32,
+    },
+    /// Edit existing text and pictures, or add text, in a copy. The edits file is a JSON array of
+    /// `{"page": <0-based>, "edits": [...]}` as in the `edit_objects` operation contract.
+    Edit {
+        file: PathBuf,
+        #[arg(long)]
+        edits: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
     /// Check the document's digital signatures (integrity; signer trust is not checked).
     Signatures {
         file: PathBuf,
@@ -560,6 +576,18 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
         }
         Command::Deskew { file, output, pages } => {
             Operation::Deskew { input: file.clone(), pages: pages.clone(), output: output.clone() }
+        }
+        Command::Objects { file, page } => {
+            if *page == 0 {
+                return Err(PwError::invalid("page.range", "Pages are numbered from 1."));
+            }
+            Operation::ListPageObjects { input: file.clone(), page: page - 1 }
+        }
+        Command::Edit { file, edits, output } => {
+            let text = std::fs::read_to_string(edits).map_err(|e| PwError::from_io(&e, "edits file"))?;
+            let pages = serde_json::from_str(&text)
+                .map_err(|e| PwError::invalid("edit.invalid", format!("The edits file is not valid: {e}")))?;
+            Operation::EditObjects { input: file.clone(), pages, output: output.clone() }
         }
         Command::Signatures { file, trust } => {
             Operation::VerifySignatures { input: file.clone(), trusted: trust.clone() }

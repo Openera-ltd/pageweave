@@ -29,6 +29,7 @@ tauri-plugin-dialog = "=2.8.3"
 tauri-plugin-opener = "=2.7.2"
 # Windows paths without the `\\?\` prefix where equivalent (already in the dependency tree).
 dunce = "=1.0.5"
+base64 = "=0.22.1"
 
 [dev-dependencies]
 tempfile.workspace = true

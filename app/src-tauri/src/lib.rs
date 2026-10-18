@@ -168,6 +168,44 @@ async fn verify_signatures(state: State<'_, AppState>, doc_id: DocId) -> CmdResu
     .await
 }
 
+/// The editable text runs and pictures of one page of an open document (read-only).
+#[tauri::command]
+async fn page_objects(
+    state: State<'_, AppState>,
+    doc_id: DocId,
+    page: u32,
+) -> CmdResult<pw_pdf::objects::EditableObjects> {
+    let doc = state.doc(doc_id)?;
+    blocking(move || {
+        pw_pdf::objects::editable_objects(&doc.path, &pw_pdf::OpenOptions { password: doc.password.as_deref() }, page)
+    })
+    .await
+}
+
+/// One page with pending object edits applied, as a PNG data URL (nothing is written).
+#[tauri::command]
+async fn preview_page_edits(
+    state: State<'_, AppState>,
+    doc_id: DocId,
+    page: u32,
+    edits: Vec<pw_core::ops::PageEdit>,
+    scale_permille: u32,
+) -> CmdResult<String> {
+    use base64::Engine as _;
+    let doc = state.doc(doc_id)?;
+    blocking(move || {
+        let png = pw_pdf::objects::preview_object_edits(
+            &doc.path,
+            &pw_pdf::OpenOptions { password: doc.password.as_deref() },
+            page,
+            &edits,
+            scale_permille as f32 / 1000.0,
+        )?;
+        Ok(format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(png)))
+    })
+    .await
+}
+
 /// A certificate the user trusts.
 #[derive(serde::Serialize)]
 struct TrustedCert {
@@ -516,6 +554,8 @@ pub fn run() {
             list_attachments,
             verify_signatures,
             trusted_certificates,
+            page_objects,
+            preview_page_edits,
             signature_chain,
             trust_certificate,
             remove_trusted_certificate,

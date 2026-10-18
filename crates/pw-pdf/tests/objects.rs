@@ -216,3 +216,55 @@ fn object_edits_save_together_with_annotations() {
     let page = doc.get_pages()[&1];
     assert!(doc.get_dictionary(page).expect("page").get(b"Annots").is_ok(), "the highlight was added too");
 }
+
+#[test]
+fn a_moved_and_turned_picture_keeps_its_move() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let src = fixture("embedded-font.pdf");
+    let l = list(&src);
+    let img = l.images[0].object;
+    let out = dir.path().join("o.pdf");
+    // Turn listed before the move: the move must still apply.
+    edit(
+        &src,
+        vec![
+            PageEdit::RotateImage { object: img, degrees: 90 },
+            PageEdit::MoveObjects { objects: vec![img], dx: 100.0, dy: 0.0 },
+        ],
+        &out,
+    )
+    .expect("edit");
+    let o = list(&out);
+    assert_eq!((o.images[0].width_px, o.images[0].height_px), (80, 120));
+    assert!((o.images[0].rect.left - (l.images[0].rect.left + 100.0)).abs() < 0.5, "moved: {:?}", o.images[0].rect);
+}
+
+#[test]
+fn a_save_with_only_object_edits_is_valid_and_applies() {
+    // Regression: the save request was refused as "no changes" when it held only content edits.
+    let dir = tempfile::tempdir().expect("tmp");
+    let src = fixture("embedded-font.pdf");
+    let l = list(&src);
+    let out = dir.path().join("only.pdf");
+    let req = OperationRequest::new(Operation::ApplyEdits {
+        input: src.clone(),
+        form_values: vec![],
+        annotations: vec![],
+        object_edits: vec![PageEdits {
+            page: 0,
+            edits: vec![PageEdit::DeleteObjects { objects: vec![l.images[0].object] }],
+        }],
+        output: out.clone(),
+    });
+    req.validate().expect("valid");
+    execute(&req, None).expect("apply");
+    assert!(list(&out).images.is_empty());
+    let empty = OperationRequest::new(Operation::ApplyEdits {
+        input: src,
+        form_values: vec![],
+        annotations: vec![],
+        object_edits: vec![PageEdits { page: 0, edits: vec![] }],
+        output: out,
+    });
+    assert_eq!(empty.validate().expect_err("empty").code, "edits.empty");
+}
