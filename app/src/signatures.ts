@@ -1,5 +1,6 @@
 // Signature status wording shared by the sidebar panel and the status bar. Pure (unit tested).
-// "Valid" never implies trust: PageWeave does not check signers against a trust list yet.
+// "Valid" (unchanged, matches the certificate) and "trusted" (chains to a certificate the user
+// trusts) are separate: an unknown signer is always said to be unknown.
 
 import type { SignatureInfo, SignatureReport } from "./types";
 
@@ -7,8 +8,13 @@ export type Tone = "ok" | "warn" | "bad";
 
 export function statusLabel(s: SignatureInfo): { text: string; tone: Tone } {
   switch (s.status) {
-    case "valid":
-      return s.changed_after ? { text: "Valid, document changed since", tone: "warn" } : { text: "Valid", tone: "ok" };
+    case "valid": {
+      if (s.trust !== "trusted") {
+        const why = s.trust === "expired" ? "certificate expired" : s.trust === "chain_invalid" ? "certificate chain broken" : "signer unknown";
+        return { text: `Valid, ${why}`, tone: "warn" };
+      }
+      return s.changed_after ? { text: "Trusted, document changed since", tone: "warn" } : { text: "Valid, trusted", tone: "ok" };
+    }
     case "invalid":
       return { text: "Invalid", tone: "bad" };
     case "unsupported":
@@ -26,6 +32,7 @@ export function signatureSummary(r: SignatureReport | null): { text: string; ton
   if (r.signatures.some((s) => s.status !== "valid")) return { text: n === 1 ? "Signature not checked" : "Some signatures not checked", tone: "warn" };
   // Every signature but the last one naturally sees later changes (the later signatures).
   if (r.signatures[n - 1]!.changed_after) return { text: "Signed, changed since", tone: "warn" };
+  if (r.signatures.some((s) => s.trust !== "trusted")) return { text: n === 1 ? "Signed, signer not trusted" : "Signed, not all signers trusted", tone: "warn" };
   return { text: n === 1 ? "Signed" : `Signed (${n})`, tone: "ok" };
 }
 

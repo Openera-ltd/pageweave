@@ -21,10 +21,13 @@ interface Props {
   /** Signature check of this document: undefined while it runs. */
   signatures?: SignatureReport | null;
   signaturesError?: PwError | null;
+  /** Trust the signer of signature `index`. */
+  onTrustSigner?: (index: number) => void;
+  onManageTrust?: () => void;
 }
 
 /** Left panel: page thumbnails or the document outline (bookmarks). */
-export function Sidebar({ doc, view, onView, currentPage, onSelectPage, onPageContextMenu, onSaveAttachment, onAttachFiles, onEditBookmarks, signatures, signaturesError }: Props) {
+export function Sidebar({ doc, view, onView, currentPage, onSelectPage, onPageContextMenu, onSaveAttachment, onAttachFiles, onEditBookmarks, signatures, signaturesError, onTrustSigner, onManageTrust }: Props) {
   const hasBookmarks = doc.info.bookmarks.length > 0;
   const shown: SidebarView = view === "bookmarks" ? (hasBookmarks ? "bookmarks" : "pages") : view;
   return (
@@ -66,7 +69,7 @@ export function Sidebar({ doc, view, onView, currentPage, onSelectPage, onPageCo
             </div>
           </div>
         ) : shown === "signatures" ? (
-          <Signatures report={signatures} error={signaturesError ?? null} onSelect={onSelectPage} />
+          <Signatures report={signatures} error={signaturesError ?? null} onSelect={onSelectPage} onTrust={onTrustSigner} onManage={onManageTrust} />
         ) : (
           <Attachments doc={doc} onSave={onSaveAttachment} onAttach={onAttachFiles} />
         )}
@@ -173,7 +176,19 @@ function Attachments({ doc, onSave, onAttach }: { doc: OpenedDoc; onSave: (a: At
 }
 
 /** Digital signatures and what was (and was not) checked. */
-function Signatures({ report, error, onSelect }: { report: SignatureReport | null | undefined; error: PwError | null; onSelect: (p: number) => void }) {
+function Signatures({
+  report,
+  error,
+  onSelect,
+  onTrust,
+  onManage,
+}: {
+  report: SignatureReport | null | undefined;
+  error: PwError | null;
+  onSelect: (p: number) => void;
+  onTrust?: (index: number) => void;
+  onManage?: () => void;
+}) {
   if (error) {
     return (
       <div className="panel-scroll signatures">
@@ -203,6 +218,7 @@ function Signatures({ report, error, onSelect }: { report: SignatureReport | nul
               ["Reason", s.reason],
               ["Location", s.location],
               ["Issued by", s.issuer],
+              ["Chain", s.chain.length > 1 ? s.chain.join(" → ") : null],
               ["Valid", s.certificate_valid_from && s.certificate_valid_to ? `${formatDate(s.certificate_valid_from)} – ${formatDate(s.certificate_valid_to)}` : null],
               ["Algorithm", s.signature_algorithm],
               ["Field", s.field],
@@ -218,6 +234,11 @@ function Signatures({ report, error, onSelect }: { report: SignatureReport | nul
                   </span>
                 </div>
                 <p className="hint">{s.detail}</p>
+                {s.status === "valid" && (
+                  <p className="hint" data-testid="signature-trust">
+                    {s.trust_detail}
+                  </p>
+                )}
                 {s.changed_after && <p className="hint">The document was changed after this signature was made.</p>}
                 <dl>
                   {rows
@@ -229,17 +250,29 @@ function Signatures({ report, error, onSelect }: { report: SignatureReport | nul
                       </div>
                     ))}
                 </dl>
-                {s.page !== null && (
-                  <button type="button" className="btn link" onClick={() => onSelect(s.page!)}>
-                    Go to page {s.page + 1}
-                  </button>
-                )}
+                <div className="row">
+                  {s.page !== null && (
+                    <button type="button" className="btn link" onClick={() => onSelect(s.page!)}>
+                      Go to page {s.page + 1}
+                    </button>
+                  )}
+                  {s.status === "valid" && s.trust === "unknown_signer" && onTrust && (
+                    <button type="button" className="btn link" data-testid="trust-signer" onClick={() => onTrust(i)}>
+                      Trust…
+                    </button>
+                  )}
+                </div>
               </li>
             );
           })}
         </ul>
       )}
       {report.signatures.length > 0 && <p className="hint">{report.trust_note}</p>}
+      {report.signatures.length > 0 && onManage && (
+        <button type="button" className="btn link" onClick={onManage}>
+          Trusted certificates…
+        </button>
+      )}
     </div>
   );
 }

@@ -1265,7 +1265,7 @@ await test("compare documents: another file by path; errors explained; swap orde
   });
 });
 
-await test("signatures: status bar summary and panel for valid, tampered, edited and unsigned files; trust not claimed", async () => {
+await test("signatures: status bar summary and panel for valid, tampered, edited and unsigned files; unknown signers not trusted", async () => {
   const files = ["signed-rsa.pdf", "signed-tampered.pdf", "signed-then-edited.pdf", "five-pages.pdf"];
   await withApp(files.map((f) => join(FIX, f)), async (s) => {
     await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label .name').length")) === 4, "all open");
@@ -1279,7 +1279,7 @@ await test("signatures: status bar summary and panel for valid, tampered, edited
       await s.waitFor('[data-testid="signature-summary"]');
       return s.text('[data-testid="signature-summary"]');
     };
-    assert((await summaryOf("signed-rsa.pdf")) === "Signed", "valid signature");
+    assert((await summaryOf("signed-rsa.pdf")) === "Signed, signer not trusted", "valid signature, unknown signer");
     assert((await summaryOf("signed-tampered.pdf")) === "Signature invalid", "tampered");
     assert((await summaryOf("signed-then-edited.pdf")) === "Signed, changed since", "edited after signing");
     assert((await summaryOf("five-pages.pdf")) === null, "unsigned: no indicator");
@@ -1292,13 +1292,13 @@ await test("signatures: status bar summary and panel for valid, tampered, edited
     assert((await s.text('[data-signature="0"] [data-testid="signature-status"]')) === "Invalid", "panel status");
     const panel = await s.exec("return document.querySelector('.signatures').textContent");
     assert(panel.includes("PageWeave Test Signer") && panel.includes("changed after it was signed"), "signer and reason shown");
-    assert(panel.includes("does not yet check whether the signer is trusted"), "trust is not claimed");
+    assert(panel.includes("Revocation") && panel.includes("not checked"), "what is not checked is said");
     await axeCheck(s, "signatures-panel");
     writeFileSync(join(ART, "signatures-panel.png"), await s.screenshot());
 
     // Valid file: status and the field's page link.
     await summaryOf("signed-rsa.pdf");
-    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-signature=\"0\"] [data-testid=signature-status]')?.textContent ?? null")) === "Valid", "valid in panel");
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-signature=\"0\"] [data-testid=signature-status]')?.textContent ?? null")) === "Valid, signer unknown", "valid in panel, signer unknown");
     await s.exec("[...document.querySelectorAll('.signature .btn.link')].find(b => b.textContent === 'Go to page 1').click()");
 
     // Unsigned file via the palette command.
@@ -1568,6 +1568,46 @@ await test("signature or initials: typed and drawn (pointer) placed as previewed
     assert(t.includes("Ada Lovelace"), "typed name is text in the copy");
     assert(statSync(drawnOut).size > statSync(join(FIX, "five-pages.pdf")).size, "drawn copy written");
   }
+});
+
+await test("trust a signer: unknown → trust the CA after seeing its fingerprint → trusted; remove → unknown again", async () => {
+  if (!CLI) throw new Skip("needs the CLI to sign the test file");
+  const signed = join(work, "to-trust.pdf");
+  const r = spawnSync(CLI, ["sign", "--certificate", join(FIX, "..", "keys", "test-signer-rsa.p12"), "-o", signed, join(FIX, "five-pages.pdf")], { input: "pageweave-test\n", encoding: "utf8" });
+  assert(r.status === 0, `signed: ${r.stderr}`);
+  await withApp([signed], async (s) => {
+    await s.waitFor('[data-testid="signature-summary"]');
+    assert((await s.text('[data-testid="signature-summary"]')) === "Signed, signer not trusted", "unknown at first");
+    await s.click('[data-testid="signature-summary"]');
+    await s.waitFor('[data-testid="trust-signer"]');
+    await s.click('[data-testid="trust-signer"]');
+    await s.waitFor('[data-trust-position="1"]');
+    const dialog = await s.text('[role="dialog"]');
+    assert(dialog.includes("Only PageWeave Test Signer") && dialog.includes("Everything issued by PageWeave Test CA"), "both choices offered");
+    assert(/([0-9A-F]{2}:){31}[0-9A-F]{2}/.test(dialog), "fingerprints shown");
+    await axeCheck(s, "trust-dialog");
+    await s.click('[data-trust-position="1"]');
+    await s.click('[data-testid="trust-confirm"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Trusted PageWeave Test CA")), "trusted notice");
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=signature-summary]')?.textContent ?? null")) === "Signed", "status bar now trusted");
+    assert((await s.text('[data-signature="0"] [data-testid="signature-status"]')) === "Valid, trusted", "panel trusted");
+    assert((await s.exec("return document.querySelector('.signatures').textContent")).includes("PageWeave Test Signer → PageWeave Test CA"), "chain shown");
+    writeFileSync(join(ART, "signatures-trusted.png"), await s.screenshot());
+    // Manage from the palette, then from the panel link; remove the trust again (also leaves later
+    // scenarios unaffected).
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Trusted certificates");
+    await s.click('[role="option"][data-command="file.trustedCertificates"]');
+    await s.waitFor('[data-trusted="PageWeave Test CA"]');
+    await s.keys(["Escape"]);
+    await s.exec("[...document.querySelectorAll('.signatures .btn.link')].find(b => b.textContent.startsWith('Trusted certificates')).click()");
+    await s.waitFor('[data-trusted="PageWeave Test CA"]');
+    await axeCheck(s, "trusted-certificates-dialog");
+    await s.click('[aria-label="Remove PageWeave Test CA from trusted certificates"]');
+    await s.waitFor('[data-testid="trusted-none"]');
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=signature-summary]')?.textContent ?? null")) === "Signed, signer not trusted", "unknown again");
+  });
 });
 
 await test("protect with password: AES-256 copy needs the password; wrong password refused; content intact", async () => {

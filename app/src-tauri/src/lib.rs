@@ -6,6 +6,7 @@ pub mod pages;
 pub mod state;
 
 use pw_core::job::JobSnapshot;
+use pw_core::log::Level;
 use pw_core::ops::{OperationRequest, SCHEMA_VERSION};
 use pw_core::settings::{LoadOutcome, Settings};
 use pw_core::{fields, PwError};
@@ -154,12 +155,128 @@ async fn list_attachments(state: State<'_, AppState>, doc_id: DocId) -> CmdResul
     .await
 }
 
-/// The open document's digital signatures, checked (read-only). Runs on a worker thread.
+/// The open document's digital signatures, checked against the trusted certificates (read-only).
+/// Runs on a worker thread.
 #[tauri::command]
 async fn verify_signatures(state: State<'_, AppState>, doc_id: DocId) -> CmdResult<pw_pdf::SignatureReport> {
     let doc = state.doc(doc_id)?;
-    blocking(move || pw_pdf::verify_signatures(&doc.path, &pw_pdf::OpenOptions { password: doc.password.as_deref() }))
-        .await
+    let dir = state.trust_dir.clone();
+    blocking(move || {
+        let anchors = pw_pdf::load_trusted_certificates(&trusted_files(&dir))?;
+        pw_pdf::verify_signatures(&doc.path, &pw_pdf::OpenOptions { password: doc.password.as_deref() }, &anchors)
+    })
+    .await
+}
+
+/// A certificate the user trusts.
+#[derive(serde::Serialize)]
+struct TrustedCert {
+    fingerprint: String,
+    name: String,
+    subject: String,
+    valid_to: String,
+}
+
+fn trusted_files(dir: &std::path::Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "der")).collect())
+        .unwrap_or_default();
+    files.sort();
+    files
+}
+
+fn trusted_entry(der: &[u8]) -> Option<TrustedCert> {
+    let c = pw_pdf::parse_certificates(der).into_iter().next()?;
+    let chain_name = c.tbs_certificate.subject.to_string();
+    let name = c
+        .tbs_certificate
+        .subject
+        .0
+        .iter()
+        .flat_map(|rdn| rdn.0.iter())
+        .find(|a| a.oid.to_string() == "2.5.4.3")
+        .and_then(|a| a.value.decode_as::<String>().ok())
+        .unwrap_or_else(|| chain_name.clone());
+    Some(TrustedCert {
+        fingerprint: pw_pdf::fingerprint(&c),
+        name,
+        subject: chain_name,
+        valid_to: c.tbs_certificate.validity.not_after.to_date_time().to_string(),
+    })
+}
+
+/// File name for a fingerprint ("AB:CD:…" → "ABCD….der"); None for anything else.
+fn trust_file_name(fingerprint: &str) -> Option<String> {
+    let hex: String = fingerprint.chars().filter(|c| *c != ':').collect();
+    (hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit())).then(|| format!("{}.der", hex.to_ascii_uppercase()))
+}
+
+/// Certificates the user trusts for signatures.
+#[tauri::command]
+async fn trusted_certificates(state: State<'_, AppState>) -> CmdResult<Vec<TrustedCert>> {
+    let dir = state.trust_dir.clone();
+    blocking(move || {
+        Ok(trusted_files(&dir).iter().filter_map(|p| std::fs::read(p).ok()).filter_map(|d| trusted_entry(&d)).collect())
+    })
+    .await
+}
+
+/// The certificate chain of one signature of an open document (to choose what to trust).
+#[tauri::command]
+async fn signature_chain(
+    state: State<'_, AppState>,
+    doc_id: DocId,
+    index: usize,
+) -> CmdResult<Vec<pw_pdf::ChainCertificate>> {
+    let doc = state.doc(doc_id)?;
+    blocking(move || pw_pdf::signature_chain(&doc.path, index)).await
+}
+
+/// Trust one certificate of a signature's chain (position 0 = the signer).
+#[tauri::command]
+async fn trust_certificate(
+    state: State<'_, AppState>,
+    doc_id: DocId,
+    index: usize,
+    position: usize,
+) -> CmdResult<TrustedCert> {
+    let doc = state.doc(doc_id)?;
+    let dir = state.trust_dir.clone();
+    let logger = state.logger.clone();
+    blocking(move || {
+        let chain = pw_pdf::signature_chain(&doc.path, index)?;
+        let c = chain
+            .get(position)
+            .ok_or_else(|| PwError::invalid("trust.position", "That certificate is not in the chain."))?;
+        let file = trust_file_name(&c.fingerprint)
+            .ok_or_else(|| PwError::internal("trust.fingerprint", "Bad fingerprint."))?;
+        std::fs::create_dir_all(&dir).map_err(|e| PwError::from_io(&e, "trusted certificates folder"))?;
+        let tmp = dir.join(format!("{file}.tmp"));
+        std::fs::write(&tmp, &c.der).map_err(|e| PwError::from_io(&e, "trusted certificate"))?;
+        std::fs::rename(&tmp, dir.join(&file)).map_err(|e| PwError::from_io(&e, "trusted certificate"))?;
+        logger.log(Level::Info, "trust", "certificate_added", None, fields! {"is_ca" => c.is_ca});
+        trusted_entry(&c.der)
+            .ok_or_else(|| PwError::internal("trust.reread", "The certificate could not be read back."))
+    })
+    .await
+}
+
+/// Stop trusting a certificate.
+#[tauri::command]
+async fn remove_trusted_certificate(state: State<'_, AppState>, fingerprint: String) -> CmdResult<bool> {
+    let file = trust_file_name(&fingerprint)
+        .ok_or_else(|| PwError::invalid("trust.fingerprint", "Not a certificate fingerprint."))?;
+    let path = state.trust_dir.join(file);
+    let logger = state.logger.clone();
+    blocking(move || match std::fs::remove_file(&path) {
+        Ok(()) => {
+            logger.log(Level::Info, "trust", "certificate_removed", None, fields! {});
+            Ok(true)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(PwError::from_io(&e, "trusted certificate")),
+    })
+    .await
 }
 
 /// What hidden information an open document holds (read-only). Runs on a worker thread.
@@ -398,6 +515,10 @@ pub fn run() {
             sanitize_inspect,
             list_attachments,
             verify_signatures,
+            trusted_certificates,
+            signature_chain,
+            trust_certificate,
+            remove_trusted_certificate,
             open_documents,
         ])
         .run(tauri::generate_context!())

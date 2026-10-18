@@ -9,6 +9,8 @@ These keys protect nothing: they exist so tests can sign PDFs. They are issued b
   fixtures/keys/test-signer-ecdsa.p12        ECDSA P-256, AES-256 (PBES2), signer + CA certificate
   fixtures/keys/test-signer-rsa-legacy.p12   RSA-2048, legacy 3DES (PBES1), as older tools export
   fixtures/keys/test-signer-expired.p12      RSA-2048, certificate expired in 2020
+  fixtures/keys/test-signer-not-ca.p12       chain signer → "intermediate" that is NOT a CA → test CA
+  fixtures/keys/test-signer-old-issuer.p12   chain signer → intermediate CA that expired in 2020 → test CA
   fixtures/keys/test-ca.der                  the test CA certificate (public)
 
 Keys are random on every run, so regenerating changes these files (tests do not depend on exact
@@ -36,7 +38,7 @@ def name(cn: str) -> x509.Name:
     return x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn), x509.NameAttribute(NameOID.ORGANIZATION_NAME, "PageWeave Test")])
 
 
-def cert(subject, issuer, public_key, signing_key, not_before, not_after, ca=False):
+def cert(subject, issuer, public_key, signing_key, not_before, not_after, ca=False, path_length=0):
     b = (
         x509.CertificateBuilder()
         .subject_name(subject)
@@ -45,7 +47,7 @@ def cert(subject, issuer, public_key, signing_key, not_before, not_after, ca=Fal
         .serial_number(x509.random_serial_number())
         .not_valid_before(not_before)
         .not_valid_after(not_after)
-        .add_extension(x509.BasicConstraints(ca=ca, path_length=0 if ca else None), critical=True)
+        .add_extension(x509.BasicConstraints(ca=ca, path_length=path_length if ca else None), critical=True)
     )
     if not ca:
         b = b.add_extension(
@@ -58,7 +60,7 @@ def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     t0, t1 = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc), dt.datetime(2036, 1, 1, tzinfo=dt.timezone.utc)
     ca_key = ec.generate_private_key(ec.SECP256R1())
-    ca = cert(name("PageWeave Test CA"), name("PageWeave Test CA"), ca_key.public_key(), ca_key, t0, t1, ca=True)
+    ca = cert(name("PageWeave Test CA"), name("PageWeave Test CA"), ca_key.public_key(), ca_key, t0, t1, ca=True, path_length=1)
     (OUT / "test-ca.der").write_bytes(ca.public_bytes(serialization.Encoding.DER))
     modern = serialization.BestAvailableEncryption(PASSWORD)
     legacy = (
@@ -82,6 +84,19 @@ def main() -> int:
     for file, key, cn, enc, (nb, na) in specs:
         c = cert(name(cn), ca.subject, key.public_key(), ca_key, nb, na)
         data = pkcs12.serialize_key_and_certificates(cn.encode(), key, c, [ca], enc)
+        (OUT / file).write_bytes(data)
+        print(f"wrote {file} ({len(data)} bytes)")
+    # Broken chains (for trust checks): signer → intermediate → test CA.
+    old = (dt.datetime(2018, 1, 1, tzinfo=dt.timezone.utc), dt.datetime(2020, 1, 1, tzinfo=dt.timezone.utc))
+    for file, cn, is_ca, (nb, na) in [
+        ("test-signer-not-ca.p12", "PageWeave Test Not-A-CA", False, (t0, t1)),
+        ("test-signer-old-issuer.p12", "PageWeave Test Old Intermediate", True, old),
+    ]:
+        mid_key = ec.generate_private_key(ec.SECP256R1())
+        mid = cert(name(cn), ca.subject, mid_key.public_key(), ca_key, nb, na, ca=is_ca)
+        key = rsa.generate_private_key(65537, 2048)
+        signer = cert(name("PageWeave Test Chained Signer"), mid.subject, key.public_key(), mid_key, t0, t1)
+        data = pkcs12.serialize_key_and_certificates(b"chained", key, signer, [mid, ca], modern)
         (OUT / file).write_bytes(data)
         print(f"wrote {file} ({len(data)} bytes)")
     return 0

@@ -263,7 +263,12 @@ enum Command {
         pages: Option<String>,
     },
     /// Check the document's digital signatures (integrity; signer trust is not checked).
-    Signatures { file: PathBuf },
+    Signatures {
+        file: PathBuf,
+        /// A certificate (DER or PEM) whose holder you trust; repeat for several.
+        #[arg(long = "trust")]
+        trust: Vec<PathBuf>,
+    },
     /// List the differences between two documents (pages, text, format, visual).
     Compare { old: PathBuf, new: PathBuf },
     /// Save a smaller copy with the same content (lossless; images unchanged), verified page by page.
@@ -555,7 +560,9 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
         Command::Deskew { file, output, pages } => {
             Operation::Deskew { input: file.clone(), pages: pages.clone(), output: output.clone() }
         }
-        Command::Signatures { file } => Operation::VerifySignatures { input: file.clone() },
+        Command::Signatures { file, trust } => {
+            Operation::VerifySignatures { input: file.clone(), trusted: trust.clone() }
+        }
         Command::Compare { old, new } => Operation::Compare { old: old.clone(), new: new.clone() },
         Command::Optimize { file, output, image_dpi, image_quality } => Operation::Optimize {
             input: file.clone(),
@@ -765,6 +772,9 @@ fn print_human(r: &OperationResult) {
                 println!("  {}", get("detail"));
                 if s["changed_after"] == true {
                     println!("  The document was changed after this signature (later revision).");
+                }
+                if get("status") == "valid" {
+                    println!("  Trust: {} — {}", get("trust").replace('_', " "), get("trust_detail"));
                 }
                 for (label, key) in [
                     ("Signer", "signer"),

@@ -218,7 +218,7 @@ fn compare_lists_differences_in_both_forms() {
 }
 
 #[test]
-fn signatures_reports_status_and_never_claims_trust() {
+fn signatures_reports_status_and_says_what_is_not_trusted() {
     let r = bin().args(["--json", "signatures"]).arg(fixture("signed-tampered.pdf")).output().expect("run");
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let v = json(&r);
@@ -227,7 +227,7 @@ fn signatures_reports_status_and_never_claims_trust() {
     let human = bin().arg("signatures").arg(fixture("signed-rsa.pdf")).output().expect("run");
     let text = String::from_utf8_lossy(&human.stdout);
     assert!(text.contains("Signature 1 (Approval): VALID") && text.contains("Signer: PageWeave Test Signer"), "{text}");
-    assert!(text.contains("does not yet check whether the signer is trusted"), "{text}");
+    assert!(text.contains("Trust: unknown signer") && text.contains("Revocation"), "{text}");
     let none = bin().arg("signatures").arg(fixture("five-pages.pdf")).output().expect("run");
     assert!(String::from_utf8_lossy(&none.stdout).contains("No digital signatures."));
 }
@@ -348,6 +348,31 @@ fn signature_mark_places_typed_text() {
         .output()
         .expect("run");
     assert!(!both.status.success());
+}
+
+#[test]
+fn signatures_with_trust_report_trusted_signers() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("signed.pdf");
+    let keys = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/keys");
+    let mut c = bin()
+        .args(["sign", "--certificate"])
+        .arg(keys.join("test-signer-rsa.p12"))
+        .arg("-o")
+        .arg(&out)
+        .arg(fixture("five-pages.pdf"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn");
+    writeln!(c.stdin.take().expect("stdin"), "pageweave-test").expect("write");
+    assert!(c.wait().expect("wait").success());
+    let trusted =
+        bin().args(["--json", "signatures", "--trust"]).arg(keys.join("test-ca.der")).arg(&out).output().expect("run");
+    assert_eq!(json(&trusted)["result"]["data"]["signatures"][0]["trust"], "trusted");
+    let human = bin().arg("signatures").arg(&out).output().expect("run");
+    assert!(String::from_utf8_lossy(&human.stdout).contains("Trust: unknown signer"));
 }
 
 #[test]

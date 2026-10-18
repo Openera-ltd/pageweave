@@ -44,6 +44,8 @@ pub struct AppState {
     pub engine_dir: Option<PathBuf>,
     pub settings_outcome: LoadOutcome,
     pub log_dir: PathBuf,
+    /// Certificates the user chose to trust (DER files named by SHA-256 fingerprint).
+    pub trust_dir: PathBuf,
     /// Durable record of running file-writing jobs; None if its folder could not be used (logged).
     pub journal: Option<Arc<Journal>>,
 }
@@ -117,6 +119,7 @@ impl AppState {
             engine_dir,
             settings_outcome: outcome,
             log_dir,
+            trust_dir: config_dir.join("trusted-certificates"),
             journal,
         }
     }

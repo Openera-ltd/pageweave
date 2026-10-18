@@ -37,7 +37,8 @@ fn sign(
 }
 
 fn statuses(p: &Path) -> Vec<(String, bool)> {
-    let r = execute(&OperationRequest::new(Operation::VerifySignatures { input: p.into() }), None).expect("verify");
+    let r = execute(&OperationRequest::new(Operation::VerifySignatures { input: p.into(), trusted: vec![] }), None)
+        .expect("verify");
     r.data["signatures"]
         .as_array()
         .expect("signatures")

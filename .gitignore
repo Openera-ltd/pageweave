@@ -16,6 +16,8 @@
 *.key
 *.p12
 *.pfx
+# …except the test-only signing identities (throwaway test CA, published password; D-012).
+!fixtures/keys/test-signer-*.p12
 kaggle.json
 access_token
 **/secrets/

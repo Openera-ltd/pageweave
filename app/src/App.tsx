@@ -56,6 +56,7 @@ import { PrintDialog } from "./components/PrintDialog";
 import { RemoveBlankDialog } from "./components/RemoveBlankDialog";
 import { SignDialog } from "./components/SignDialog";
 import { SignatureMarkDialog } from "./components/SignatureMarkDialog";
+import { TrustSignerDialog, TrustedCertificatesDialog } from "./components/TrustDialogs";
 import { UnprotectDialog } from "./components/UnprotectDialog";
 import { EditPropertiesDialog } from "./components/EditPropertiesDialog";
 import { SaveAttachmentDialog } from "./components/SaveAttachmentDialog";
@@ -88,6 +89,8 @@ type DialogState =
   | { kind: "removeBlank" }
   | { kind: "sign" }
   | { kind: "signatureMark" }
+  | { kind: "trustSigner"; index: number }
+  | { kind: "trustedCertificates" }
   | { kind: "unprotect" }
   | { kind: "editProperties" }
   | { kind: "saveAttachment"; attachment: AttachmentInfo }
@@ -185,6 +188,8 @@ export function App() {
 
   // Check signatures once per opened document (read-only, on a worker thread in the host).
   const sigDocId = active?.doc_id;
+  // Bumped when the trusted certificates change, to check again.
+  const [trustNonce, setTrustNonce] = useState(0);
   useEffect(() => {
     if (sigDocId === undefined) return;
     let live = true;
@@ -196,7 +201,7 @@ export function App() {
     return () => {
       live = false;
     };
-  }, [api, sigDocId]);
+  }, [api, sigDocId, trustNonce]);
   const view: ViewState = (active && views[active.doc_id]) || { zoom: 1, page: 0 };
   const effective = preview ?? settings;
   const pendingOf = (id: number) => annots[id]?.items ?? NO_PENDING;
@@ -723,6 +728,7 @@ export function App() {
     "file.compare": { run: () => setDialog({ kind: "compare" }), available: all(needDoc, noDialog) },
     "file.print": { run: () => setDialog({ kind: "print" }), available: all(needDoc, noDialog) },
     "file.sign": { run: () => setDialog({ kind: "sign" }), available: all(needDoc, noDialog) },
+    "file.trustedCertificates": { run: () => setDialog({ kind: "trustedCertificates" }), available: noDialog },
     "file.signatureMark": { run: () => setDialog({ kind: "signatureMark" }), available: all(needDoc, noDialog) },
     "file.imagesToPdf": { run: () => setDialog({ kind: "images", files: [] }), available: noDialog },
     "file.editBookmarks": { run: () => setDialog({ kind: "bookmarks", addOnOpen: false, page: view.page }), available: all(needDoc, noDialog) },
@@ -1231,6 +1237,8 @@ export function App() {
               onEditBookmarks={() => setDialog({ kind: "bookmarks", addOnOpen: false, page: view.page })}
               signatures={sigs?.docId === active.doc_id ? (sigs.report ?? (sigs.error ? null : undefined)) : undefined}
               signaturesError={sigs?.docId === active.doc_id ? (sigs.error ?? null) : null}
+              onTrustSigner={(index) => setDialog((d) => d ?? { kind: "trustSigner", index })}
+              onManageTrust={() => setDialog((d) => d ?? { kind: "trustedCertificates" })}
             />
           )}
           <div ref={viewerHost} style={{ display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0, minWidth: 0 }}>
@@ -1368,6 +1376,18 @@ export function App() {
       {dialog?.kind === "editProperties" && active && <EditPropertiesDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "unprotect" && active && <UnprotectDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "sanitize" && active && <SanitizeDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
+      {dialog?.kind === "trustSigner" && active && (
+        <TrustSignerDialog
+          doc={active}
+          index={dialog.index}
+          onClose={() => setDialog(null)}
+          onTrusted={(c) => {
+            setTrustNonce((n) => n + 1);
+            notify({ kind: "success", title: `Trusted ${c.name}`, detail: "Signatures that chain to this certificate now show as trusted.", persistent: false });
+          }}
+        />
+      )}
+      {dialog?.kind === "trustedCertificates" && <TrustedCertificatesDialog onClose={() => setDialog(null)} onChanged={() => setTrustNonce((n) => n + 1)} />}
       {dialog?.kind === "signatureMark" && active && (
         <SignatureMarkDialog doc={active} currentPage={view.page} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />
       )}

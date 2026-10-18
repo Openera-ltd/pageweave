@@ -54,7 +54,10 @@ pub use properties::{set_properties, PropertyChanges};
 pub use protect::protect;
 pub use redact::{redact, redaction_preview, AreaPreview};
 pub use sanitize::{sanitize, sanitize_inspect, SanitizeFindings};
-pub use signatures::{verify_signatures, SignatureInfo, SignatureReport, SignatureStatus, TRUST_NOTE};
+pub use signatures::{
+    fingerprint, load_trusted_certificates, parse_certificates, signature_chain, verify_signatures, ChainCertificate,
+    SignatureInfo, SignatureReport, SignatureStatus, TrustStatus, TRUST_NOTE,
+};
 pub use unprotect::unprotect;
 
 use pdfium_render::prelude::*;

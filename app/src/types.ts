@@ -104,7 +104,31 @@ export interface SignatureInfo {
   covers_whole_file: boolean;
   changed_after: boolean;
   has_timestamp: boolean;
-  trust: "not_checked";
+  trust: TrustStatus;
+  trust_detail: string;
+  trusted_by: string | null;
+  chain: string[];
+  revocation: "not_checked";
+}
+
+export type TrustStatus = "not_checked" | "trusted" | "unknown_signer" | "expired" | "chain_invalid";
+
+/** One certificate of a signature's chain, offered for trusting. */
+export interface ChainCertificate {
+  name: string;
+  subject: string;
+  fingerprint: string;
+  valid_to: string;
+  is_ca: boolean;
+  self_signed: boolean;
+}
+
+/** A certificate the user trusts for signatures. */
+export interface TrustedCert {
+  fingerprint: string;
+  name: string;
+  subject: string;
+  valid_to: string;
 }
 
 export interface SignatureReport {
@@ -232,7 +256,7 @@ export type Operation =
   | { op: "extract_attachment"; input: string; index: number; output: string }
   | { op: "add_attachments"; input: string; files: string[]; output: string }
   | { op: "compare"; old: string; new: string }
-  | { op: "verify_signatures"; input: string }
+  | { op: "verify_signatures"; input: string; trusted?: string[] }
   | { op: "deskew"; input: string; pages: string | null; output: string }
   | { op: "fix_orientation"; input: string; pages: string | null; output: string }
   | {

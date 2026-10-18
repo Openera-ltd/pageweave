@@ -8,7 +8,7 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 fn check(name: &str) -> pw_pdf::SignatureReport {
-    verify_signatures(&fixture(name), &OpenOptions { password: None }).expect("verify")
+    verify_signatures(&fixture(name), &OpenOptions { password: None }, &[]).expect("verify")
 }
 
 #[test]
@@ -30,8 +30,10 @@ fn untouched_rsa_and_ecdsa_signatures_are_valid() {
         assert_eq!((s.reason.as_deref(), s.location.as_deref()), (Some("Approval"), Some("Test lab")));
         assert!(s.signing_time.as_deref().unwrap_or_default().starts_with("20"), "{:?}", s.signing_time);
         assert_eq!(s.certificate_valid_from.as_deref(), Some("2026-01-01T00:00:00Z"));
-        assert_eq!(s.trust, "not_checked");
-        assert!(r.trust_note.contains("does not yet check whether the signer is trusted"));
+        // The fixtures' CA is a throwaway nobody trusts: valid, but the signer is unknown.
+        assert_eq!(s.trust, pw_pdf::TrustStatus::UnknownSigner);
+        assert_eq!(s.revocation, "not_checked");
+        assert!(r.trust_note.contains("Revocation"));
     }
 }
 
@@ -52,7 +54,7 @@ fn placeholder_signatures_are_unreadable_and_unsigned_files_have_none() {
     assert_eq!(r.signatures.len(), 1);
     assert_ne!(r.signatures[0].status, SignatureStatus::Valid, "a placeholder is never valid");
     assert!(check("five-pages.pdf").signatures.is_empty());
-    assert!(verify_signatures(&fixture("not-a-pdf.pdf"), &OpenOptions { password: None }).is_err());
+    assert!(verify_signatures(&fixture("not-a-pdf.pdf"), &OpenOptions { password: None }, &[]).is_err());
 }
 
 #[test]
@@ -70,7 +72,7 @@ fn a_flipped_byte_in_the_signature_itself_is_caught() {
     let dir = tempfile::tempdir().expect("tmp");
     let p = dir.path().join("bad-sig.pdf");
     std::fs::write(&p, bad).expect("write");
-    let s = &verify_signatures(&p, &OpenOptions { password: None }).expect("verify").signatures[0];
+    let s = &verify_signatures(&p, &OpenOptions { password: None }, &[]).expect("verify").signatures[0];
     // The content digest still matches; only the public-key check can reject this.
     assert_eq!(s.status, SignatureStatus::Invalid, "{}", s.detail);
     assert!(s.detail.contains("does not match the signer's certificate"), "{}", s.detail);

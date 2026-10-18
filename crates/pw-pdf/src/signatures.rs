@@ -4,10 +4,12 @@
 //! verified with the certificate's public key (RSA PKCS#1 v1.5, ECDSA P-256/P-384). Changes made
 //! after a signature (later revisions) are reported.
 //!
-//! Trust is deliberately not claimed: PageWeave has no list of trusted signers yet, so certificate
-//! chains, revocation and timestamps are not checked and every result says so. RSA verification is
-//! implemented here with a public-key modpow (decision D-011) rather than a crate with an open
-//! advisory; only public operations exist in this module.
+//! Trust: a valid signature's certificate chain is built from the certificates in the signature to
+//! a certificate the user chose to trust (PageWeave's trusted-certificates list, or `--trust` on the
+//! CLI); every link's signature, validity period and CA constraint is checked. The operating
+//! system's root store is not used. Revocation (CRL/OCSP) and timestamps are not checked, and every
+//! result says so. RSA verification is implemented here with a public-key modpow (decision D-011)
+//! rather than a crate with an open advisory; only public operations exist in this module.
 
 use lopdf::{Dictionary, Document, Object, ObjectId};
 use num_bigint::BigUint;
@@ -64,8 +66,32 @@ pub struct SignatureInfo {
     /// Bytes were added after the signed revision (later edits, other signatures, annotations).
     pub changed_after: bool,
     pub has_timestamp: bool,
-    /// Always "not_checked" in this version (see module docs).
-    pub trust: &'static str,
+    /// Whether the signer chains to a certificate the user trusts (only for valid signatures).
+    pub trust: TrustStatus,
+    /// One sentence on the trust result.
+    pub trust_detail: String,
+    /// The trusted certificate the chain ends at, when trusted.
+    pub trusted_by: Option<String>,
+    /// Names along the chain, signer first.
+    pub chain: Vec<String>,
+    /// Always "not_checked": certificate revocation (CRL/OCSP) needs the network and is not done.
+    pub revocation: &'static str,
+}
+
+/// What PageWeave can say about the signer of an integrity-valid signature.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrustStatus {
+    /// The signature itself is not valid (or could not be checked), so trust is not evaluated.
+    NotChecked,
+    /// The chain reaches a certificate the user trusts and every link checks out.
+    Trusted,
+    /// No chain to a trusted certificate: the signer is unknown.
+    UnknownSigner,
+    /// A certificate in the chain has expired (or is not valid yet).
+    Expired,
+    /// The chain is broken: an issuer's signature does not match, or an issuer is not a CA.
+    ChainInvalid,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -75,7 +101,207 @@ pub struct SignatureReport {
     pub trust_note: &'static str,
 }
 
-pub const TRUST_NOTE: &str = "PageWeave checks that signed content is unchanged and matches the signer's certificate. It does not yet check whether the signer is trusted (certificate chain, revocation or timestamps), so a valid signature does not confirm who the signer is.";
+pub const TRUST_NOTE: &str = "PageWeave checks that signed content is unchanged and matches the signer's certificate, and whether the signer's certificate chains to one you chose to trust. Revocation (whether a certificate was withdrawn) and timestamps are not checked.";
+
+/// Nesting limit for certificate chains.
+const MAX_CHAIN: usize = 8;
+
+/// Read trusted certificates (DER, or PEM with one or more certificates) from files.
+pub fn load_trusted_certificates(paths: &[std::path::PathBuf]) -> PwResult<Vec<Certificate>> {
+    let mut out = Vec::new();
+    for p in paths {
+        let bytes = std::fs::read(p).map_err(|e| PwError::from_io(&e, "trusted certificate"))?;
+        let found = parse_certificates(&bytes);
+        if found.is_empty() {
+            return Err(PwError::new(
+                ErrorCategory::InvalidInput,
+                "trust.unreadable",
+                format!(
+                    "{} is not a certificate (DER or PEM).",
+                    p.file_name().map(|f| f.to_string_lossy()).unwrap_or_default()
+                ),
+            ));
+        }
+        out.extend(found);
+    }
+    Ok(out)
+}
+
+/// Certificates in DER or PEM bytes.
+pub fn parse_certificates(bytes: &[u8]) -> Vec<Certificate> {
+    if let Ok(c) = Certificate::from_der(bytes) {
+        return vec![c];
+    }
+    let text = String::from_utf8_lossy(bytes);
+    let mut out = Vec::new();
+    let (begin, end) = ("-----BEGIN CERTIFICATE-----", "-----END CERTIFICATE-----");
+    let mut rest = text.as_ref();
+    while let Some(i) = rest.find(begin) {
+        let after = &rest[i + begin.len()..];
+        let Some(j) = after.find(end) else { break };
+        let b64: String = after[..j].chars().filter(|c| !c.is_whitespace()).collect();
+        if let Some(der) = base64_decode(&b64) {
+            if let Ok(c) = Certificate::from_der(&der) {
+                out.push(c);
+            }
+        }
+        rest = &after[j + end.len()..];
+    }
+    out
+}
+
+fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    let val = |c: u8| -> Option<u32> {
+        Some(match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        } as u32)
+    };
+    let bytes = s.trim_end_matches('=').as_bytes();
+    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
+    for chunk in bytes.chunks(4) {
+        let mut acc = 0u32;
+        for (i, &c) in chunk.iter().enumerate() {
+            acc |= val(c)? << (18 - 6 * i);
+        }
+        let n = chunk.len();
+        if n < 2 {
+            return None;
+        }
+        out.push((acc >> 16) as u8);
+        if n > 2 {
+            out.push((acc >> 8) as u8);
+        }
+        if n > 3 {
+            out.push(acc as u8);
+        }
+    }
+    Some(out)
+}
+
+/// SHA-256 fingerprint of a certificate, as uppercase hex pairs separated by colons.
+pub fn fingerprint(c: &Certificate) -> String {
+    let der = c.to_der().unwrap_or_default();
+    Sha256::digest(&der).iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(":")
+}
+
+/// Does `issuer`'s key verify `cert`'s signature?
+fn issued_by(cert: &Certificate, issuer: &Certificate) -> bool {
+    if cert.tbs_certificate.issuer != issuer.tbs_certificate.subject {
+        return false;
+    }
+    let Ok(tbs) = cert.tbs_certificate.to_der() else { return false };
+    let sig = cert.signature.raw_bytes();
+    let spki = &issuer.tbs_certificate.subject_public_key_info;
+    let key = spki.subject_public_key.raw_bytes();
+    let hash = match cert.signature_algorithm.oid.to_string().as_str() {
+        "1.2.840.113549.1.1.5" => Hash::Sha1,
+        "1.2.840.113549.1.1.11" | "1.2.840.10045.4.3.2" => Hash::Sha256,
+        "1.2.840.113549.1.1.12" | "1.2.840.10045.4.3.3" => Hash::Sha384,
+        "1.2.840.113549.1.1.13" | "1.2.840.10045.4.3.4" => Hash::Sha512,
+        _ => return false,
+    };
+    let digest = hash.digest(&[&tbs]);
+    match spki.algorithm.oid.to_string().as_str() {
+        "1.2.840.113549.1.1.1" => {
+            cert.signature_algorithm.oid.to_string().starts_with("1.2.840.113549.1.1.")
+                && rsa_pkcs1_verify(key, hash, &digest, sig)
+        }
+        "1.2.840.10045.2.1" => {
+            let curve = spki
+                .algorithm
+                .parameters
+                .as_ref()
+                .and_then(|p| p.decode_as::<Oid>().ok())
+                .map(|o| o.to_string())
+                .unwrap_or_default();
+            cert.signature_algorithm.oid.to_string().starts_with("1.2.840.10045.4.3.")
+                && ecdsa_verify(&curve, key, &digest, sig)
+        }
+        _ => false,
+    }
+}
+
+fn is_ca(c: &Certificate) -> bool {
+    c.tbs_certificate.extensions.as_ref().is_some_and(|exts| {
+        exts.iter().any(|e| {
+            e.extn_id.to_string() == "2.5.29.19"
+                && x509_cert::ext::pkix::BasicConstraints::from_der(e.extn_value.as_bytes()).is_ok_and(|b| b.ca)
+        })
+    })
+}
+
+fn same(a: &Certificate, b: &Certificate) -> bool {
+    a.tbs_certificate.subject == b.tbs_certificate.subject
+        && a.tbs_certificate.subject_public_key_info == b.tbs_certificate.subject_public_key_info
+}
+
+fn label(c: &Certificate) -> String {
+    common_name(&c.tbs_certificate.subject).unwrap_or_else(|| c.tbs_certificate.subject.to_string())
+}
+
+/// Build and check the chain from `signer` to a trusted certificate, at time `now` (Unix seconds).
+fn evaluate_trust(
+    signer: &Certificate,
+    pool: &[Certificate],
+    anchors: &[Certificate],
+    now: i64,
+) -> (TrustStatus, String, Option<String>, Vec<String>) {
+    let mut chain = vec![label(signer)];
+    let valid_at = |c: &Certificate| {
+        let v = &c.tbs_certificate.validity;
+        let (from, to) =
+            (v.not_before.to_unix_duration().as_secs() as i64, v.not_after.to_unix_duration().as_secs() as i64);
+        from <= now && now <= to
+    };
+    let mut current = signer;
+    for depth in 0..MAX_CHAIN {
+        if !valid_at(current) {
+            let to = current.tbs_certificate.validity.not_after.to_date_time();
+            return (
+                TrustStatus::Expired,
+                format!("The certificate of {} is not valid today (valid to {}).", label(current), to),
+                None,
+                chain,
+            );
+        }
+        if let Some(a) = anchors.iter().find(|a| same(a, current)) {
+            return (
+                TrustStatus::Trusted,
+                format!("The signer's certificate chains to {}, which you trust.", label(a)),
+                Some(label(a)),
+                chain,
+            );
+        }
+        let issuer = pool.iter().chain(anchors.iter()).find(|c| !same(c, current) && issued_by(current, c));
+        let Some(issuer) = issuer else {
+            let self_signed = issued_by(current, current);
+            let what = if depth == 0 && self_signed {
+                "The signer's certificate is self-signed and you have not chosen to trust it."
+            } else if self_signed {
+                "The signer's certificate chain ends at a root you have not chosen to trust."
+            } else {
+                "The signer's certificate does not chain to a certificate you trust (its issuer is not included)."
+            };
+            return (TrustStatus::UnknownSigner, what.into(), None, chain);
+        };
+        if !is_ca(issuer) {
+            return (
+                TrustStatus::ChainInvalid,
+                format!("{} issued a certificate but is not a certificate authority.", label(issuer)),
+                None,
+                chain,
+            );
+        }
+        chain.push(label(issuer));
+        current = issuer;
+    }
+    (TrustStatus::ChainInvalid, "The certificate chain is too long to check.".into(), None, chain)
+}
 
 // ---- small DER helpers -------------------------------------------------------------------------
 
@@ -349,7 +575,7 @@ fn outcome(status: SignatureStatus, detail: impl Into<String>) -> Outcome {
     Outcome { status, detail: detail.into() }
 }
 
-fn check(raw: &[u8], d: &Dictionary, info: &mut SignatureInfo) -> Outcome {
+fn check(raw: &[u8], d: &Dictionary, info: &mut SignatureInfo, anchors: &[Certificate]) -> Outcome {
     let sub = info.sub_filter.clone().unwrap_or_default();
     match sub.as_str() {
         "adbe.pkcs7.detached" | "ETSI.CAdES.detached" | "adbe.pkcs7.sha1" => {}
@@ -526,6 +752,25 @@ fn check(raw: &[u8], d: &Dictionary, info: &mut SignatureInfo) -> Outcome {
         }
     };
     if verified {
+        let pool: Vec<Certificate> = sd
+            .certificates
+            .as_ref()
+            .map(|set| {
+                set.0
+                    .iter()
+                    .filter_map(|c| match c {
+                        cms::cert::CertificateChoices::Certificate(c) => Some(c.clone()),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let now = time::OffsetDateTime::now_utc().unix_timestamp();
+        let (t, detail, by, chain) = evaluate_trust(cert, &pool, anchors, now);
+        info.trust = t;
+        info.trust_detail = detail;
+        info.trusted_by = by;
+        info.chain = chain;
         outcome(
             SignatureStatus::Valid,
             "The signed content is unchanged and the signature matches the signer's certificate.",
@@ -535,8 +780,89 @@ fn check(raw: &[u8], d: &Dictionary, info: &mut SignatureInfo) -> Outcome {
     }
 }
 
+/// One certificate of a signature's chain, for choosing what to trust.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ChainCertificate {
+    pub name: String,
+    pub subject: String,
+    pub fingerprint: String,
+    pub valid_to: String,
+    pub is_ca: bool,
+    pub self_signed: bool,
+    #[serde(skip)]
+    pub der: Vec<u8>,
+}
+
+/// The certificates of signature `index` (in report order): the signer first, then each issuer
+/// found among the certificates the signature carries (verified link by link).
+pub fn signature_chain(input: &Path, index: usize) -> PwResult<Vec<ChainCertificate>> {
+    let raw = std::fs::read(input).map_err(|e| PwError::from_io(&e, "file"))?;
+    let doc = Document::load_mem(&raw).map_err(|_| {
+        PwError::new(
+            ErrorCategory::UnsupportedOperation,
+            "signatures.unreadable",
+            "The file's structure could not be read.",
+        )
+    })?;
+    let missing = || {
+        PwError::new(
+            ErrorCategory::InvalidInput,
+            "trust.no_certificate",
+            "That signature carries no readable certificate.",
+        )
+    };
+    let (id, _, _) = signature_dicts(&doc).into_iter().nth(index).ok_or_else(missing)?;
+    let d = doc.get_dictionary(id).map_err(|_| missing())?;
+    let contents = match d.get(b"Contents") {
+        Ok(Object::String(b, _)) => b.clone(),
+        _ => return Err(missing()),
+    };
+    let len = der_len(&contents).filter(|&l| l <= contents.len()).ok_or_else(missing)?;
+    let ci = ContentInfo::from_der(&contents[..len]).map_err(|_| missing())?;
+    let sd = ci.content.decode_as::<SignedData>().map_err(|_| missing())?;
+    let si = sd.signer_infos.0.iter().next().ok_or_else(missing)?;
+    let signer = signer_certificate(&sd, si).ok_or_else(missing)?.clone();
+    let pool: Vec<Certificate> = sd
+        .certificates
+        .as_ref()
+        .map(|set| {
+            set.0
+                .iter()
+                .filter_map(|c| match c {
+                    cms::cert::CertificateChoices::Certificate(c) => Some(c.clone()),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut chain = vec![signer];
+    while chain.len() < MAX_CHAIN {
+        let last = chain.last().cloned().ok_or_else(missing)?;
+        match pool.iter().find(|c| !same(c, &last) && issued_by(&last, c)) {
+            Some(c) if !chain.iter().any(|x| same(x, c)) => chain.push(c.clone()),
+            _ => break,
+        }
+    }
+    Ok(chain
+        .into_iter()
+        .map(|c| ChainCertificate {
+            name: label(&c),
+            subject: c.tbs_certificate.subject.to_string(),
+            fingerprint: fingerprint(&c),
+            valid_to: c.tbs_certificate.validity.not_after.to_date_time().to_string(),
+            is_ca: is_ca(&c),
+            self_signed: issued_by(&c, &c),
+            der: c.to_der().unwrap_or_default(),
+        })
+        .collect())
+}
+
 /// Every signature in the file, checked (read-only). Protected files are read with `password`.
-pub fn verify_signatures(input: &Path, opts: &crate::OpenOptions) -> PwResult<SignatureReport> {
+pub fn verify_signatures(
+    input: &Path,
+    opts: &crate::OpenOptions,
+    anchors: &[Certificate],
+) -> PwResult<SignatureReport> {
     let raw = std::fs::read(input).map_err(|e| PwError::from_io(&e, "file"))?;
     // Structure through lopdf (PDFium normalises files lopdf cannot parse, but a normalised copy has
     // different bytes, so signatures in such files are reported as unreadable instead).
@@ -548,7 +874,7 @@ pub fn verify_signatures(input: &Path, opts: &crate::OpenOptions) -> PwResult<Si
             return Ok(SignatureReport { signatures: Vec::new(), trust_note: TRUST_NOTE });
         }
     };
-    verify_loaded(&raw, &doc)
+    verify_loaded(&raw, &doc, anchors)
 }
 
 /// Check the signatures of a file held in memory (used to verify a newly signed file before it is
@@ -561,10 +887,10 @@ pub(crate) fn verify_bytes(raw: &[u8]) -> PwResult<SignatureReport> {
             "The file's structure could not be read.",
         )
     })?;
-    verify_loaded(raw, &doc)
+    verify_loaded(raw, &doc, &[])
 }
 
-fn verify_loaded(raw: &[u8], doc: &Document) -> PwResult<SignatureReport> {
+fn verify_loaded(raw: &[u8], doc: &Document, anchors: &[Certificate]) -> PwResult<SignatureReport> {
     if doc.is_encrypted() {
         return Err(PwError::new(
             ErrorCategory::UnsupportedOperation,
@@ -599,9 +925,13 @@ fn verify_loaded(raw: &[u8], doc: &Document) -> PwResult<SignatureReport> {
             covers_whole_file: false,
             changed_after: false,
             has_timestamp: false,
-            trust: "not_checked",
+            trust: TrustStatus::NotChecked,
+            trust_detail: "Trust is checked only for valid signatures.".into(),
+            trusted_by: None,
+            chain: Vec::new(),
+            revocation: "not_checked",
         };
-        let o = check(raw, d, &mut info);
+        let o = check(raw, d, &mut info, anchors);
         info.status = o.status;
         info.detail = o.detail;
         out.push(info);

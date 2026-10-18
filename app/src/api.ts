@@ -20,6 +20,8 @@ import type {
   RecoveredJob,
   SanitizeFindings,
   SignatureReport,
+  ChainCertificate,
+  TrustedCert,
   SearchHit,
   Settings,
 } from "./types";
@@ -54,6 +56,13 @@ export interface Api {
   sanitizeInspect(docId: number): Promise<SanitizeFindings>;
   /** The document's digital signatures, checked (read-only). */
   verifySignatures(docId: number): Promise<SignatureReport>;
+  /** Certificates the user trusts for signatures. */
+  trustedCertificates(): Promise<TrustedCert[]>;
+  /** The certificate chain of signature `index` (signer first). */
+  signatureChain(docId: number, index: number): Promise<ChainCertificate[]>;
+  /** Trust certificate `position` of signature `index`'s chain. */
+  trustCertificate(docId: number, index: number, position: number): Promise<TrustedCert>;
+  removeTrustedCertificate(fingerprint: string): Promise<boolean>;
   /** Files embedded in the document (read-only). */
   listAttachments(docId: number): Promise<AttachmentInfo[]>;
   /** JPEG and PNG images. */
@@ -115,6 +124,10 @@ export const tauriApi: Api = {
   redactionPreview: (docId, areas) => invoke("redaction_preview", { docId, areas }),
   sanitizeInspect: (docId) => invoke("sanitize_inspect", { docId }),
   listAttachments: (docId) => invoke("list_attachments", { docId }),
+  trustedCertificates: () => invoke("trusted_certificates"),
+  signatureChain: (docId, index) => invoke("signature_chain", { docId, index }),
+  trustCertificate: (docId, index, position) => invoke("trust_certificate", { docId, index, position }),
+  removeTrustedCertificate: (fingerprint) => invoke("remove_trusted_certificate", { fingerprint }),
   pickImageFiles: async () => {
     const r = await openDialog({ multiple: true, directory: false, filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png"] }] });
     if (r === null) return [];

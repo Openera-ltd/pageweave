@@ -22,14 +22,21 @@ const sig = (p: Partial<SignatureInfo>): SignatureInfo => ({
   covers_whole_file: true,
   changed_after: false,
   has_timestamp: false,
-  trust: "not_checked",
+  trust: "trusted",
+  trust_detail: "",
+  trusted_by: "Test CA",
+  chain: ["Test", "Test CA"],
+  revocation: "not_checked",
   ...p,
 });
 const report = (s: SignatureInfo[]) => ({ signatures: s, trust_note: "" });
 
 describe("signature wording", () => {
-  it("labels each status without claiming trust", () => {
-    expect(statusLabel(sig({}))).toEqual({ text: "Valid", tone: "ok" });
+  it("labels each status and keeps validity apart from trust", () => {
+    expect(statusLabel(sig({}))).toEqual({ text: "Valid, trusted", tone: "ok" });
+    expect(statusLabel(sig({ trust: "unknown_signer" }))).toEqual({ text: "Valid, signer unknown", tone: "warn" });
+    expect(statusLabel(sig({ trust: "expired" })).text).toBe("Valid, certificate expired");
+    expect(statusLabel(sig({ trust: "chain_invalid" })).text).toBe("Valid, certificate chain broken");
     expect(statusLabel(sig({ changed_after: true })).tone).toBe("warn");
     expect(statusLabel(sig({ status: "invalid" }))).toEqual({ text: "Invalid", tone: "bad" });
     expect(statusLabel(sig({ status: "unsupported" })).text).toBe("Not checked");
@@ -43,6 +50,7 @@ describe("signature wording", () => {
     expect(signatureSummary(report([sig({ changed_after: true }), sig({})]))).toEqual({ text: "Signed (2)", tone: "ok" });
     expect(signatureSummary(report([sig({}), sig({ status: "invalid" })]))?.tone).toBe("bad");
     expect(signatureSummary(report([sig({ status: "unreadable" })]))?.text).toBe("Signature not checked");
+    expect(signatureSummary(report([sig({ trust: "unknown_signer" })]))).toEqual({ text: "Signed, signer not trusted", tone: "warn" });
   });
 
   it("formats ISO times and keeps other text", () => {

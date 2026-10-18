@@ -661,6 +661,10 @@ pub enum Operation {
     /// Check every digital signature in the document (read-only).
     VerifySignatures {
         input: PathBuf,
+        /// Certificate files (DER or PEM) whose holders the user trusts; signer chains are checked
+        /// against them.
+        #[serde(default)]
+        trusted: Vec<PathBuf>,
     },
     /// Differences between two documents (read-only): aligned pages, text, format and visual changes.
     Compare {
@@ -831,7 +835,7 @@ impl Operation {
             | Operation::Watermark { input, .. }
             | Operation::CropPages { input, .. }
             | Operation::ListAttachments { input }
-            | Operation::VerifySignatures { input }
+            | Operation::VerifySignatures { input, .. }
             | Operation::Deskew { input, .. }
             | Operation::FixOrientation { input, .. }
             | Operation::Sign { input, .. }

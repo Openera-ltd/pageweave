@@ -419,8 +419,9 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             let straightened = report.iter().filter(|r| r.action == crate::deskew::DeskewAction::Straightened).count();
             (vec![out(&c, None)], json!({ "straightened": straightened, "pages": report }))
         }
-        Operation::VerifySignatures { input } => {
-            let report = crate::signatures::verify_signatures(input, &opts)?;
+        Operation::VerifySignatures { input, trusted } => {
+            let anchors = crate::signatures::load_trusted_certificates(trusted)?;
+            let report = crate::signatures::verify_signatures(input, &opts, &anchors)?;
             (vec![], serde_json::to_value(&report).unwrap_or_default())
         }
         Operation::Compare { old, new } => {
