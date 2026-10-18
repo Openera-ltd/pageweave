@@ -73,18 +73,39 @@ function appArgs(args) {
   return process.platform === "win32" ? args.map((a, i) => `--open-${i + 1}=${a}`) : args;
 }
 
+/**
+ * Start the app and wait until the WebView holds the app's own document. Seen on Windows CI (twice in
+ * ~60 launches on slow runners): the driver attaches to a blank document (empty <body>, no Tauri
+ * bridge) that never navigates to the app. That is a launch failure, not a scenario failure.
+ */
+async function launch(args) {
+  const s = await Session.create(DRIVER, APP, appArgs(args));
+  const deadline = Date.now() + 20000;
+  let state = "";
+  while (Date.now() < deadline) {
+    state = await s
+      .exec("return JSON.stringify({ href: location.href, ready: document.readyState, root: !!document.getElementById('root'), bridge: !!window.__TAURI_INTERNALS__ })")
+      .catch((e) => `ERR ${String(e?.message ?? e).slice(0, 120)}`);
+    if (state.includes('"root":true') && state.includes('"bridge":true')) return s;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  await s.delete().catch(() => undefined);
+  throw new Error(`the app document never loaded: ${state}`);
+}
+
 async function withApp(args, fn) {
   const t0 = Date.now();
   let s;
   try {
-    s = await Session.create(DRIVER, APP, appArgs(args));
+    s = await launch(args);
   } catch (e) {
     // Seen on CI: GTK occasionally fails to connect to the virtual display at process start, and the
-    // driver then waits out its timeout. Retry the launch once and record it; a second failure is real.
+    // driver then waits out its timeout; on Windows the WebView can stay on a blank document. Retry
+    // the launch once and record it in the summary; a second failure is real.
     launchRetries.push({ test: currentTest, error: String(e?.message ?? e).slice(0, 300) });
     console.log(`  note: app launch failed (${String(e?.message ?? e).slice(0, 160)}); retrying the launch once`);
     try {
-      s = await Session.create(DRIVER, APP, appArgs(args));
+      s = await launch(args);
     } catch (e2) {
       launchFailuresInARow++;
       throw new LaunchFailed(`the app could not be started under WebDriver twice: ${String(e2?.message ?? e2).slice(0, 200)}`);
