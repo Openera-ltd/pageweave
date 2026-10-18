@@ -205,6 +205,7 @@ mod tests {
             password: Some("secret-pw".into()),
             new_password: Some("new-secret-pw".into()),
             new_owner_password: Some("owner-secret-pw".into()),
+            certificate_password: Some("cert-secret-pw".into()),
         }
     }
 

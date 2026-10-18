@@ -208,6 +208,23 @@ enum Command {
         #[arg(long, default_value_t = 0.2)]
         max_ink: f32,
     },
+    /// Sign a copy with a certificate (.pfx/.p12). The certificate password is read from standard
+    /// input (after the document password when --password-stdin is given).
+    Sign {
+        file: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        /// PKCS#12 identity file (.pfx or .p12).
+        #[arg(long)]
+        certificate: PathBuf,
+        #[arg(long)]
+        reason: Option<String>,
+        #[arg(long)]
+        location: Option<String>,
+        /// Show the signature in a box: PAGE,X1,Y1,X2,Y2 (1-based page, PDF points).
+        #[arg(long)]
+        visible: Option<String>,
+    },
     /// Turn scanned pages that face sideways or upside down upright in a new file (lossless).
     Orient {
         file: PathBuf,
@@ -463,6 +480,30 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
         Command::BlankPages { file, max_ink } => {
             Operation::FindBlankPages { input: file.clone(), max_ink: max_ink / 100.0 }
         }
+        Command::Sign { file, output, certificate, reason, location, visible } => {
+            let placement = match visible {
+                None => None,
+                Some(v) => {
+                    let n: Vec<f32> = v
+                        .split(',')
+                        .map(|x| x.trim().parse::<f32>())
+                        .collect::<Result<_, _>>()
+                        .map_err(|_| PwError::invalid("sign.box", "--visible takes PAGE,X1,Y1,X2,Y2 (numbers)."))?;
+                    if n.len() != 5 || n[0] < 1.0 || n[0].fract() != 0.0 {
+                        return Err(PwError::invalid("sign.box", "--visible takes PAGE,X1,Y1,X2,Y2 (page from 1)."));
+                    }
+                    Some(pw_core::ops::SignPlacement { page: n[0] as u32 - 1, rect: [n[1], n[2], n[3], n[4]] })
+                }
+            };
+            Operation::Sign {
+                input: file.clone(),
+                certificate: certificate.clone(),
+                reason: reason.clone(),
+                location: location.clone(),
+                placement,
+                output: output.clone(),
+            }
+        }
         Command::Orient { file, output, pages } => {
             Operation::FixOrientation { input: file.clone(), pages: pages.clone(), output: output.clone() }
         }
@@ -654,6 +695,15 @@ fn print_human(r: &OperationResult) {
                 println!("Remove them with: pageweave delete --pages \"{}\" -o OUTPUT FILE", list.join(","));
             }
         }
+        "sign" => {
+            let d = &r.data;
+            println!(
+                "Signed as {} ({}, issued by {}).",
+                d["signer"].as_str().unwrap_or("?"),
+                d["algorithm"].as_str().unwrap_or("?"),
+                d["issuer"].as_str().unwrap_or("?")
+            );
+        }
         "verify_signatures" => {
             let list = r.data["signatures"].as_array().cloned().unwrap_or_default();
             if list.is_empty() {
@@ -841,6 +891,10 @@ fn main() -> ExitCode {
         };
         if cli.password_stdin {
             req.password = Some(read_line()?);
+        }
+        if let Command::Sign { .. } = &cli.command {
+            req.certificate_password = Some(read_line()?);
+            req.validate()?;
         }
         if let Command::Protect { owner_password_stdin, .. } = &cli.command {
             req.new_password = Some(read_line()?);

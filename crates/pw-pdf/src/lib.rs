@@ -28,6 +28,7 @@ mod properties;
 mod protect;
 mod redact;
 mod sanitize;
+mod sign;
 mod signatures;
 mod unprotect;
 

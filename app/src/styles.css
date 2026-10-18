@@ -1784,3 +1784,21 @@ kbd,
   box-shadow: var(--page-shadow);
   background: #fff;
 }
+
+/* ---------- Sign with a certificate ---------- */
+.sign-preview {
+  position: relative;
+  flex: none;
+  margin-top: var(--space-5);
+  border: 1px solid var(--border);
+  box-shadow: var(--page-shadow);
+  background: #fff;
+}
+.sign-preview img {
+  display: block;
+}
+.sign-preview-box {
+  position: absolute;
+  border: 1.5px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}

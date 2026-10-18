@@ -1490,6 +1490,37 @@ await test("turn pages upright: Pages menu; sideways and upside-down scans turne
   }
 });
 
+await test("sign with a certificate: wrong password explained; visible signature placed as previewed; verified valid", async () => {
+  const out = join(work, "signed.pdf");
+  const cert = join(FIX, "..", "keys", "test-signer-rsa.p12");
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Sign with a certificate");
+    await s.click('[role="option"][data-command="file.sign"]');
+    await s.waitFor("#sign-cert");
+    assert((await s.attr('[data-testid="sign-start"]', "title")) === "Choose your certificate file (.pfx or .p12).", "blocked with a reason");
+    await s.type("#sign-cert", cert);
+    await s.type("#sign-pw", "wrong-password");
+    await s.type("#sign-reason", "Approved");
+    await s.type("#sign-output", out);
+    await s.waitFor('[data-testid="sign-preview-box"]');
+    await axeCheck(s, "sign-dialog");
+    writeFileSync(join(ART, "sign-dialog.png"), await s.screenshot());
+    await s.click('[data-testid="sign-start"]');
+    await s.waitUntil(async () => ((await s.exec("return document.querySelector('[role=dialog] [role=alert]')?.textContent ?? null")) ?? "").includes("password is not correct"), "wrong password explained");
+    assert(!existsSync(out), "nothing written");
+    await s.exec("const i = document.querySelector('#sign-pw'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, ''); i.dispatchEvent(new Event('input', { bubbles: true })); return 1");
+    await s.type("#sign-pw", "pageweave-test");
+    await s.click('[data-testid="sign-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved signed.pdf") && t.includes("Signed as PageWeave Test Signer")), "saved notice");
+  });
+  if (CLI) {
+    const v = JSON.parse(execFileSync(CLI, ["--json", "signatures", out], { encoding: "utf8" })).result.data.signatures;
+    assert(v.length === 1 && v[0].status === "valid" && v[0].covers_whole_file && v[0].page === 0 && v[0].reason === "Approved", `verified: ${JSON.stringify(v).slice(0, 300)}`);
+  }
+});
+
 await test("protect with password: AES-256 copy needs the password; wrong password refused; content intact", async () => {
   const src = join(FIX, "five-pages.pdf");
   const before = sha(src);

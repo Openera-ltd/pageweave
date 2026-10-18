@@ -548,6 +548,23 @@ pub fn verify_signatures(input: &Path, opts: &crate::OpenOptions) -> PwResult<Si
             return Ok(SignatureReport { signatures: Vec::new(), trust_note: TRUST_NOTE });
         }
     };
+    verify_loaded(&raw, &doc)
+}
+
+/// Check the signatures of a file held in memory (used to verify a newly signed file before it is
+/// written).
+pub(crate) fn verify_bytes(raw: &[u8]) -> PwResult<SignatureReport> {
+    let doc = Document::load_mem(raw).map_err(|_| {
+        PwError::new(
+            ErrorCategory::ValidationFailed,
+            "signatures.unreadable",
+            "The file's structure could not be read.",
+        )
+    })?;
+    verify_loaded(raw, &doc)
+}
+
+fn verify_loaded(raw: &[u8], doc: &Document) -> PwResult<SignatureReport> {
     if doc.is_encrypted() {
         return Err(PwError::new(
             ErrorCategory::UnsupportedOperation,
@@ -556,7 +573,7 @@ pub fn verify_signatures(input: &Path, opts: &crate::OpenOptions) -> PwResult<Si
         ));
     }
     let mut out = Vec::new();
-    for (id, field, page) in signature_dicts(&doc) {
+    for (id, field, page) in signature_dicts(doc) {
         let Ok(d) = doc.get_dictionary(id) else { continue };
         let mut info = SignatureInfo {
             field,
@@ -584,7 +601,7 @@ pub fn verify_signatures(input: &Path, opts: &crate::OpenOptions) -> PwResult<Si
             has_timestamp: false,
             trust: "not_checked",
         };
-        let o = check(&raw, d, &mut info);
+        let o = check(raw, d, &mut info);
         info.status = o.status;
         info.detail = o.detail;
         out.push(info);

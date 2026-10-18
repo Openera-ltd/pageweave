@@ -300,6 +300,37 @@ fn orient_turns_a_page_and_explains_nothing_to_do() {
 }
 
 #[test]
+fn sign_reads_the_password_from_stdin_and_reports_the_signer() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("signed.pdf");
+    let key = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/keys/test-signer-rsa.p12");
+    let run = |pw: &str, out: &Path| {
+        let mut c = bin()
+            .args(["sign", "--reason", "OK", "--visible", "1,350,40,560,100", "--certificate"])
+            .arg(&key)
+            .arg("-o")
+            .arg(out)
+            .arg(fixture("five-pages.pdf"))
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn");
+        writeln!(c.stdin.take().expect("stdin"), "{pw}").expect("write");
+        c.wait_with_output().expect("wait")
+    };
+    let r = run("pageweave-test", &out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert!(String::from_utf8_lossy(&r.stdout).contains("Signed as PageWeave Test Signer"));
+    let bad = run("nope", &dir.path().join("bad.pdf"));
+    assert!(!bad.status.success());
+    assert!(!dir.path().join("bad.pdf").exists());
+    let v = bin().args(["--json", "signatures"]).arg(&out).output().expect("run");
+    assert_eq!(json(&v)["result"]["data"]["signatures"][0]["status"], "valid");
+}
+
+#[test]
 fn text_saves_a_file_with_output_and_prints_without() {
     let dir = tempfile::tempdir().expect("tmp");
     let out = dir.path().join("five.txt");

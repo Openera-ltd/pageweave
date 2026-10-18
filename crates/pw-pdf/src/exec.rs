@@ -339,6 +339,28 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             let blank: Vec<u32> = pages.iter().filter(|p| p.blank).map(|p| p.page).collect();
             (vec![], json!({ "pages": pages, "blank": blank }))
         }
+        Operation::Sign { input, certificate, reason, location, placement, output } => {
+            if opts.password.is_some() {
+                return Err(pw_core::PwError::new(
+                    pw_core::ErrorCategory::UnsupportedOperation,
+                    "sign.protected",
+                    "This file is password protected.",
+                )
+                .with_action("Remove the password first (Remove password…), then sign that copy."));
+            }
+            let (c, info, w) = crate::sign::sign_document(
+                input,
+                certificate,
+                req.certificate_password.as_deref().unwrap_or_default(),
+                reason.as_deref(),
+                location.as_deref(),
+                placement.map(|p| crate::sign::SignaturePlacement { page: p.page, rect: p.rect }),
+                output,
+                policy,
+            )?;
+            warnings.extend(w);
+            (vec![out(&c, None)], json!(info))
+        }
         Operation::FixOrientation { input, pages, output } => {
             let page_progress = |done: u64, total: u64| {
                 if let Some(c) = ctx {

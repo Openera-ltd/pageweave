@@ -58,6 +58,8 @@ export interface Api {
   listAttachments(docId: number): Promise<AttachmentInfo[]>;
   /** JPEG and PNG images. */
   pickImageFiles(): Promise<string[]>;
+  /** A signing certificate file (.pfx/.p12). */
+  pickCertificateFile(): Promise<string | null>;
   /** Any files (no type filter), e.g. to attach. */
   pickAnyFiles(): Promise<string[]>;
   /** A save location for a file of any type. */
@@ -117,6 +119,10 @@ export const tauriApi: Api = {
     const r = await openDialog({ multiple: true, directory: false, filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png"] }] });
     if (r === null) return [];
     return Array.isArray(r) ? r : [r];
+  },
+  pickCertificateFile: async () => {
+    const r = await openDialog({ multiple: false, directory: false, filters: [{ name: "Certificate files", extensions: ["pfx", "p12"] }] });
+    return typeof r === "string" ? r : null;
   },
   pickAnyFiles: async () => {
     const r = await openDialog({ multiple: true, directory: false });

@@ -316,6 +316,14 @@ pub struct WatermarkSpec {
     pub layer: WatermarkLayer,
 }
 
+/// Where a visible signature is drawn: 0-based page and a box [x1, y1, x2, y2] in that page's
+/// unrotated PDF space (points).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct SignPlacement {
+    pub page: u32,
+    pub rect: [f32; 4],
+}
+
 /// An area to redact: everything under it is removed and it is painted black.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct RedactArea {
@@ -567,6 +575,20 @@ pub enum Operation {
         #[serde(default = "default_max_ink")]
         max_ink: f32,
     },
+    /// Sign a copy with a certificate (PKCS#12 identity; its password travels in
+    /// `OperationRequest::certificate_password`, never serialized). Invisible when `placement` is
+    /// absent; otherwise drawn in a box on that page (unrotated PDF points).
+    Sign {
+        input: PathBuf,
+        certificate: PathBuf,
+        #[serde(default)]
+        reason: Option<String>,
+        #[serde(default)]
+        location: Option<String>,
+        #[serde(default)]
+        placement: Option<SignPlacement>,
+        output: PathBuf,
+    },
     /// Turn scanned pages that face sideways or upside down upright (by /Rotate) in a new file.
     FixOrientation {
         input: PathBuf,
@@ -645,6 +667,7 @@ pub const OPERATION_IDS: &[&str] = &[
     "verify_signatures",
     "deskew",
     "fix_orientation",
+    "sign",
     "find_blank_pages",
     "extract_images",
     "list_attachments",
@@ -689,6 +712,7 @@ impl Operation {
             Operation::VerifySignatures { .. } => "verify_signatures",
             Operation::Deskew { .. } => "deskew",
             Operation::FixOrientation { .. } => "fix_orientation",
+            Operation::Sign { .. } => "sign",
             Operation::FindBlankPages { .. } => "find_blank_pages",
             Operation::ExtractImages { .. } => "extract_images",
             Operation::ListAttachments { .. } => "list_attachments",
@@ -753,6 +777,7 @@ impl Operation {
             | Operation::VerifySignatures { input }
             | Operation::Deskew { input, .. }
             | Operation::FixOrientation { input, .. }
+            | Operation::Sign { input, .. }
             | Operation::FindBlankPages { input, .. }
             | Operation::ExtractImages { input, .. }
             | Operation::SetBookmarks { input, .. }
@@ -813,6 +838,7 @@ impl Operation {
             | Operation::Optimize { output, .. }
             | Operation::Deskew { output, .. }
             | Operation::FixOrientation { output, .. }
+            | Operation::Sign { output, .. }
             | Operation::AddAttachments { output, .. }
             | Operation::Sanitize { output, .. }
             | Operation::StampText { output, .. } => parent(output),
@@ -1175,6 +1201,9 @@ pub struct OperationRequest {
     /// For `protect`: the permissions password; a random one is generated when absent.
     #[serde(default, skip_serializing)]
     pub new_owner_password: Option<String>,
+    /// For `sign`: the certificate file's password. Never serialized.
+    #[serde(default, skip_serializing)]
+    pub certificate_password: Option<String>,
 }
 
 impl OperationRequest {
@@ -1187,6 +1216,7 @@ impl OperationRequest {
             password: None,
             new_password: None,
             new_owner_password: None,
+            certificate_password: None,
         }
     }
 
@@ -1199,6 +1229,19 @@ impl OperationRequest {
             ));
         }
         self.operation.validate()?;
+        if let Operation::Sign { reason, location, .. } = &self.operation {
+            if self.certificate_password.is_none() {
+                return Err(PwError::invalid("sign.password_missing", "Enter the certificate's password."));
+            }
+            for t in [reason, location].into_iter().flatten() {
+                if t.chars().count() > 200 {
+                    return Err(PwError::invalid(
+                        "sign.text_long",
+                        "Reason and location can be at most 200 characters.",
+                    ));
+                }
+            }
+        }
         if let Operation::Protect { .. } = self.operation {
             let pw = self.new_password.as_deref().unwrap_or("");
             if pw.is_empty() {

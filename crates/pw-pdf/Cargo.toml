@@ -30,6 +30,8 @@ p256.workspace = true
 p384.workspace = true
 sha1.workspace = true
 time.workspace = true
+p12-keystore.workspace = true
+ring.workspace = true
 
 [dev-dependencies]
 image.workspace = true

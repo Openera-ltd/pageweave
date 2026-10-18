@@ -54,6 +54,7 @@ import { SanitizeDialog } from "./components/SanitizeDialog";
 import { CompareView } from "./components/CompareView";
 import { PrintDialog } from "./components/PrintDialog";
 import { RemoveBlankDialog } from "./components/RemoveBlankDialog";
+import { SignDialog } from "./components/SignDialog";
 import { UnprotectDialog } from "./components/UnprotectDialog";
 import { EditPropertiesDialog } from "./components/EditPropertiesDialog";
 import { SaveAttachmentDialog } from "./components/SaveAttachmentDialog";
@@ -84,6 +85,7 @@ type DialogState =
   | { kind: "compare" }
   | { kind: "print" }
   | { kind: "removeBlank" }
+  | { kind: "sign" }
   | { kind: "unprotect" }
   | { kind: "editProperties" }
   | { kind: "saveAttachment"; attachment: AttachmentInfo }
@@ -718,6 +720,7 @@ export function App() {
     "file.reduceSize": { run: () => openTool("optimize"), available: all(needDoc, noDialog) },
     "file.compare": { run: () => setDialog({ kind: "compare" }), available: all(needDoc, noDialog) },
     "file.print": { run: () => setDialog({ kind: "print" }), available: all(needDoc, noDialog) },
+    "file.sign": { run: () => setDialog({ kind: "sign" }), available: all(needDoc, noDialog) },
     "file.imagesToPdf": { run: () => setDialog({ kind: "images", files: [] }), available: noDialog },
     "file.editBookmarks": { run: () => setDialog({ kind: "bookmarks", addOnOpen: false, page: view.page }), available: all(needDoc, noDialog) },
     "file.attachFiles": { run: () => active && attachFiles(active), available: all(needDoc, noDialog) },
@@ -955,6 +958,10 @@ export function App() {
           setActiveId(doc.doc_id);
           setDialog({ kind: "unprotect" });
         }, dialog ? "Close the open dialog first." : doc.info.encrypted ? true : "This file is not password protected."),
+        item("file.sign", "Sign with a certificate…", () => {
+          setActiveId(doc.doc_id);
+          setDialog({ kind: "sign" });
+        }, dialog ? "Close the open dialog first." : true),
         item("file.sanitize", "Remove hidden information…", () => {
           setActiveId(doc.doc_id);
           setDialog({ kind: "sanitize" });
@@ -989,12 +996,15 @@ export function App() {
     const after = r.data?.bytes_after;
     const straightened = r.data?.straightened;
     const turned = r.data?.turned;
+    const signer = r.operation === "sign" ? r.data?.signer : undefined;
     const detail =
       typeof before === "number" && typeof after === "number"
         ? sizeChange(before, after)
         : typeof straightened === "number"
           ? `${straightened} page${straightened === 1 ? "" : "s"} straightened`
-          : typeof turned === "number"
+          : typeof signer === "string"
+            ? `Signed as ${signer}`
+            : typeof turned === "number"
             ? `${turned} page${turned === 1 ? "" : "s"} turned upright`
           : out?.pages != null && r.outputs.length === 1
             ? `${out.pages} pages`
@@ -1351,6 +1361,7 @@ export function App() {
       {dialog?.kind === "editProperties" && active && <EditPropertiesDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "unprotect" && active && <UnprotectDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "sanitize" && active && <SanitizeDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
+      {dialog?.kind === "sign" && active && <SignDialog doc={active} currentPage={view.page} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "removeBlank" && active && <RemoveBlankDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "print" && active && <PrintDialog doc={active} currentPage={view.page} onClose={() => setDialog(null)} />}
       {dialog?.kind === "compare" && active && <CompareView doc={active} others={tabs.filter((t) => t.doc_id !== active.doc_id)} jobs={jobs} onClose={() => setDialog(null)} />}

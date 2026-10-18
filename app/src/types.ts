@@ -235,6 +235,15 @@ export type Operation =
   | { op: "verify_signatures"; input: string }
   | { op: "deskew"; input: string; pages: string | null; output: string }
   | { op: "fix_orientation"; input: string; pages: string | null; output: string }
+  | {
+      op: "sign";
+      input: string;
+      certificate: string;
+      reason: string | null;
+      location: string | null;
+      placement: { page: number; rect: [number, number, number, number] } | null;
+      output: string;
+    }
   | { op: "find_blank_pages"; input: string; max_ink: number }
   | { op: "extract_images"; input: string; pages: string | null; output_dir: string }
   | { op: "optimize"; input: string; images: { max_dpi: number; quality: number } | null; output: string }
@@ -323,6 +332,8 @@ export interface OperationRequest {
   collision: CollisionPolicy;
   /** `protect` only. Sent to the engine but never stored or logged by it. */
   new_password?: string;
+  /** For `sign`; never serialized by the host. */
+  certificate_password?: string;
   new_owner_password?: string | null;
 }
 
