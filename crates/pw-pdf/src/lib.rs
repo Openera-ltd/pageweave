@@ -22,6 +22,7 @@ mod forms;
 mod images;
 mod ocr;
 mod optimize;
+pub mod orient;
 mod outline;
 mod properties;
 mod protect;
