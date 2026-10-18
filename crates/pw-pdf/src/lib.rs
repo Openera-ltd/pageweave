@@ -21,6 +21,7 @@ mod extract;
 mod forms;
 mod images;
 mod marks;
+pub mod objects;
 mod ocr;
 mod optimize;
 pub mod orient;

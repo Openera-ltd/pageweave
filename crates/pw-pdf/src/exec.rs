@@ -339,6 +339,15 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             let blank: Vec<u32> = pages.iter().filter(|p| p.blank).map(|p| p.page).collect();
             (vec![], json!({ "pages": pages, "blank": blank }))
         }
+        Operation::ListPageObjects { input, page } => {
+            let listing = crate::objects::editable_objects(input, &opts, *page)?;
+            (vec![], serde_json::to_value(&listing).unwrap_or_default())
+        }
+        Operation::EditObjects { input, pages, output } => {
+            let (c, n, w) = crate::objects::edit_objects(input, &opts, pages, output, policy)?;
+            warnings.extend(w);
+            (vec![out(&c, Some(n))], json!({ "edits": pages.iter().map(|p| p.edits.len()).sum::<usize>() }))
+        }
         Operation::AddSignatureMark { input, page, rect, mark, output } => {
             let (c, pages, w) = crate::marks::add_signature_mark(input, &opts, *page, rect, mark, output, policy)?;
             warnings.extend(w);
@@ -443,10 +452,54 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(w);
             (vec![out(&c, Some(n))], json!({ "page_count": n, "areas": areas.len() }))
         }
-        Operation::ApplyEdits { input, form_values, annotations, output } => {
-            let (c, w) = crate::forms::apply_edits(input, opts.password, form_values, annotations, output, policy)?;
+        Operation::ApplyEdits { input, form_values, annotations, object_edits, output } => {
+            let (c, w) = if object_edits.iter().all(|p| p.edits.is_empty()) {
+                crate::forms::apply_edits(input, opts.password, form_values, annotations, output, policy)?
+            } else {
+                let edited = crate::objects::apply_object_edits(input, &opts, object_edits)?;
+                let mut w = edited.warnings.clone();
+                if form_values.is_empty() && annotations.is_empty() {
+                    let c = pw_core::output::write_atomic_bytes(
+                        output,
+                        policy,
+                        std::slice::from_ref(input),
+                        &edited.bytes,
+                        |staged| {
+                            let back =
+                                std::fs::read(staged).map_err(|e| pw_core::PwError::from_io(&e, "output file"))?;
+                            if back == edited.bytes {
+                                Ok(())
+                            } else {
+                                Err(pw_core::PwError::new(
+                                    pw_core::ErrorCategory::ValidationFailed,
+                                    "output.verify",
+                                    "The written file differs.",
+                                ))
+                            }
+                        },
+                    )?;
+                    (c, w)
+                } else {
+                    // The verified object edits feed the form/annotation stage through a staged file
+                    // (crash recovery removes leftovers with this prefix).
+                    let dir =
+                        output.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(std::path::Path::new("."));
+                    let stage = dir.join(format!("{}objects.pdf", pw_core::output::staged_prefix(std::process::id())));
+                    std::fs::write(&stage, &edited.bytes)
+                        .map_err(|e| pw_core::PwError::from_io(&e, "temporary file"))?;
+                    let r = crate::forms::apply_edits(&stage, opts.password, form_values, annotations, output, policy);
+                    let _ = std::fs::remove_file(&stage);
+                    let (c, w2) = r?;
+                    w.extend(w2);
+                    (c, w)
+                }
+            };
             warnings.extend(w);
-            (vec![out(&c, None)], json!({ "fields": form_values.len(), "annotations": annotations.len() }))
+            let n_obj: usize = object_edits.iter().map(|p| p.edits.len()).sum();
+            (
+                vec![out(&c, None)],
+                json!({ "fields": form_values.len(), "annotations": annotations.len(), "object_edits": n_obj }),
+            )
         }
         Operation::Split { input, split, output_dir } => {
             let (parts, w) = edit::split(input, &opts, split, output_dir, policy, &cancelled)?;

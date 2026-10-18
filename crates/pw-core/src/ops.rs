@@ -316,6 +316,68 @@ pub struct WatermarkSpec {
     pub layer: WatermarkLayer,
 }
 
+/// One change to existing page content. Object numbers come from listing the same file
+/// (`list_page_objects`); moves are in points as the page is displayed (right, up).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PageEdit {
+    /// Change a run of text (all of its objects), optionally its size, colour and position.
+    Text {
+        objects: Vec<u32>,
+        text: String,
+        #[serde(default)]
+        size: Option<f32>,
+        #[serde(default)]
+        color: Option<String>,
+        #[serde(default)]
+        dx: f32,
+        #[serde(default)]
+        dy: f32,
+    },
+    DeleteObjects {
+        objects: Vec<u32>,
+    },
+    MoveObjects {
+        objects: Vec<u32>,
+        dx: f32,
+        dy: f32,
+    },
+    /// Put a PNG/JPEG picture in an existing picture's place (same box).
+    ReplaceImage {
+        object: u32,
+        path: PathBuf,
+    },
+    RotateImage {
+        object: u32,
+        degrees: u32,
+    },
+    /// New text at (x, y) in unrotated page space (baseline start), upright as displayed.
+    AddText {
+        x: f32,
+        y: f32,
+        text: String,
+        #[serde(default = "default_add_size")]
+        size: f32,
+        #[serde(default = "default_black")]
+        color: String,
+    },
+}
+
+fn default_add_size() -> f32 {
+    12.0
+}
+
+fn default_black() -> String {
+    "#000000".into()
+}
+
+/// The edits of one page (0-based).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PageEdits {
+    pub page: u32,
+    pub edits: Vec<PageEdit>,
+}
+
 /// Lettering of a typed signature (standard PDF fonts, Latin-1 text).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -620,6 +682,17 @@ pub enum Operation {
         #[serde(default = "default_max_ink")]
         max_ink: f32,
     },
+    /// The editable text runs and pictures of a page (read-only).
+    ListPageObjects {
+        input: PathBuf,
+        page: u32,
+    },
+    /// Apply edits to existing text and pictures (and add text) in a copy.
+    EditObjects {
+        input: PathBuf,
+        pages: Vec<PageEdits>,
+        output: PathBuf,
+    },
     /// Place a visual signature or initials (typed, drawn or a picture) in a box on a page of a copy.
     AddSignatureMark {
         input: PathBuf,
@@ -689,6 +762,9 @@ pub enum Operation {
         form_values: Vec<FieldValue>,
         #[serde(default)]
         annotations: Vec<AnnotationSpec>,
+        /// Changes to existing text and pictures (applied first).
+        #[serde(default)]
+        object_edits: Vec<PageEdits>,
         output: PathBuf,
     },
 }
@@ -728,6 +804,8 @@ pub const OPERATION_IDS: &[&str] = &[
     "fix_orientation",
     "sign",
     "add_signature_mark",
+    "list_page_objects",
+    "edit_objects",
     "find_blank_pages",
     "extract_images",
     "list_attachments",
@@ -774,6 +852,8 @@ impl Operation {
             Operation::FixOrientation { .. } => "fix_orientation",
             Operation::Sign { .. } => "sign",
             Operation::AddSignatureMark { .. } => "add_signature_mark",
+            Operation::ListPageObjects { .. } => "list_page_objects",
+            Operation::EditObjects { .. } => "edit_objects",
             Operation::FindBlankPages { .. } => "find_blank_pages",
             Operation::ExtractImages { .. } => "extract_images",
             Operation::ListAttachments { .. } => "list_attachments",
@@ -799,6 +879,7 @@ impl Operation {
                 | Operation::Compare { .. }
                 | Operation::VerifySignatures { .. }
                 | Operation::FindBlankPages { .. }
+                | Operation::ListPageObjects { .. }
         )
     }
 
@@ -840,6 +921,8 @@ impl Operation {
             | Operation::FixOrientation { input, .. }
             | Operation::Sign { input, .. }
             | Operation::AddSignatureMark { input, .. }
+            | Operation::ListPageObjects { input, .. }
+            | Operation::EditObjects { input, .. }
             | Operation::FindBlankPages { input, .. }
             | Operation::ExtractImages { input, .. }
             | Operation::SetBookmarks { input, .. }
@@ -873,7 +956,8 @@ impl Operation {
             | Operation::ListAttachments { .. }
             | Operation::Compare { .. }
             | Operation::VerifySignatures { .. }
-            | Operation::FindBlankPages { .. } => None,
+            | Operation::FindBlankPages { .. }
+            | Operation::ListPageObjects { .. } => None,
             Operation::Split { output_dir, .. }
             | Operation::ExportImages { output_dir, .. }
             | Operation::ExtractImages { output_dir, .. } => Some(output_dir.clone()),
@@ -902,6 +986,7 @@ impl Operation {
             | Operation::FixOrientation { output, .. }
             | Operation::Sign { output, .. }
             | Operation::AddSignatureMark { output, .. }
+            | Operation::EditObjects { output, .. }
             | Operation::AddAttachments { output, .. }
             | Operation::Sanitize { output, .. }
             | Operation::StampText { output, .. } => parent(output),
@@ -1094,6 +1179,40 @@ impl Operation {
                         "blank.threshold",
                         "The blank-page threshold must be between 0 and 5% ink.",
                     ));
+                }
+            }
+            Operation::EditObjects { pages, .. } => {
+                let n: usize = pages.iter().map(|p| p.edits.len()).sum();
+                if n == 0 {
+                    return Err(PwError::invalid("edit.nothing", "There are no changes to save."));
+                }
+                if n > 10_000 {
+                    return Err(PwError::invalid("edit.too_many", "Too many changes at once."));
+                }
+                for e in pages.iter().flat_map(|p| p.edits.iter()) {
+                    let finite = |v: f32| v.is_finite() && v.abs() < 20_000.0;
+                    let ok = match e {
+                        PageEdit::Text { objects, text, size, dx, dy, .. } => {
+                            !objects.is_empty()
+                                && text.chars().count() <= 2000
+                                && size.is_none_or(|s| (2.0..=400.0).contains(&s))
+                                && finite(*dx)
+                                && finite(*dy)
+                        }
+                        PageEdit::DeleteObjects { objects } => !objects.is_empty(),
+                        PageEdit::MoveObjects { objects, dx, dy } => !objects.is_empty() && finite(*dx) && finite(*dy),
+                        PageEdit::ReplaceImage { .. } => true,
+                        PageEdit::RotateImage { degrees, .. } => matches!(degrees, 90 | 180 | 270),
+                        PageEdit::AddText { x, y, text, size, .. } => {
+                            finite(*x) && finite(*y) && text.chars().count() <= 2000 && (4.0..=200.0).contains(size)
+                        }
+                    };
+                    if !ok {
+                        return Err(PwError::invalid(
+                            "edit.invalid",
+                            "One of the changes is not valid (empty, too large or out of range).",
+                        ));
+                    }
                 }
             }
             Operation::AddSignatureMark { rect, mark, .. } => {
@@ -1486,6 +1605,7 @@ mod tests {
                 input: "f".into(),
                 form_values,
                 annotations,
+                object_edits: vec![],
                 output: "o".into(),
             })
             .validate()
