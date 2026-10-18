@@ -10,5 +10,6 @@
   ],
   "gpu_hours_ceiling": 3.0,
   "accelerator": "NvidiaTeslaT4",
-  "status": "running"
+  "status": "stopped_by_kernel_delete",
+  "note": "Overran its 3 GPU-h ceiling (~10.5 h); no session id available to cancel; notebook deleted 2026-10-18 06:12 UTC on the owner's instruction; no output."
 }
