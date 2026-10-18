@@ -279,6 +279,27 @@ fn extract_images_writes_files_and_reports_none() {
 }
 
 #[test]
+fn orient_turns_a_page_and_explains_nothing_to_do() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("upright.pdf");
+    let r = bin()
+        .args(["--json", "orient", "--pages", "2", "-o"])
+        .arg(&out)
+        .arg(fixture("turned-scan.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert_eq!(json(&r)["result"]["data"]["pages"][0]["turn"], 180);
+    let none = bin()
+        .args(["--json", "orient", "--pages", "5", "-o"])
+        .arg(dir.path().join("n.pdf"))
+        .arg(fixture("turned-scan.pdf"))
+        .output()
+        .expect("run");
+    assert_eq!(json(&none)["error"]["code"], "orient.nothing");
+}
+
+#[test]
 fn text_saves_a_file_with_output_and_prints_without() {
     let dir = tempfile::tempdir().expect("tmp");
     let out = dir.path().join("five.txt");

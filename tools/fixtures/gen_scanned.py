@@ -40,11 +40,23 @@ SKEWED = [
     None,      # born-digital text page
 ]
 
+# Pages turned in the scanner and NOT corrected by /Rotate (they display turned): for page
+# orientation. (index, counter-clockwise turn of the stored image, add the correcting /Rotate?)
+# A page stored turned N degrees counter-clockwise reads upright with /Rotate N (clockwise).
+TURNED = [
+    (0, 90, False),   # prose: needs /Rotate 90
+    (3, 180, False),  # mixed, upside down: needs /Rotate 180
+    (1, 270, False),  # two-column: needs /Rotate 270
+    (2, 0, False),    # invoice, upright
+    None,             # born-digital text page
+]
+
 
 def main() -> int:
     fonts = corpus.load_fonts()
     build(fonts, PAGES, "scanned.pdf", "scanned.truth.json")
     build(fonts, SKEWED, "skewed-scan.pdf", None)
+    build(fonts, TURNED, "turned-scan.pdf", None)
     return 0
 
 
@@ -65,19 +77,19 @@ def build(fonts, pages, name: str, truth_name: str | None) -> None:
             c = add(b"<< /Length %d >>\nstream\n" % len(content) + content + b"\nendstream")
             kids.append(add(b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 %d 0 R >> >> /Contents %d 0 R >>" % (pages_obj, font, c)))
             continue
-        idx, rot = spec
+        idx, rot, keep_rotate = (*spec, True) if len(spec) == 2 else spec
         rendered, gt = corpus.render_page(corpus.SPLITS["val"] + idx, fonts, "val")
         img = rendered.image.convert("L")
-        if rot == 90:
-            # Stored turned 90 degrees clockwise... displayed upright after /Rotate 90 (clockwise).
-            img = img.rotate(90, expand=True)
+        if rot:
+            # Stored turned `rot` degrees counter-clockwise (PIL); /Rotate `rot` (clockwise) displays it upright.
+            img = img.rotate(rot, expand=True)
         w, h = img.size
         data = zlib.compress(img.tobytes(), 9)
         im = add(b"<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode /Length %d >>\nstream\n" % (w, h, len(data)) + data + b"\nendstream")
         pw, ph = w * 72 / corpus.DPI, h * 72 / corpus.DPI
         content = b"q %.4f 0 0 %.4f 0 0 cm /Im0 Do Q" % (pw, ph)
         c = add(b"<< /Length %d >>\nstream\n" % len(content) + content + b"\nendstream")
-        rot_entry = b" /Rotate %d" % rot if rot else b""
+        rot_entry = b" /Rotate %d" % rot if rot and keep_rotate else b""
         kids.append(add(b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %.4f %.4f]%s /Resources << /XObject << /Im0 %d 0 R >> >> /Contents %d 0 R >>" % (pages_obj, pw, ph, rot_entry, im, c)))
         truth.append({"page": len(truth), "source": gt["id"], "layout": gt["layout"], "condition": gt["condition"], "rotate": rot, "lines": [l["text"] for l in gt["lines"]]})
     objs[catalog - 1] = b"<< /Type /Catalog /Pages %d 0 R >>" % pages_obj

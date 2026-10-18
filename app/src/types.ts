@@ -234,6 +234,7 @@ export type Operation =
   | { op: "compare"; old: string; new: string }
   | { op: "verify_signatures"; input: string }
   | { op: "deskew"; input: string; pages: string | null; output: string }
+  | { op: "fix_orientation"; input: string; pages: string | null; output: string }
   | { op: "find_blank_pages"; input: string; max_ink: number }
   | { op: "extract_images"; input: string; pages: string | null; output_dir: string }
   | { op: "optimize"; input: string; images: { max_dpi: number; quality: number } | null; output: string }

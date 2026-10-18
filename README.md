@@ -89,6 +89,7 @@ pageweave optimize -o report-smaller.pdf report.pdf    # lossless; images unchan
 pageweave optimize --image-dpi 150 --image-quality 75 -o photos-small.pdf photos.pdf   # also resample images
 pageweave extract-images -o images/ report.pdf          # embedded images: JPEG as stored, others PNG
 pageweave blank-pages scan.pdf                           # list blank pages; remove with delete --pages
+pageweave orient -o scan-upright.pdf scan.pdf           # turn sideways/upside-down scans upright
 pageweave deskew -o scan-straight.pdf scan.pdf           # straighten skewed scanned pages (lossless)
 pageweave signatures contract.pdf                       # integrity of each signature (trust not checked yet)
 pageweave compare report-v1.pdf report-v2.pdf          # page, text, format and visual differences

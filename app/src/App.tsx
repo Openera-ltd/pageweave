@@ -792,6 +792,7 @@ export function App() {
     "pages.exportImages": { run: () => openTool("images"), available: all(needDoc, noDialog) },
     "pages.exportText": { run: () => openTool("text"), available: all(needDoc, noDialog) },
     "pages.deskew": { run: () => openTool("deskew"), available: all(needDoc, noDialog) },
+    "pages.orient": { run: () => openTool("orient"), available: all(needDoc, noDialog) },
     "pages.extractImages": { run: () => openTool("extractImages"), available: all(needDoc, noDialog) },
     "pages.removeBlank": { run: () => setDialog({ kind: "removeBlank" }), available: all(needDoc, noDialog) },
     "pages.ocr": { run: () => openTool("ocr"), available: all(needDoc, noDialog) },
@@ -971,7 +972,7 @@ export function App() {
 
   const pagesMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
-    setMenu({ label: "Page tools", x: r.left, y: r.bottom + 2, items: [item("pages.organize"), "separator", item("pages.extract"), item("pages.delete"), item("pages.rotate"), item("pages.split"), item("pages.stamp"), item("pages.watermark"), item("pages.crop"), item("pages.exportImages"), item("pages.extractImages"), item("pages.exportText"), item("pages.ocr"), item("pages.deskew"), item("pages.removeBlank"), "separator", item("pages.merge")] });
+    setMenu({ label: "Page tools", x: r.left, y: r.bottom + 2, items: [item("pages.organize"), "separator", item("pages.extract"), item("pages.delete"), item("pages.rotate"), item("pages.split"), item("pages.stamp"), item("pages.watermark"), item("pages.crop"), item("pages.exportImages"), item("pages.extractImages"), item("pages.exportText"), item("pages.ocr"), item("pages.deskew"), item("pages.orient"), item("pages.removeBlank"), "separator", item("pages.merge")] });
   };
 
   /* ---------- Job results ---------- */
@@ -987,11 +988,14 @@ export function App() {
     const before = r.data?.bytes_before;
     const after = r.data?.bytes_after;
     const straightened = r.data?.straightened;
+    const turned = r.data?.turned;
     const detail =
       typeof before === "number" && typeof after === "number"
         ? sizeChange(before, after)
         : typeof straightened === "number"
           ? `${straightened} page${straightened === 1 ? "" : "s"} straightened`
+          : typeof turned === "number"
+            ? `${turned} page${turned === 1 ? "" : "s"} turned upright`
           : out?.pages != null && r.outputs.length === 1
             ? `${out.pages} pages`
             : undefined;

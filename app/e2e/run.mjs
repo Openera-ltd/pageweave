@@ -1466,6 +1466,30 @@ await test("extract images: Pages menu; JPEG saved exactly, others as PNG, repea
   });
 });
 
+await test("turn pages upright: Pages menu; sideways and upside-down scans turned; verified rotations", async () => {
+  const out = join(work, "upright.pdf");
+  await withApp([join(FIX, "turned-scan.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Turn pages upright");
+    await s.click('[role="option"][data-command="pages.orient"]');
+    await s.waitFor("#output");
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("turned-scan-upright.pdf"), "default name");
+    // Two pages keep the scenario short (each page is read four times).
+    await s.click('[role="dialog"] input[type="checkbox"]'); // untick "All pages"
+    await s.type("#pages", "1-2");
+    await s.type("#output", out);
+    await axeCheck(s, "orient-dialog");
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved upright.pdf") && t.includes("2 pages turned upright")), "saved notice", 180000);
+  });
+  if (CLI) {
+    const info = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data;
+    const rot = info.pages.map((p) => p.rotation);
+    assert(JSON.stringify(rot.slice(0, 3)) === "[90,180,0]", `rotations ${JSON.stringify(rot)}`);
+  }
+});
+
 await test("protect with password: AES-256 copy needs the password; wrong password refused; content intact", async () => {
   const src = join(FIX, "five-pages.pdf");
   const before = sha(src);

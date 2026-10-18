@@ -5,7 +5,7 @@ import { basename, dirname, join, siblingOutput, stem } from "../paths";
 import { toPwError, type AnnotationSpec, type CollisionPolicy, type FieldValue, type StampPosition, type JobSnapshot, type WatermarkLayer, type OpenedDoc, type Operation, type PwError } from "../types";
 import { Dialog, useDebounced } from "./ui";
 
-export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop" | "text" | "optimize" | "deskew" | "extractImages";
+export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop" | "text" | "optimize" | "deskew" | "extractImages" | "orient";
 
 const TITLES: Record<PageTool, string> = {
   extract: "Extract pages",
@@ -23,10 +23,11 @@ const TITLES: Record<PageTool, string> = {
   optimize: "Reduce file size",
   deskew: "Straighten pages",
   extractImages: "Extract images",
+  orient: "Turn pages upright",
 };
 
 /** Start-button label (the title's first word does not fit every tool). */
-const START: Partial<Record<PageTool, string>> = { ocr: "Recognize", watermark: "Add watermark", crop: "Crop", text: "Export", optimize: "Reduce size", deskew: "Straighten", extractImages: "Extract" };
+const START: Partial<Record<PageTool, string>> = { ocr: "Recognize", watermark: "Add watermark", crop: "Crop", text: "Export", optimize: "Reduce size", deskew: "Straighten", extractImages: "Extract", orient: "Turn upright" };
 
 const SUFFIX: Record<PageTool, string> = {
   extract: "extract",
@@ -44,10 +45,11 @@ const SUFFIX: Record<PageTool, string> = {
   optimize: "smaller",
   deskew: "straightened",
   extractImages: "",
+  orient: "upright",
 };
 
 /** Tools that offer "All pages" (on by default unless pages were preselected). */
-const ALL_PAGES_TOOLS: PageTool[] = ["rotate", "stamp", "images", "ocr", "watermark", "crop", "text", "deskew", "extractImages"];
+const ALL_PAGES_TOOLS: PageTool[] = ["rotate", "stamp", "images", "ocr", "watermark", "crop", "text", "deskew", "extractImages", "orient"];
 
 export type CropUnit = "mm" | "in" | "pt";
 /** Points per unit. */
@@ -266,6 +268,8 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
           digits: digitsN,
           output,
         };
+      case "orient":
+        return { op: "fix_orientation", input: doc.path, pages: allPages ? null : pages, output };
       case "extractImages":
         return { op: "extract_images", input: doc.path, pages: allPages ? null : pages, output_dir: output };
       case "deskew":
@@ -532,6 +536,12 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
             ))}
           </select>
         </div>
+      )}
+
+      {tool === "orient" && (
+        <p className="hint" style={{ marginTop: 0 }}>
+          Finds scanned pages that face sideways or upside down and turns them upright in a new copy. Nothing is redrawn; pages with their own text are left as they are.
+        </p>
       )}
 
       {tool === "deskew" && (

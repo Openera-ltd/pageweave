@@ -339,6 +339,29 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             let blank: Vec<u32> = pages.iter().filter(|p| p.blank).map(|p| p.page).collect();
             (vec![], json!({ "pages": pages, "blank": blank }))
         }
+        Operation::FixOrientation { input, pages, output } => {
+            let page_progress = |done: u64, total: u64| {
+                if let Some(c) = ctx {
+                    c.set_progress(done, total, "pages");
+                }
+            };
+            let chosen = match pages {
+                Some(spec) => Some(parse_page_ranges(spec, page_count(input, &opts)?)?),
+                None => None,
+            };
+            let (c, report, w) = crate::orient::fix_orientation(
+                input,
+                &opts,
+                chosen.as_deref(),
+                output,
+                policy,
+                &cancelled,
+                &page_progress,
+            )?;
+            warnings.extend(w);
+            let turned = report.iter().filter(|r| r.action == crate::orient::OrientAction::Turned).count();
+            (vec![out(&c, None)], json!({ "turned": turned, "pages": report }))
+        }
         Operation::Deskew { input, pages, output } => {
             let page_progress = |done: u64, total: u64| {
                 if let Some(c) = ctx {

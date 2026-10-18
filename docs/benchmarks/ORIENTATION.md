@@ -1,6 +1,6 @@
 # Page orientation (detect 0/90/180/270° turned scans)
 
-Status: detection module only (`pw-pdf/src/orient.rs`), not yet an operation or in the app.
+Status: in the product as Pages ▸ Turn pages upright… and CLI `orient` (`pw-pdf/src/orient.rs`).
 
 Measured with `PAGEWEAVE_OCR_DIR=third_party/ocr/linux-x64 cargo run -p pw-pdf --release --example orient_bench -- ml/out/corpus-v1/val`:
 every val page (36) turned by 0, 90, 180 and 270° = 144 cases. Method: the page reduced to a 1000 px
@@ -19,6 +19,9 @@ Why the shortcuts fail: the recogniser also reads tall boxes (it turns their cro
 lines makes sideways pages read as well as upright ones; and on skewed pages text a quarter turn off
 still partly reads (val-2000020: 2076 upright vs 1170 a quarter turn off), so fewer than four readings
 picked the wrong axis twice. A wrong turn is worse than no turn, so the slower variant was chosen.
+
+A 640 px reading image was also tried: still 144/144, and no faster (4.7 s per page): the time is spent
+recognising lines, not on image size, so 1000 px stays.
 
 Not yet done: blind split (scored once, after the method is final); speed (4 OCR passes per page; try
 a smaller reading image or the detector's line geometry first); real scans; pages with little text.

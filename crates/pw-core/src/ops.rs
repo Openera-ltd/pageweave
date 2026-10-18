@@ -567,6 +567,13 @@ pub enum Operation {
         #[serde(default = "default_max_ink")]
         max_ink: f32,
     },
+    /// Turn scanned pages that face sideways or upside down upright (by /Rotate) in a new file.
+    FixOrientation {
+        input: PathBuf,
+        #[serde(default)]
+        pages: Option<String>,
+        output: PathBuf,
+    },
     /// Straighten skewed scanned pages (all, or the chosen ones) in a new file.
     Deskew {
         input: PathBuf,
@@ -637,6 +644,7 @@ pub const OPERATION_IDS: &[&str] = &[
     "compare",
     "verify_signatures",
     "deskew",
+    "fix_orientation",
     "find_blank_pages",
     "extract_images",
     "list_attachments",
@@ -680,6 +688,7 @@ impl Operation {
             Operation::Compare { .. } => "compare",
             Operation::VerifySignatures { .. } => "verify_signatures",
             Operation::Deskew { .. } => "deskew",
+            Operation::FixOrientation { .. } => "fix_orientation",
             Operation::FindBlankPages { .. } => "find_blank_pages",
             Operation::ExtractImages { .. } => "extract_images",
             Operation::ListAttachments { .. } => "list_attachments",
@@ -743,6 +752,7 @@ impl Operation {
             | Operation::ListAttachments { input }
             | Operation::VerifySignatures { input }
             | Operation::Deskew { input, .. }
+            | Operation::FixOrientation { input, .. }
             | Operation::FindBlankPages { input, .. }
             | Operation::ExtractImages { input, .. }
             | Operation::SetBookmarks { input, .. }
@@ -802,6 +812,7 @@ impl Operation {
             | Operation::ExportText { output, .. }
             | Operation::Optimize { output, .. }
             | Operation::Deskew { output, .. }
+            | Operation::FixOrientation { output, .. }
             | Operation::AddAttachments { output, .. }
             | Operation::Sanitize { output, .. }
             | Operation::StampText { output, .. } => parent(output),

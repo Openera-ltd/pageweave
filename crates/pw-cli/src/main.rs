@@ -208,6 +208,15 @@ enum Command {
         #[arg(long, default_value_t = 0.2)]
         max_ink: f32,
     },
+    /// Turn scanned pages that face sideways or upside down upright in a new file (lossless).
+    Orient {
+        file: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Pages (range syntax); all pages when absent.
+        #[arg(long)]
+        pages: Option<String>,
+    },
     /// Straighten skewed scanned pages in a new file (lossless: the page content is turned).
     Deskew {
         file: PathBuf,
@@ -453,6 +462,9 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
         }
         Command::BlankPages { file, max_ink } => {
             Operation::FindBlankPages { input: file.clone(), max_ink: max_ink / 100.0 }
+        }
+        Command::Orient { file, output, pages } => {
+            Operation::FixOrientation { input: file.clone(), pages: pages.clone(), output: output.clone() }
         }
         Command::Deskew { file, output, pages } => {
             Operation::Deskew { input: file.clone(), pages: pages.clone(), output: output.clone() }
