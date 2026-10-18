@@ -3,7 +3,8 @@
 //! Every command builds a typed `OperationRequest` and calls the same `pw_pdf::execute` the desktop
 //! app uses. Results are printed as human text or, with `--json`, as a stable JSON envelope.
 //! Exit codes come from the error category (see `ErrorCategory::exit_code`); 0 is success and 1 is
-//! a usage error. Passwords are only accepted on stdin (`--password-stdin`), never as arguments.
+//! a usage error; 70 is also used if the worker thread panics and 71 if it cannot be started.
+//! Passwords are only accepted on stdin (`--password-stdin`), never as arguments.
 
 use clap::{Parser, Subcommand, ValueEnum};
 use pw_core::ops::{Operation, OperationRequest, OperationResult, SplitMode};
@@ -925,7 +926,18 @@ fn print_human(r: &OperationResult) {
     }
 }
 
+/// Stack for the CLI's work. Windows gives the main thread 1 MB, which a debug build's argument
+/// parsing outgrew (CI: "thread 'main' has overflowed its stack"); every platform gets the same.
+const CLI_STACK_BYTES: usize = 16 * 1024 * 1024;
+
 fn main() -> ExitCode {
+    match std::thread::Builder::new().name("pageweave-cli".into()).stack_size(CLI_STACK_BYTES).spawn(run) {
+        Ok(h) => h.join().unwrap_or(ExitCode::from(70)),
+        Err(_) => ExitCode::from(71),
+    }
+}
+
+fn run() -> ExitCode {
     let cli = match Cli::try_parse() {
         Ok(c) => c,
         Err(e) => {

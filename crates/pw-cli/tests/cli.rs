@@ -375,6 +375,19 @@ fn signatures_with_trust_report_trusted_signers() {
     assert!(String::from_utf8_lossy(&human.stdout).contains("Trust: unknown signer"));
 }
 
+/// Windows gives the main thread a 1 MB stack; a debug build's argument parsing outgrew it
+/// (2026-10-18, every CLI test failed on Windows only). Emulate that limit on Unix.
+#[cfg(unix)]
+#[test]
+fn runs_with_a_one_megabyte_main_thread_stack() {
+    let bin = env!("CARGO_BIN_EXE_pageweave");
+    let r = std::process::Command::new("sh")
+        .args(["-c", &format!("ulimit -s 1024 && exec '{bin}' capabilities")])
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+}
+
 #[test]
 fn text_saves_a_file_with_output_and_prints_without() {
     let dir = tempfile::tempdir().expect("tmp");
