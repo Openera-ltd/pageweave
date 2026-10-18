@@ -331,6 +331,26 @@ fn sign_reads_the_password_from_stdin_and_reports_the_signer() {
 }
 
 #[test]
+fn signature_mark_places_typed_text() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("o.pdf");
+    let r = bin()
+        .args(["--json", "signature-mark", "--box", "350,40,560,100", "--text", "Ada Lovelace", "-o"])
+        .arg(&out)
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert_eq!(json(&r)["result"]["data"]["kind"], "typed");
+    let both = bin()
+        .args(["signature-mark", "--box", "1,2,3,4", "-o", "x.pdf"])
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert!(!both.status.success());
+}
+
+#[test]
 fn text_saves_a_file_with_output_and_prints_without() {
     let dir = tempfile::tempdir().expect("tmp");
     let out = dir.path().join("five.txt");

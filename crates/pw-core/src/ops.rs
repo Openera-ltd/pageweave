@@ -316,6 +316,51 @@ pub struct WatermarkSpec {
     pub layer: WatermarkLayer,
 }
 
+/// Lettering of a typed signature (standard PDF fonts, Latin-1 text).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TypedStyle {
+    /// Times Italic.
+    #[default]
+    Formal,
+    /// Helvetica Oblique.
+    Plain,
+    /// Courier Oblique.
+    Typewriter,
+}
+
+fn default_ink() -> String {
+    "#1a2b5c".into()
+}
+
+fn default_pen() -> f32 {
+    1.6
+}
+
+/// A visual signature or initials (a picture of a signature, not a digital signature).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SignatureMark {
+    Typed {
+        text: String,
+        #[serde(default)]
+        style: TypedStyle,
+        #[serde(default = "default_ink")]
+        color: String,
+    },
+    /// Strokes as drawn: points 0..1 across the box as displayed, y downwards.
+    Drawn {
+        strokes: Vec<Vec<[f32; 2]>>,
+        #[serde(default = "default_ink")]
+        color: String,
+        /// Pen width in points.
+        #[serde(default = "default_pen")]
+        width: f32,
+    },
+    /// A PNG or JPEG picture of a signature.
+    Image { path: PathBuf },
+}
+
 /// Where a visible signature is drawn: 0-based page and a box [x1, y1, x2, y2] in that page's
 /// unrotated PDF space (points).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -575,6 +620,16 @@ pub enum Operation {
         #[serde(default = "default_max_ink")]
         max_ink: f32,
     },
+    /// Place a visual signature or initials (typed, drawn or a picture) in a box on a page of a copy.
+    AddSignatureMark {
+        input: PathBuf,
+        /// 0-based page.
+        page: u32,
+        /// Box in the page's unrotated PDF space; the mark is upright as the page is displayed.
+        rect: RectPt,
+        mark: SignatureMark,
+        output: PathBuf,
+    },
     /// Sign a copy with a certificate (PKCS#12 identity; its password travels in
     /// `OperationRequest::certificate_password`, never serialized). Invisible when `placement` is
     /// absent; otherwise drawn in a box on that page (unrotated PDF points).
@@ -668,6 +723,7 @@ pub const OPERATION_IDS: &[&str] = &[
     "deskew",
     "fix_orientation",
     "sign",
+    "add_signature_mark",
     "find_blank_pages",
     "extract_images",
     "list_attachments",
@@ -713,6 +769,7 @@ impl Operation {
             Operation::Deskew { .. } => "deskew",
             Operation::FixOrientation { .. } => "fix_orientation",
             Operation::Sign { .. } => "sign",
+            Operation::AddSignatureMark { .. } => "add_signature_mark",
             Operation::FindBlankPages { .. } => "find_blank_pages",
             Operation::ExtractImages { .. } => "extract_images",
             Operation::ListAttachments { .. } => "list_attachments",
@@ -778,6 +835,7 @@ impl Operation {
             | Operation::Deskew { input, .. }
             | Operation::FixOrientation { input, .. }
             | Operation::Sign { input, .. }
+            | Operation::AddSignatureMark { input, .. }
             | Operation::FindBlankPages { input, .. }
             | Operation::ExtractImages { input, .. }
             | Operation::SetBookmarks { input, .. }
@@ -839,6 +897,7 @@ impl Operation {
             | Operation::Deskew { output, .. }
             | Operation::FixOrientation { output, .. }
             | Operation::Sign { output, .. }
+            | Operation::AddSignatureMark { output, .. }
             | Operation::AddAttachments { output, .. }
             | Operation::Sanitize { output, .. }
             | Operation::StampText { output, .. } => parent(output),
@@ -1031,6 +1090,41 @@ impl Operation {
                         "blank.threshold",
                         "The blank-page threshold must be between 0 and 5% ink.",
                     ));
+                }
+            }
+            Operation::AddSignatureMark { rect, mark, .. } => {
+                let (w, h) = ((rect.right - rect.left).abs(), (rect.top - rect.bottom).abs());
+                if ![rect.left, rect.bottom, rect.right, rect.top].iter().all(|v| v.is_finite()) || w < 10.0 || h < 5.0
+                {
+                    return Err(PwError::invalid("mark.box", "Make the signature box at least 10 × 5 points."));
+                }
+                match mark {
+                    SignatureMark::Typed { text, .. } => {
+                        let t = text.trim();
+                        if t.is_empty() || t.chars().count() > 100 {
+                            return Err(PwError::invalid("mark.text", "Type 1 to 100 characters."));
+                        }
+                        if t.chars().any(|c| (c as u32) > 255 || c.is_control()) {
+                            return Err(PwError::invalid(
+                                "mark.text_charset",
+                                "Typed signatures can use Latin letters only for now (Western European characters). Draw it or use a picture instead.",
+                            ));
+                        }
+                    }
+                    SignatureMark::Drawn { strokes, width, .. } => {
+                        let points: usize = strokes.iter().map(Vec::len).sum();
+                        if points == 0 {
+                            return Err(PwError::invalid("mark.empty", "Draw your signature first."));
+                        }
+                        if strokes.len() > 1000 || points > 50_000 {
+                            return Err(PwError::invalid("mark.too_complex", "The drawing has too many points."));
+                        }
+                        let ok = |v: f32| v.is_finite() && (-0.01..=1.01).contains(&v);
+                        if !strokes.iter().flatten().all(|p| ok(p[0]) && ok(p[1])) || !(0.2..=20.0).contains(width) {
+                            return Err(PwError::invalid("mark.points", "The drawing has points outside its box."));
+                        }
+                    }
+                    SignatureMark::Image { .. } => {}
                 }
             }
             Operation::CropPages { margins: m, .. } => {

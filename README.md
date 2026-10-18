@@ -91,6 +91,7 @@ pageweave extract-images -o images/ report.pdf          # embedded images: JPEG 
 pageweave blank-pages scan.pdf                           # list blank pages; remove with delete --pages
 pageweave orient -o scan-upright.pdf scan.pdf           # turn sideways/upside-down scans upright
 pageweave deskew -o scan-straight.pdf scan.pdf           # straighten skewed scanned pages (lossless)
+pageweave signature-mark --box 350,40,560,100 --text "Ada Lovelace" -o signed.pdf form.pdf   # picture of a signature
 pageweave sign --certificate me.pfx -o contract-signed.pdf contract.pdf   # password on stdin
 pageweave signatures contract.pdf                       # integrity of each signature (trust not checked yet)
 pageweave compare report-v1.pdf report-v2.pdf          # page, text, format and visual differences

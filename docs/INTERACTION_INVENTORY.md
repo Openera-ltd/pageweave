@@ -21,6 +21,7 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `file.compare` | Compare with… | — | Exercised by tests |
 | `file.print` | Print… | Ctrl+P | Exercised by tests |
 | `file.sign` | Sign with a certificate… | — | Exercised by tests |
+| `file.signatureMark` | Add signature or initials… | — | Exercised by tests |
 | `edit.copy` | Copy selected text | — | Exercised by tests |
 | `edit.undo` | Undo annotation or mark | Ctrl+Z | Exercised by tests |
 | `edit.redo` | Redo annotation or mark | Ctrl+Y, Ctrl+Shift+Z | Exercised by tests |
@@ -74,4 +75,4 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `app.commandPalette` | Command palette | Ctrl+K, Ctrl+Shift+P | Exercised by tests |
 | `app.openLogs` | Show log folder | — | Exercised by tests |
 
-Coverage: 67 of 67 commands exercised by unit or real-app E2E tests.
+Coverage: 68 of 68 commands exercised by unit or real-app E2E tests.

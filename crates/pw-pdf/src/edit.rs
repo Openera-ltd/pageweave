@@ -10,16 +10,16 @@ use pw_core::{ErrorCategory, PwError, PwResult};
 use std::path::{Path, PathBuf};
 
 /// Expected properties of an output, checked after it is written and re-parsed.
-struct Expect<'a> {
-    page_count: u32,
+pub(crate) struct Expect<'a> {
+    pub(crate) page_count: u32,
     /// Password of the source, used if the output kept the source's encryption.
-    password: Option<&'a str>,
+    pub(crate) password: Option<&'a str>,
     /// Expected intrinsic rotation per output page, when known.
-    rotations: Option<Vec<u32>>,
+    pub(crate) rotations: Option<Vec<u32>>,
 }
 
 /// Re-open and check the staged output. Returns whether the output is encrypted.
-fn verify_output(pdfium: &Pdfium, staged: &Path, expect: &Expect) -> PwResult<bool> {
+pub(crate) fn verify_output(pdfium: &Pdfium, staged: &Path, expect: &Expect) -> PwResult<bool> {
     let fail = |what: &str| {
         PwError::new(
             ErrorCategory::ValidationFailed,

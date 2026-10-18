@@ -1504,7 +1504,7 @@ await test("sign with a certificate: wrong password explained; visible signature
     await s.type("#sign-pw", "wrong-password");
     await s.type("#sign-reason", "Approved");
     await s.type("#sign-output", out);
-    await s.waitFor('[data-testid="sign-preview-box"]');
+    await s.waitFor('[data-testid="placement-box"]');
     await axeCheck(s, "sign-dialog");
     writeFileSync(join(ART, "sign-dialog.png"), await s.screenshot());
     await s.click('[data-testid="sign-start"]');
@@ -1518,6 +1518,55 @@ await test("sign with a certificate: wrong password explained; visible signature
   if (CLI) {
     const v = JSON.parse(execFileSync(CLI, ["--json", "signatures", out], { encoding: "utf8" })).result.data.signatures;
     assert(v.length === 1 && v[0].status === "valid" && v[0].covers_whole_file && v[0].page === 0 && v[0].reason === "Approved", `verified: ${JSON.stringify(v).slice(0, 300)}`);
+  }
+});
+
+await test("signature or initials: typed and drawn (pointer) placed as previewed; labelled as not a digital signature", async () => {
+  const typedOut = join(work, "typed-sig.pdf");
+  const drawnOut = join(work, "drawn-sig.pdf");
+  const open = async (s) => {
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Add signature or initials");
+    await s.click('[role="option"][data-command="file.signatureMark"]');
+    await s.waitFor("#mark-text");
+  };
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await open(s);
+    assert((await s.text('[role="dialog"] .hint')).includes("not a digital signature"), "honest label");
+    assert((await s.attr('[data-testid="mark-start"]', "title")) === "Type your name or initials.", "blocked with a reason");
+    await s.type("#mark-text", "Ada Lovelace");
+    // The preview is decorative (aria-hidden), which WebDriver reports as not displayed.
+    assert((await s.exec("return document.querySelector('.typed-preview').textContent")) === "Ada Lovelace", "preview");
+    await s.replaceText("#mark-output", typedOut);
+    await s.waitFor('[data-testid="placement-box"]');
+    await axeCheck(s, "signature-mark-dialog");
+    writeFileSync(join(ART, "signature-mark-typed.png"), await s.screenshot());
+    await s.click('[data-testid="mark-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved typed-sig.pdf")), "typed saved");
+    // Drawn: real pointer strokes on the pad.
+    await open(s);
+    await s.click("#mark-tab-drawn");
+    await s.waitFor('[data-testid="signature-pad"]');
+    assert((await s.attr('[data-testid="mark-start"]', "title")) === "Draw your signature first.", "draw first");
+    const r = await s.exec("const b = document.querySelector('[data-testid=signature-pad]').getBoundingClientRect(); return [b.left, b.top, b.width, b.height]");
+    const [x, y, w, h] = r;
+    await s.dragAt(x + w * 0.1, y + h * 0.6, x + w * 0.5, y + h * 0.3, 10);
+    await s.dragAt(x + w * 0.5, y + h * 0.3, x + w * 0.9, y + h * 0.7, 10);
+    assert((await s.attr('[data-testid="signature-pad"]', "aria-label")) === "Signature drawing, 2 strokes", "two strokes recorded");
+    await s.click('[data-testid="pad-clear"]');
+    assert((await s.attr('[data-testid="signature-pad"]', "aria-label")) === "Empty signature drawing area", "cleared");
+    await s.dragAt(x + w * 0.1, y + h * 0.5, x + w * 0.9, y + h * 0.5, 10);
+    await s.click('#mark-position option[value="top-left"]');
+    await s.replaceText("#mark-output", drawnOut);
+    writeFileSync(join(ART, "signature-mark-drawn.png"), await s.screenshot());
+    await s.click('[data-testid="mark-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved drawn-sig.pdf")), "drawn saved");
+  });
+  if (CLI) {
+    const t = JSON.parse(execFileSync(CLI, ["--json", "text", "--pages", "1", typedOut], { encoding: "utf8" })).result.data.pages[0].text;
+    assert(t.includes("Ada Lovelace"), "typed name is text in the copy");
+    assert(statSync(drawnOut).size > statSync(join(FIX, "five-pages.pdf")).size, "drawn copy written");
   }
 });
 

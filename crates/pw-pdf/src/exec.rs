@@ -339,6 +339,18 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             let blank: Vec<u32> = pages.iter().filter(|p| p.blank).map(|p| p.page).collect();
             (vec![], json!({ "pages": pages, "blank": blank }))
         }
+        Operation::AddSignatureMark { input, page, rect, mark, output } => {
+            let (c, pages, w) = crate::marks::add_signature_mark(input, &opts, *page, rect, mark, output, policy)?;
+            warnings.extend(w);
+            (
+                vec![out(&c, Some(pages))],
+                json!({ "page": page, "kind": match mark {
+                pw_core::ops::SignatureMark::Typed { .. } => "typed",
+                pw_core::ops::SignatureMark::Drawn { .. } => "drawn",
+                pw_core::ops::SignatureMark::Image { .. } => "image",
+            } }),
+            )
+        }
         Operation::Sign { input, certificate, reason, location, placement, output } => {
             if opts.password.is_some() {
                 return Err(pw_core::PwError::new(

@@ -208,6 +208,25 @@ enum Command {
         #[arg(long, default_value_t = 0.2)]
         max_ink: f32,
     },
+    /// Place a typed name or a picture of a signature in a box on a page (not a digital signature;
+    /// drawn strokes are available through `request`).
+    SignatureMark {
+        file: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Page, from 1.
+        #[arg(long, default_value_t = 1)]
+        page: u32,
+        /// Box X1,Y1,X2,Y2 in the page's unrotated PDF points.
+        #[arg(long = "box")]
+        rect: String,
+        /// Typed name or initials.
+        #[arg(long, conflicts_with = "image")]
+        text: Option<String>,
+        /// PNG or JPEG picture of the signature.
+        #[arg(long)]
+        image: Option<PathBuf>,
+    },
     /// Sign a copy with a certificate (.pfx/.p12). The certificate password is read from standard
     /// input (after the document password when --password-stdin is given).
     Sign {
@@ -479,6 +498,32 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
         }
         Command::BlankPages { file, max_ink } => {
             Operation::FindBlankPages { input: file.clone(), max_ink: max_ink / 100.0 }
+        }
+        Command::SignatureMark { file, output, page, rect, text, image } => {
+            let n: Vec<f32> = rect
+                .split(',')
+                .map(|x| x.trim().parse::<f32>())
+                .collect::<Result<_, _>>()
+                .map_err(|_| PwError::invalid("mark.box", "--box takes X1,Y1,X2,Y2 (numbers)."))?;
+            if n.len() != 4 || *page == 0 {
+                return Err(PwError::invalid("mark.box", "--box takes X1,Y1,X2,Y2 and --page starts at 1."));
+            }
+            let mark = match (text, image) {
+                (Some(t), None) => pw_core::ops::SignatureMark::Typed {
+                    text: t.clone(),
+                    style: Default::default(),
+                    color: "#1a2b5c".into(),
+                },
+                (None, Some(p)) => pw_core::ops::SignatureMark::Image { path: p.clone() },
+                _ => return Err(PwError::invalid("mark.kind", "Give --text or --image.")),
+            };
+            Operation::AddSignatureMark {
+                input: file.clone(),
+                page: page - 1,
+                rect: pw_core::ops::RectPt { left: n[0], bottom: n[1], right: n[2], top: n[3] },
+                mark,
+                output: output.clone(),
+            }
         }
         Command::Sign { file, output, certificate, reason, location, visible } => {
             let placement = match visible {

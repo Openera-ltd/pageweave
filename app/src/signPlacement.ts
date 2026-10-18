@@ -17,11 +17,15 @@ export type SignPosition = (typeof SIGN_POSITIONS)[number]["id"];
 export const SIGN_BOX = { w: 200, h: 60, margin: 36 };
 
 /** [x1, y1, x2, y2] in unrotated PDF space for a corner box on `page` as it is displayed. */
-export function signatureRect(page: Pick<PageInfo, "width_pt" | "height_pt" | "rotation" | "origin_x" | "origin_y">, position: SignPosition): [number, number, number, number] {
+export function signatureRect(
+  page: Pick<PageInfo, "width_pt" | "height_pt" | "rotation" | "origin_x" | "origin_y">,
+  position: SignPosition,
+  size: { w: number; h: number } = SIGN_BOX,
+): [number, number, number, number] {
   const d = displaySizePt(page);
   // Shrink for small pages so the box always fits inside the margins.
-  const w = Math.min(SIGN_BOX.w, d.w - 2 * Math.min(SIGN_BOX.margin, d.w / 10));
-  const h = Math.min(SIGN_BOX.h, d.h - 2 * Math.min(SIGN_BOX.margin, d.h / 10));
+  const w = Math.min(size.w, d.w - 2 * Math.min(SIGN_BOX.margin, d.w / 10));
+  const h = Math.min(size.h, d.h - 2 * Math.min(SIGN_BOX.margin, d.h / 10));
   const mx = Math.min(SIGN_BOX.margin, (d.w - w) / 2);
   const my = Math.min(SIGN_BOX.margin, (d.h - h) / 2);
   const left = position.endsWith("left") ? mx : d.w - mx - w;

@@ -20,6 +20,7 @@ export type CommandId =
   | "file.compare"
   | "file.print"
   | "file.sign"
+  | "file.signatureMark"
   | "edit.copy"
   | "edit.undo"
   | "edit.redo"
@@ -99,6 +100,7 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "file.compare", label: "Compare with…", category: "File", shortcuts: [] },
   { id: "file.print", label: "Print…", category: "File", shortcuts: ["Ctrl+P"] },
   { id: "file.sign", label: "Sign with a certificate…", category: "File", shortcuts: [] },
+  { id: "file.signatureMark", label: "Add signature or initials…", category: "File", shortcuts: [] },
   // Ctrl+C is handled natively by the text layer; this command backs the context-menu entry.
   { id: "edit.copy", label: "Copy selected text", category: "Edit", shortcuts: [] },
   { id: "edit.undo", label: "Undo annotation or mark", category: "Edit", shortcuts: ["Ctrl+Z"] },

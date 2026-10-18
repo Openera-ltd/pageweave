@@ -236,6 +236,17 @@ export type Operation =
   | { op: "deskew"; input: string; pages: string | null; output: string }
   | { op: "fix_orientation"; input: string; pages: string | null; output: string }
   | {
+      op: "add_signature_mark";
+      input: string;
+      page: number;
+      rect: { left: number; bottom: number; right: number; top: number };
+      mark:
+        | { kind: "typed"; text: string; style: "formal" | "plain" | "typewriter"; color: string }
+        | { kind: "drawn"; strokes: Array<Array<[number, number]>>; color: string; width: number }
+        | { kind: "image"; path: string };
+      output: string;
+    }
+  | {
       op: "sign";
       input: string;
       certificate: string;

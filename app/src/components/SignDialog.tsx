@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { Eye, EyeOff, FolderOpen } from "lucide-react";
 import { useApi } from "../api";
-import { displaySizePt, pdfRectToScreen } from "../geometry";
 import { siblingOutput } from "../paths";
 import { SIGN_POSITIONS, signatureRect, type SignPosition } from "../signPlacement";
 import { toPwError, type CollisionPolicy, type JobSnapshot, type OpenedDoc, type PwError } from "../types";
+import { PlacementPreview } from "./PlacementPreview";
 import { Dialog } from "./ui";
 
 interface Props {
@@ -14,8 +14,6 @@ interface Props {
   onClose: () => void;
   onFinished: (job: JobSnapshot) => void;
 }
-
-const PREVIEW_PX = 150;
 
 /** Sign a copy with a certificate file (.pfx/.p12): invisible, or in a box on a page. */
 export function SignDialog({ doc, currentPage, jobs, onClose, onFinished }: Props) {
@@ -95,22 +93,7 @@ export function SignDialog({ doc, currentPage, jobs, onClose, onFinished }: Prop
     }
   };
 
-  // Thumbnail with the box drawn where it will go.
-  const preview = (() => {
-    if (!visible || !pageInfo || !rect) return null;
-    const d = displaySizePt(pageInfo);
-    const zoom = PREVIEW_PX / Math.max(d.w, d.h) / (96 / 72);
-    const box = pdfRectToScreen({ left: rect[0], bottom: rect[1], right: rect[2], top: rect[3] }, pageInfo, zoom);
-    const w = d.w * zoom * (96 / 72);
-    const h = d.h * zoom * (96 / 72);
-    const scale = Math.max(50, Math.round((PREVIEW_PX / Math.max(pageInfo.width_pt, pageInfo.height_pt)) * 1000 * (window.devicePixelRatio || 1)));
-    return (
-      <div className="sign-preview" style={{ width: w, height: h }} aria-hidden="true">
-        <img src={api.pageUrl(doc.doc_id, page - 1, scale)} alt="" draggable={false} style={{ width: w, height: h }} />
-        <div className="sign-preview-box" data-testid="sign-preview-box" style={{ left: box.left, top: box.top, width: box.width, height: box.height }} />
-      </div>
-    );
-  })();
+  const preview = visible && pageInfo && rect ? <PlacementPreview docId={doc.doc_id} page={pageInfo} rect={rect} /> : null;
 
   const footer = (
     <>

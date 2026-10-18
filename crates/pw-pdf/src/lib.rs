@@ -20,6 +20,7 @@ mod exec;
 mod extract;
 mod forms;
 mod images;
+mod marks;
 mod ocr;
 mod optimize;
 pub mod orient;

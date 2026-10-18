@@ -1135,7 +1135,8 @@ textarea {
   border-left: 1px solid var(--border-strong);
 }
 
-.segmented button[aria-checked="true"] {
+.segmented button[aria-checked="true"],
+.segmented button[aria-selected="true"] {
   background: var(--accent);
   color: var(--accent-contrast);
 }
@@ -1801,4 +1802,27 @@ kbd,
   position: absolute;
   border: 1.5px solid var(--accent);
   background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+/* ---------- Visual signatures ---------- */
+.signature-pad {
+  display: block;
+  max-width: 100%;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-1);
+  background: #fff;
+  touch-action: none;
+  cursor: crosshair;
+}
+.typed-preview {
+  font-style: italic;
+  font-size: 28px;
+  color: #1a2b5c;
+  min-height: 44px;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  background: #fff;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
