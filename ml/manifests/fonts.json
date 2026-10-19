@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "note": "Fonts used to render the synthetic OCR corpus. Files are verified by SHA-256 before use. 'heldout' fonts never appear in train; they test generalisation to an unseen typeface. GPL-licensed fonts (FreeFont) are excluded: the font exception does not clearly cover training data. Vendored under ml/fonts/ with their license texts so the corpus renders identically everywhere (CI, Kaggle).",
+  "fonts": [
+    {
+      "id": "dejavu-sans",
+      "file": "DejaVuSans.ttf",
+      "sha256": "ae7b7855e115a5966d8b1b3f80f254ccc117ec86f9965e202ee2940453837280",
+      "license": "Bitstream-Vera",
+      "license_evidence": "fonts/fonts-dejavu-core/LICENSE-copyright.txt (from Debian package fonts-dejavu-core)",
+      "role": "train",
+      "path": "fonts/fonts-dejavu-core/DejaVuSans.ttf"
+    },
+    {
+      "id": "dejavu-serif",
+      "file": "DejaVuSerif.ttf",
+      "sha256": "8f2c103bfa3fd5de71f1b92b18f21906b5a26871fb7e19a9a4c9af539c3cc7ab",
+      "license": "Bitstream-Vera",
+      "license_evidence": "fonts/fonts-dejavu-core/LICENSE-copyright.txt (from Debian package fonts-dejavu-core)",
+      "role": "train",
+      "path": "fonts/fonts-dejavu-core/DejaVuSerif.ttf"
+    },
+    {
+      "id": "dejavu-mono",
+      "file": "DejaVuSansMono.ttf",
+      "sha256": "c805f9436dbc268644c1d9584f01a601a653e028e08fd74b9b949f6cf8304d88",
+      "license": "Bitstream-Vera",
+      "license_evidence": "fonts/fonts-dejavu-mono/LICENSE-copyright.txt (from Debian package fonts-dejavu-mono)",
+      "role": "train",
+      "path": "fonts/fonts-dejavu-mono/DejaVuSansMono.ttf"
+    },
+    {
+      "id": "carlito",
+      "file": "Carlito-Regular.ttf",
+      "sha256": "f6418f708baede9789daef5d458c0f53d2a888af9820e8062934e504fedc6595",
+      "license": "OFL-1.1",
+      "license_evidence": "fonts/fonts-crosextra-carlito/LICENSE-copyright.txt (from Debian package fonts-crosextra-carlito)",
+      "role": "train",
+      "path": "fonts/fonts-crosextra-carlito/Carlito-Regular.ttf"
+    },
+    {
+      "id": "carlito-bold",
+      "file": "Carlito-Bold.ttf",
+      "sha256": "bb5d20f79b82599ec72983597437373a80f2d2085fa91fc144fd74e876a594db",
+      "license": "OFL-1.1",
+      "license_evidence": "fonts/fonts-crosextra-carlito/LICENSE-copyright.txt (from Debian package fonts-crosextra-carlito)",
+      "role": "train",
+      "path": "fonts/fonts-crosextra-carlito/Carlito-Bold.ttf"
+    },
+    {
+      "id": "inter",
+      "file": "Inter-Regular.otf",
+      "sha256": "be6d709dcb730ddaf050cbdae6fe89bd56d5d14dc66885639bbf6f06bd03521b",
+      "license": "OFL-1.1",
+      "license_evidence": "fonts/fonts-inter/LICENSE-copyright.txt (from Debian package fonts-inter)",
+      "role": "train",
+      "path": "fonts/fonts-inter/Inter-Regular.otf"
+    },
+    {
+      "id": "caladea",
+      "file": "Caladea-Regular.ttf",
+      "sha256": "f1e899278b7b4491aba5b6a8253c4b04c050cc59b21865be5c37559a775153cd",
+      "license": "OFL-1.1",
+      "license_evidence": "fonts/fonts-crosextra-caladea/LICENSE-copyright.txt (from Debian package fonts-crosextra-caladea)",
+      "role": "heldout",
+      "path": "fonts/fonts-crosextra-caladea/Caladea-Regular.ttf"
+    },
+    {
+      "id": "caladea-italic",
+      "file": "Caladea-Italic.ttf",
+      "sha256": "4359a8e24f748b6447b1ff6d7a174febe70961d29f8bb8634b56dacd740a3deb",
+      "license": "OFL-1.1",
+      "license_evidence": "fonts/fonts-crosextra-caladea/LICENSE-copyright.txt (from Debian package fonts-crosextra-caladea)",
+      "role": "heldout",
+      "path": "fonts/fonts-crosextra-caladea/Caladea-Italic.ttf"
+    }
+  ]
+}

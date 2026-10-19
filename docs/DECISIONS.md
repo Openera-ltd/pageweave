@@ -21,3 +21,100 @@ Record approved product/architecture decisions here. Do not mark proposals as ap
 - **Context:** PageWeave already has broad viewing, editing, conversion, OCR, translation, and specialist document workflows. A full general-purpose office editor is a major scope expansion.
 - **Question:** Should PageWeave build full from-scratch document/spreadsheet authoring, or focus on existing-file editing/conversion and use mature engines/integration for broader authoring?
 - **Constraint:** Do not silently choose a scope that materially increases architecture, implementation, testing, and maintenance cost.
+
+## Foundation decisions — 2026-10-16
+
+These were made by Claude Code under the owner's standing instruction to "start building ... don't stop" (2026-10-16). They are reversible foundation choices, recorded as **Accepted (provisional)** — the owner may override any of them; nothing here is presented as owner-approved scope.
+
+### D-001 — Desktop shell: Tauri 2 with a TypeScript UI
+- **Status:** Accepted (provisional)
+- **Date:** 2026-10-16
+- **Context:** CLAUDE.md §4 and PRD 04 name Rust (orchestration) and C++ (native engines) as core, TypeScript allowed for UI when the shell stays responsive and packages cleanly on Windows.
+- **Options considered:** Tauri 2 (Rust host, WebView2 on Windows, MIT/Apache-2.0); Qt 6 (C++, LGPL/commercial, heavier Rust interop); WinUI 3 / WPF (C#, adds a language without a core-engine benefit); egui/Slint (immature accessibility / licensing trade-offs).
+- **Decision:** Tauri 2 host in Rust calling the shared engine crates directly; UI in TypeScript (React + Vite). Heavy work stays in Rust worker threads, never the WebView thread.
+- **Evidence:** License compatibility with MIT; Rust host means the UI, CLI, API and MCP share one engine (PRD 04). Windows packaging (MSI/NSIS) and WebView2 runtime must still be verified on a clean Windows machine — not yet done.
+- **Consequences/trade-offs:** Depends on the WebView2 runtime (present on supported Windows 10/11 builds; installer must bootstrap it if missing). Accessibility relies on WebView2/UIA mapping of ARIA — must be tested with a screen reader.
+- **Follow-up/tests/docs:** Windows CI packaging job; screen-reader review; startup/memory baseline.
+
+### D-002 — PDF engine: PDFium (chromium/7881) via `pdfium-render` 0.9.4
+- **Status:** Accepted (provisional)
+- **Date:** 2026-10-16
+- **Options considered:** PDFium (BSD-3/Apache-2.0); MuPDF (AGPL-3.0 or commercial — rejected: incompatible with distributing an MIT app without relicensing); poppler (GPL — rejected for the same reason); pure-Rust `lopdf` (MIT — good for structure, no renderer).
+- **Decision:** Use prebuilt PDFium from `bblanchon/pdfium-binaries` tag `chromium/7881` (V8 and XFA **disabled** — no PDF JavaScript execution), dynamically loaded through `pdfium-render` 0.9.4 with feature `pdfium_7881`. Binaries are downloaded by `tools/fetch_pdfium.py` and verified against pinned SHA-256 values in `resources/pdfium.lock.json`; never committed to Git. `lopdf` is used only in tests as an *independent* parser to validate outputs.
+- **Evidence:** Linux and Windows x64 archives downloaded and hashed on 2026-10-16; bundled `licenses/` directory lists PDFium and its third-party components (FreeType, ICU, libjpeg-turbo, libpng, libtiff, OpenJPEG, lcms, zlib, abseil, AGG, fast_float, simdutf, llvm-libc).
+- **Consequences:** XFA forms unsupported (must be detected and reported, PRD 05). Third-party notices must ship with the app (`THIRD_PARTY_NOTICES.md`).
+
+### D-003 — Repository layout
+- **Status:** Accepted (provisional)
+- **Date:** 2026-10-16
+- **Decision:** Cargo workspace: `crates/pw-core` (typed operations, errors, page ranges, safe output, jobs, logging, settings), `crates/pw-pdf` (PDFium adapter), `crates/pw-cli` (`pageweave` CLI), `app/` (Tauri app + UI). C++ is consumed only through PDFium's C ABI until a measured need justifies first-party C++.
+
+### D-004 — Test fixtures are synthetic and generated independently of the engine
+- **Status:** Accepted (provisional)
+- **Date:** 2026-10-16
+- **Decision:** `tools/fixtures/gen_fixtures.py` writes PDFs directly from PDF syntax (no PDFium, no third-party content), so fixtures are rights-clean (PRD 15) and tests are not circular. No downloaded PDFs are committed.
+
+### D-005 — Credentials
+- **Status:** Accepted
+- **Date:** 2026-10-16
+- **Decision:** Kaggle/GitHub/Cloudflare credentials are injected at runtime only (environment secrets or per-command), never written to the repository, configs, logs or the journal (PRD 16). `.gitignore` excludes credential/env files; CI runs a secret scan.
+
+### D-006 — One audited FFI module for PDFium form filling
+- **Status:** Accepted
+- **Date:** 2026-10-17
+- **Context:** Filling AcroForms correctly needs PDFium's form filler (focus/replace selection, clicks, list selection) so widget appearance streams are regenerated; writing `/V` alone leaves stale appearances that most viewers keep showing. pdfium-render 0.9.4 (latest) keeps its raw bindings and form handle crate-private, and also hard-codes `/Yes` as every checkbox's on-state.
+- **Options considered:** vendor-patch pdfium-render (24 MB copy to change one visibility; rejected); write `/V` and our own appearance streams (re-implements text layout/fonts — rejected, CLAUDE.md §4.5); `NeedAppearances` (ignored by many viewers, deprecated in PDF 2.0 — rejected); resolve the needed functions from the already-loaded PDFium library (accepted).
+- **Decision:** `unsafe_code` is `deny` workspace-wide (was `forbid`); only `crates/pw-pdf/src/forms.rs` opts in, enforced by the test `unsafe_is_confined_to_the_forms_module`. Every direct call runs under an exclusive engine lock that all other engine access shares (`pw_pdf::engine`), so direct calls never overlap pdfium-render's. Signatures follow the pinned chromium/7881 headers; documents are loaded from memory and torn down in PDFium's required order by a drop guard.
+- **Consequences:** Upgrading PDFium requires re-checking these signatures. Form work briefly blocks other engine use (milliseconds for typical forms).
+- **Amendment (2026-10-17):** the shared/exclusive scheme was replaced by one reentrant lock held for each whole engine operation. Per-call serialization (pdfium-render `thread_safe`) let multi-call sequences interleave across threads; PDFium's process-global last error made a corrupt file report "password protected" under concurrency (reproduced: 4 of 20 test runs; regression test fails 7/10 without the lock). Trade-off: a long operation (e.g. combining hundreds of files) now delays page rendering until it finishes; to be measured and, if needed, split into lock-releasing steps.
+
+### D-007 — Honour `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` on Windows
+- **Status:** Accepted
+- **Date:** 2026-10-17
+- **Context:** Edge WebDriver attaches to WebView2 apps by setting the standard `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` variable (remote-debugging port). wry always passes its own `AdditionalBrowserArguments`, and on the WebView2 runtime in use (154.0.4258.62) those take precedence, so the variable never reached the browser process (verified on the CI runner by the browser process command line). Windows UI automation was therefore impossible.
+- **Decision:** The main window is created in `setup` from its config (`create: false`). When the variable is set, its value is appended to wry's default flags; when unset nothing changes. This restores documented platform behaviour for every WebView2 app rather than adding a PageWeave-specific switch, so the shipping binary is what gets tested.
+- **Security note:** whoever can set environment variables for the user's processes can already run code as that user; no new privilege is exposed. The value is never logged.
+
+### D-008 — Permanent redaction: PDFium edits, independent cleaning and verification
+- **Status:** Accepted
+- **Date:** 2026-10-17
+- **Context:** PRD 05/11 require real removal ("black rectangles are not redaction"), distinct marked → previewed → applied → verified states, and verification by independent inspection. PDFium (D-002) can remove and add page objects but keeps unreferenced objects, resource entries, thumbnails and annotation back-references when saving, any of which can still hold removed content. MuPDF's redaction is AGPL (incompatible with the project licence); qpdf would add a C++ toolchain dependency.
+- **Decision:** Content is removed with PDFium (per character, image pixel, object and annotation; a page that cannot be handled precisely becomes an image of the page). The output is a new document holding only the pages, rewritten by `lopdf` (MIT, already a test dependency; now shipped with default features off) to drop unused XObjects, thumbnails, page metadata/actions, form field data, dangling annotation references and links to pages that no longer exist. Success requires: PDFium re-reading the file and finding no character, annotation or unpainted image pixel under any area, an unchanged rendering outside the areas, and `lopdf` finding one revision, no stray page objects and none of the removed image data. Any failure means nothing is written.
+- **Consequences:** ~30 additional permissively licensed crates in the shipped binaries (lopdf's mandatory parsing/crypto dependencies; cargo-deny clean). Bookmarks, document properties, attachments and fillable fields are not carried over to redacted copies (disclosed every time). Partly covered vector graphics are kept (as MuPDF does by default); they are covered by the black box but remain in the file.
+
+### D-009 — OCR engine: PP-OCRv6 small on ONNX Runtime
+- **Status:** Accepted (benchmark on synthetic data; to be re-confirmed on a real-world rights-cleared set)
+- **Date:** 2026-10-17
+- **Context:** OCR is a required specialist capability (AI_AND_RESOURCES). PRD 14 requires benchmarking proven models before any fine-tuning.
+- **Options measured** (`docs/benchmarks/OCR_BASELINE.md`): Tesseract 5.3.4 (Apache-2.0) — 3.75% CER, 1.3 s/page; PP-OCRv6 small detection + recognition (Apache-2.0 code and weights, Baidu/PaddleOCR; ONNX conversions distributed by RapidOCR with a model license record) — 0.41% CER, 3.1 s/page, on a 72-page blind synthetic set across 9 scan conditions.
+- **Decision:** Integrate PP-OCRv6 small via ONNX Runtime (MIT) loaded at runtime from a pinned, checksum-verified official build (as PDFium is, D-002), with detection/recognition pre- and post-processing implemented in Rust. Model files are installed resources (verified by SHA-256), not compiled in. The recogniser's character dictionary comes from the model's own metadata.
+- **Consequences:** Model size ~31 MB (det 9.9 MB + rec 21.2 MB); higher memory than Tesseract (to be measured in Rust). The `ort` crate (MIT/Apache-2.0) is at 2.0 release candidate — pin exactly; fallback is a small audited FFI over the ONNX Runtime C API. Fine-tuning is deferred until a real-world evaluation shows a gap the cheap fixes cannot close; official training weights are not published for PP-OCRv6 small (only for PP-OCRv5 mobile), see `docs/benchmarks/OCR_BASELINE.md`.
+
+### D-010 — Changing a file's protection honours its owner's restrictions
+- **Status:** Accepted (scope limited; see open question)
+- **Date:** 2026-10-17
+- **Context:** A PDF can have an open password and, separately, owner restrictions (no printing, no editing…) lifted only by its permissions password. Removing the password, or re-protecting with new permissions, from a file opened with only the open password would silently lift those restrictions. PRD 15/data rules: do not bypass access controls.
+- **Decision:** "Remove password" and re-protecting a protected file are refused (`pdf.owner_restricted`, category permission) unless PDFium reports full rights — i.e. the file has no restrictions, or it was opened with the permissions password. Decryption uses PDFium's own save with `FPDF_REMOVE_SECURITY`, which keeps bookmarks, properties and forms.
+- **Consequences:** A user with only the open password of a restricted file cannot remove its protection; the error says what is needed.
+- **Open question (needs a product decision):** page operations (extract, delete, split, combine, organize, redact, OCR) on a restricted file still produce unprotected outputs (existing behaviour, disclosed by a warning). Whether they should also require full rights, or check the specific permission (e.g. assemble for page operations), is not yet decided.
+
+### D-011 — Signature verification with RustCrypto parsers and local RSA verification
+- **Status:** Accepted
+- **Date:** 2026-10-17
+- **Context:** Checking PDF signatures needs CMS/X.509 parsing and RSA/ECDSA verification. The `rsa` crate (0.9, the current release line) carries RUSTSEC-2023-0071 (Marvin timing attack on private-key operations). The project rule is that vulnerabilities are never ignored in deny.toml, even when the vulnerable path is unused.
+- **Decision:** Parse with `cms`/`x509-cert`/`der` and verify ECDSA with `p256`/`p384` (RustCrypto, pure Rust, MIT/Apache-2.0). RSA PKCS#1 v1.5 verification is implemented in `crates/pw-pdf/src/signatures.rs` with a public-key modular exponentiation (`num-bigint`) and an exact comparison of the encoded message against the expected DigestInfo — public operations only, so no secret-dependent timing exists. Trust is never claimed: certificate chains, revocation and timestamps are not checked yet and every report says so.
+- **Consequences:** RSA-PSS and BER-encoded or non-canonically ordered signed attributes are reported as unsupported/unreadable, not as valid. Revisit when `rsa` 0.10 (no advisory) is released, or when a trust list is added.
+
+### D-012 — Signing with a certificate: PKCS#12 via p12-keystore, signing via ring, incremental update
+- **Status:** Accepted
+- **Date:** 2026-10-18
+- **Context:** PRD 05 requires certificate-based signing that protects private keys, uses supported algorithms, saves incrementally and revalidates after writing. The `rsa` crate is excluded (RUSTSEC-2023-0071 affects exactly the private-key operations signing needs, D-011).
+- **Decision:** Read PKCS#12 identities with `p12-keystore` 0.4 (MIT/Apache-2.0; PBES2/AES and legacy 3DES/RC2). Sign with `ring` 0.17 (constant-time RSA PKCS#1 v1.5 SHA-256 and ECDSA P-256/P-384). Build a detached CMS (adbe.pkcs7.detached) with `cms`/`der`. Append the signature as an incremental update with lopdf's `IncrementalDocument` (matching the file's cross-reference style), then fill the byte range and contents in place. Before writing, PageWeave's verifier must report the new signature valid and covering the whole file, every previously valid signature still valid, and the original bytes unchanged as a prefix. Tests also verify with `openssl cms -verify` against the test CA. Password-protected files are refused (remove the password first). The certificate password travels outside the serialized request and is never journaled or logged.
+- **Consequences:** No timestamp (RFC 3161), no long-term validation data, no CAdES signingCertificateV2, no Windows certificate store or hardware tokens yet; the visible box uses Helvetica (Latin-1). p12-keystore brings a second RustCrypto `der` generation (0.8) alongside 0.7 (allowed: duplicate versions only warn). Test identities in `fixtures/keys` are test-only, with a published password. Secret scanning flags PKCS#12 files by type, so `.gitleaks.toml` allows exactly `fixtures/keys/test-signer-*.p12` and references to those file names; every other default rule stays in force. `.gitignore` keeps ignoring `*.p12`/`*.pfx` everywhere except those same test identities. (They were ignored at first, so the signing tests failed in CI until this exception was added.)
+
+### D-013 — Signer trust from certificates the user chooses, not the system root store
+- **Status:** Accepted
+- **Date:** 2026-10-18
+- **Context:** PRD 05 requires honest trust states (trusted, unknown signer, expired, …). Document-signing trust is not web trust: PDF readers do not trust the operating system's TLS roots for signatures by default, and no rights-cleared document-signing trust list (such as AATL/EUTL) is bundled.
+- **Decision:** A signature is "trusted" only when its signer's certificate chains — through certificates carried in the signature, every link's signature verified, issuers required to be CAs, every certificate valid today — to a certificate the user explicitly trusts. The app keeps these as DER files in its config folder (`trusted-certificates/`, named by SHA-256 fingerprint); the user adds one from a signature after seeing its fingerprint, choosing "only this signer" or "everything issued by this CA", and removes them in Trusted certificates…. The CLI takes `--trust FILE`. Revocation (CRL/OCSP) and timestamps are never checked and every report says so.
+- **Consequences:** Signatures from public CAs show "signer unknown" until the user trusts something; validity is judged at today's date (no timestamp support), so a signature made while a certificate was valid shows "certificate expired" later; no policy/EKU checks beyond CA constraints; no Windows certificate store integration yet.

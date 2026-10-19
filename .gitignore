@@ -1,0 +1,54 @@
+# Build outputs
+/target/
+**/node_modules/
+/app/dist/
+/app/src-tauri/target/
+/app/src-tauri/gen/
+
+# Downloaded native runtimes (fetched and checksum-verified by tools/fetch_pdfium.py)
+/third_party/pdfium/*/
+/third_party/ocr/
+
+# Secrets and credentials (PRD 16) — never commit
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+# …except the test-only signing identities (throwaway test CA, published password; D-012).
+!fixtures/keys/test-signer-*.p12
+kaggle.json
+access_token
+**/secrets/
+*.credentials*
+
+# User documents, private datasets, voice profiles, logs, checkpoints (PRD 15/16)
+/data/private/
+/datasets/
+/voice_profiles/
+/checkpoints/
+*.ckpt
+*.safetensors
+*.onnx
+/logs/
+*.log
+
+# Test/run artifacts
+/test-output/
+/artifacts/
+/e2e-artifacts*/
+
+# Editors/OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# ML workspace (PRD 14/15): venv, generated corpora, run outputs
+/ml/.venv/
+/ml/out/

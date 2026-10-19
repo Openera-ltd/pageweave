@@ -1,0 +1,48 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /OpenAction 6 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Length 145 >>
+stream
+BT
+/F1 12 Tf
+18 TL
+72 720 Td
+(PageWeave fixture page 1) Tj
+T* (Marker token PWMARK001) Tj
+T* (The quick brown fox jumps over the lazy dog.) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /S /JavaScript /JS (app.alert\('should never run'\);) >>
+endobj
+7 0 obj
+<< /Title (Has JavaScript) /Author (PageWeave fixtures) /Producer (gen_fixtures.py) >>
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000015 00000 n 
+0000000082 00000 n 
+0000000139 00000 n 
+0000000236 00000 n 
+0000000432 00000 n 
+0000000558 00000 n 
+0000000633 00000 n 
+trailer
+<< /Size 8 /Root 1 0 R /Info 7 0 R /ID [<70616765776561766566697874757265> <70616765776561766566697874757265>] >>
+startxref
+735
+%%EOF

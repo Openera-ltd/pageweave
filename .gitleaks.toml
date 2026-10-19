@@ -1,0 +1,10 @@
+# Secret scanning: gitleaks' default rules, plus two narrow exceptions (decision D-012).
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test-only signing identities (published password, issued by a throwaway test CA; they protect nothing)"
+# The PKCS#12 test identities made by tools/fixtures/gen_test_identity.py.
+paths = ['''^fixtures/keys/test-signer-[a-z0-9-]+\.p12$''']
+# References to those files by name (not secrets).
+regexes = ['''test-signer-[a-z0-9-]+\.p12''']

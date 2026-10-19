@@ -1,0 +1,42 @@
+[package]
+name = "pageweave-app"
+description = "PageWeave desktop application"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+name = "pageweave_app"
+crate-type = ["rlib"]
+
+[[bin]]
+name = "pageweave-app"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "=2.7.3", features = [] }
+
+[dependencies]
+pw-core.workspace = true
+pw-pdf.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+tauri = { version = "=2.12.4", features = [] }
+tauri-plugin-dialog = "=2.8.3"
+tauri-plugin-opener = "=2.7.2"
+# Windows paths without the `\\?\` prefix where equivalent (already in the dependency tree).
+dunce = "=1.0.5"
+base64 = "=0.22.1"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Enabled by `tauri build`: serve the bundled frontend instead of the dev server.
+custom-protocol = ["tauri/custom-protocol"]

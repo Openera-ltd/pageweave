@@ -1,0 +1,42 @@
+[package]
+name = "pw-pdf"
+description = "PageWeave PDF engine adapter over PDFium"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+pw-core.workspace = true
+pw-ocr.workspace = true
+pdfium-render.workspace = true
+image.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+libloading.workspace = true
+parking_lot.workspace = true
+# Cleaning pass and whole-file checks of redacted output (independent of PDFium).
+lopdf.workspace = true
+getrandom.workspace = true
+flate2.workspace = true
+similar.workspace = true
+cms.workspace = true
+x509-cert.workspace = true
+der.workspace = true
+num-bigint.workspace = true
+p256.workspace = true
+p384.workspace = true
+sha1.workspace = true
+time.workspace = true
+p12-keystore.workspace = true
+ring.workspace = true
+
+[dev-dependencies]
+image.workspace = true
+lopdf.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

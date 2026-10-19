@@ -1,0 +1,2222 @@
+// Real-application end-to-end tests (QUALITY_GATES Gate 3). Drives the built PageWeave binary through
+// tauri-driver with real mouse/keyboard input, the real engine and real files.
+//
+// Usage: node e2e/run.mjs <app-binary> <artifact-dir>   (run via e2e/run.sh, which starts the display + driver)
+
+import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Session } from "./webdriver.mjs";
+
+const APP = resolve(process.argv[2] ?? "../target/debug/pageweave-app");
+const ART = resolve(process.argv[3] ?? "e2e-artifacts");
+const DRIVER = process.env.WEBDRIVER_URL ?? "http://127.0.0.1:4444";
+const FIX = resolve(fileURLToPath(new URL("../../fixtures/pdf", import.meta.url)));
+const CLI = process.env.PAGEWEAVE_CLI; // optional: independent page count check via the CLI
+mkdirSync(ART, { recursive: true });
+
+const results = [];
+const work = mkdtempSync(join(tmpdir(), "pw-e2e-"));
+
+function assert(cond, msg) {
+  if (!cond) throw new Error(`assertion failed: ${msg}`);
+}
+
+let currentTest = "";
+
+/** On failure, keep a screenshot and a DOM summary so the cause can be inspected. */
+async function captureFailure(s) {
+  const slug = currentTest.replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+  try {
+    writeFileSync(join(ART, `FAIL-${slug}.png`), await s.screenshot());
+    const dom = await s.exec(`return JSON.stringify({
+      dialogs: [...document.querySelectorAll('[role=dialog]')].map(d => d.innerText),
+      notices: [...document.querySelectorAll('.notice')].map(n => n.innerText),
+      menu: document.querySelector('[role=menu]')?.innerText ?? null,
+      status: document.querySelector('.statusbar')?.innerText,
+      search: document.querySelector('.searchbar')?.innerText ?? null,
+      focus: document.activeElement?.outerHTML.slice(0, 160)
+    }, null, 1)`);
+    writeFileSync(join(ART, `FAIL-${slug}.json`), dom);
+  } catch {
+    /* best effort */
+  }
+  try {
+    // The host log since this launch started (paths are redacted, no document content).
+    const dir = await s.execAsync("const done = arguments[arguments.length - 1]; window.__TAURI_INTERNALS__.invoke('log_dir').then(done, (e) => done('ERR ' + e))");
+    const log = join(String(dir), "pageweave.jsonl");
+    if (!String(dir).startsWith("ERR") && existsSync(log)) {
+      const lines = readFileSync(log, "utf8").trim().split("\n");
+      const start = lines.map((l) => l.includes('"event":"startup"')).lastIndexOf(true);
+      writeFileSync(join(ART, `FAIL-${slug}.log.jsonl`), lines.slice(Math.max(0, start)).slice(-200).join("\n") + "\n");
+    }
+  } catch {
+    /* best effort */
+  }
+}
+
+const phase = { create: 0, teardown: 0 };
+/** App launches that failed before a session existed and were retried (reported in the summary). */
+const launchRetries = [];
+/** Consecutive scenarios whose app could not be launched at all; the suite stops after 3. */
+let launchFailuresInARow = 0;
+class LaunchFailed extends Error {}
+
+/**
+ * App arguments as the driver must pass them. Edge WebDriver turns every argument into a --switch
+ * and keeps one value per switch name, so on Windows files go as --open-1=<path>, --open-2=<path>, …
+ */
+function appArgs(args) {
+  return process.platform === "win32" ? args.map((a, i) => `--open-${i + 1}=${a}`) : args;
+}
+
+/**
+ * Start the app and wait until the WebView holds the app's own document. Seen on Windows CI (twice in
+ * ~60 launches on slow runners): the driver attaches to a blank document (empty <body>, no Tauri
+ * bridge) that never navigates to the app. That is a launch failure, not a scenario failure.
+ */
+async function launch(args) {
+  const s = await Session.create(DRIVER, APP, appArgs(args));
+  const deadline = Date.now() + 20000;
+  let state = "";
+  while (Date.now() < deadline) {
+    state = await s
+      .exec("return JSON.stringify({ href: location.href, ready: document.readyState, root: !!document.getElementById('root'), bridge: !!window.__TAURI_INTERNALS__ })")
+      .catch((e) => `ERR ${String(e?.message ?? e).slice(0, 120)}`);
+    if (state.includes('"root":true') && state.includes('"bridge":true')) return s;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  await s.delete().catch(() => undefined);
+  throw new Error(`the app document never loaded: ${state}`);
+}
+
+async function withApp(args, fn) {
+  const t0 = Date.now();
+  let s;
+  try {
+    s = await launch(args);
+  } catch (e) {
+    // Seen on CI: GTK occasionally fails to connect to the virtual display at process start, and the
+    // driver then waits out its timeout; on Windows the WebView can stay on a blank document. Retry
+    // the launch once and record it in the summary; a second failure is real.
+    launchRetries.push({ test: currentTest, error: String(e?.message ?? e).slice(0, 300) });
+    console.log(`  note: app launch failed (${String(e?.message ?? e).slice(0, 160)}); retrying the launch once`);
+    try {
+      s = await launch(args);
+    } catch (e2) {
+      launchFailuresInARow++;
+      throw new LaunchFailed(`the app could not be started under WebDriver twice: ${String(e2?.message ?? e2).slice(0, 200)}`);
+    }
+  }
+  launchFailuresInARow = 0;
+  phase.create += Date.now() - t0;
+  try {
+    await s.waitFor(args.length ? '.tab-label' : ".home", { timeout: 20000 });
+    return await fn(s);
+  } catch (e) {
+    await captureFailure(s);
+    throw e;
+  } finally {
+    const t1 = Date.now();
+    await s.delete();
+    phase.teardown += Date.now() - t1;
+  }
+}
+
+// E2E_ONLY=<substring> runs only matching scenarios (local iteration; CI always runs everything).
+const ONLY = process.env.E2E_ONLY;
+
+/** Thrown by a scenario that cannot run on this platform; reported as SKIP, never as PASS. */
+class Skip extends Error {}
+
+async function test(name, fn) {
+  if (ONLY && !name.includes(ONLY)) return;
+  if (launchFailuresInARow >= 3) {
+    // Every launch is failing: report the remaining scenarios as not run instead of timing out each.
+    results.push({ name, status: "FAIL", error: "not run: the app could not be launched for the previous 3 scenarios" });
+    console.log(`FAIL ${name}: not run (app launches are failing)`);
+    return;
+  }
+  currentTest = name;
+  phase.create = 0;
+  phase.teardown = 0;
+  const t0 = Date.now();
+  try {
+    await fn();
+    results.push({ name, status: "PASS", ms: Date.now() - t0, create_ms: phase.create, teardown_ms: phase.teardown });
+    console.log(`PASS ${name} (${Date.now() - t0} ms; app start ${phase.create} ms, close ${phase.teardown} ms)`);
+  } catch (e) {
+    if (e instanceof Skip) {
+      results.push({ name, status: "SKIP", reason: e.message });
+      console.log(`SKIP ${name}: ${e.message}`);
+      return;
+    }
+    results.push({ name, status: "FAIL", ms: Date.now() - t0, error: String(e?.message ?? e) });
+    console.log(`FAIL ${name}: ${e?.stack ?? e}`);
+  }
+}
+
+const pageLoaded = (s, n = 0) =>
+  s.waitUntil(() => s.exec(`const i=document.querySelector('[data-page="${n}"] img'); return !!(i && i.complete && i.naturalWidth>0)`), `page ${n + 1} rendered`);
+const statusText = (s) => s.exec("return document.querySelector('.statusbar').innerText");
+const currentPage = (s) => s.exec("return document.querySelector('.statusbar .page-input').value");
+const rootAttr = (s, a) => s.exec(`return document.documentElement.dataset.${a}`);
+const noticeTexts = (s) => s.exec("return [...document.querySelectorAll('.notice')].map(n => n.innerText)");
+
+function pdfPages(path) {
+  if (!CLI) return null;
+  const out = execFileSync(CLI, ["--json", "inspect", path], { encoding: "utf8" });
+  return JSON.parse(out).result.data.page_count;
+}
+
+/* ------------------------------------------------------------------ */
+
+await test("open from command line renders first page and thumbnails", async () => {
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    assert((await s.exec("return document.querySelector('.tab-label .name').textContent")) === "five-pages.pdf", "tab name");
+    assert((await statusText(s)).includes("of 5"), "status shows page count");
+    const thumbs = await s.exec("return document.querySelectorAll('.thumb').length");
+    assert(thumbs === 5, `5 thumbnails, got ${thumbs}`);
+    const overflow = await s.exec("const v=document.querySelector('.viewer'); return v.scrollWidth - v.clientWidth");
+    assert(overflow <= 1, `initial zoom fits width (overflow ${overflow}px)`);
+    writeFileSync(join(ART, "viewer-light.png"), await s.screenshot());
+  });
+});
+
+await test("thumbnail click and Ctrl+End / Ctrl+Home navigate pages", async () => {
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-thumb="3"]');
+    await s.waitUntil(async () => (await currentPage(s)) === "4", "page 4 after thumbnail click");
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "End"]);
+    await s.waitUntil(async () => (await currentPage(s)) === "5", "last page");
+    await s.keys(["Control", "Home"]);
+    await s.waitUntil(async () => (await currentPage(s)) === "1", "first page");
+  });
+});
+
+await test("go to page via status bar input", async () => {
+  await withApp([join(FIX, "twenty-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "g"]);
+    await s.type(".statusbar .page-input", "17");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => (await currentPage(s)) === "17", "page 17");
+    await pageLoaded(s, 16);
+  });
+});
+
+await test("zoom buttons, preset select and Ctrl+0", async () => {
+  await withApp([join(FIX, "single-page.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    const zoom = () => s.exec("return document.querySelector('select[aria-label=\"Zoom level\"]').value");
+    await s.keys(["Control", "0"]);
+    await s.waitUntil(async () => (await zoom()) === "100", "100% after Ctrl+0");
+    await s.click('[data-command="view.zoomIn"]');
+    await s.waitUntil(async () => (await zoom()) === "125", "125% after zoom in");
+    await s.click('[data-command="view.zoomOut"]');
+    await s.click('[data-command="view.zoomOut"]');
+    await s.waitUntil(async () => (await zoom()) === "75", "75% after zoom out twice");
+    const w = await s.exec("return document.querySelector('[data-page=\"0\"]').getBoundingClientRect().width");
+    assert(Math.abs(w - 612 * 0.75 * (96 / 72)) < 2, `page width at 75% (${w})`);
+  });
+});
+
+await test("find: Ctrl+F, Enter, F3 cycle and highlight; Escape closes", async () => {
+  await withApp([join(FIX, "search-terms.pdf")], async (s) => {
+    const countText = () => s.exec("return document.querySelector('.searchbar .count')?.textContent ?? ''");
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "f"]);
+    await s.waitFor('input[aria-label="Find in document"]');
+    await s.type('input[aria-label="Find in document"]', "alpha");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => (await countText()) === "1 of 5", "1 of 5");
+    const hl = await s.exec("return document.querySelectorAll('.hit').length");
+    assert(hl >= 5, `highlights drawn (${hl})`);
+    await s.keys(["F3"]);
+    await s.waitUntil(async () => (await countText()) === "2 of 5", "2 of 5");
+    await s.keys(["Shift", "F3"]);
+    await s.waitUntil(async () => (await countText()) === "1 of 5", "back to 1 of 5");
+    // Toggling an option re-runs the search without pressing Enter again.
+    await s.click('button[aria-label="Whole words only"]');
+    await s.waitUntil(async () => (await countText()) === "1 of 4", "whole word re-search 1 of 4");
+    await s.click('button[aria-label="Match case"]');
+    await s.waitUntil(async () => (await countText()) === "1 of 2", "case + whole word 1 of 2");
+    writeFileSync(join(ART, "search.png"), await s.screenshot());
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => (await s.exec("return !document.querySelector('.searchbar')")), "search closed");
+    assert((await s.exec("return document.querySelectorAll('.hit').length")) === 0, "highlights cleared");
+  });
+});
+
+await test("find with no matches says so", async () => {
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await s.keys(["Control", "f"]);
+    await s.type('input[aria-label="Find in document"]', "zzzz-not-here");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => (await s.text(".searchbar .count")) === "No matches", "No matches");
+  });
+});
+
+await test("extract pages: keyboard shortcut, live range validation, output verified", async () => {
+  const out = join(work, "extract-out.pdf");
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "Shift", "E"]);
+    await s.waitFor('[role="dialog"]');
+    await s.type("#pages", "9");
+    await s.waitUntil(async () => (await s.text("#pages-msg")).includes("does not exist"), "out-of-range message");
+    assert((await s.attr('[data-testid="tool-start"]', "aria-disabled")) === "true", "start disabled while invalid");
+    await s.type("#pages", "2-3");
+    await s.waitUntil(async () => (await s.text("#pages-msg")) === "2 pages selected", "valid range");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved extract-out.pdf")), "success notice");
+    assert(existsSync(out), "output exists");
+    const n = pdfPages(out);
+    assert(n === null || n === 2, `output has 2 pages (got ${n})`);
+  });
+});
+
+await test("existing output: Keep both creates a renamed copy; original untouched", async () => {
+  const out = join(work, "conflict.pdf");
+  writeFileSync(out, "existing");
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await s.keys(["Control", "Shift", "E"]);
+    await s.type("#pages", "1");
+    await s.waitUntil(async () => (await s.text("#pages-msg")) === "1 page selected", "valid");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitFor(".dialog .banner.error");
+    assert((await s.text(".dialog .banner.error")).includes("already exists"), "conflict explained");
+    await s.click(".dialog .banner.error .btn.outline");
+    await s.waitUntil(async () => existsSync(join(work, "conflict (1).pdf")), "renamed output");
+  });
+  const { readFileSync } = await import("node:fs");
+  assert(readFileSync(out, "utf8") === "existing", "existing file not overwritten");
+});
+
+await test("rotate a page from the keyboard context menu (Shift+F10)", async () => {
+  const out = join(work, "rotated.pdf");
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Shift", "F10"]);
+    await s.waitFor('[role="menu"]');
+    const focused = await s.exec("return document.activeElement?.getAttribute('role')");
+    assert(focused === "menuitem", `first menu item focused (${focused})`);
+    await s.keys(["ArrowDown"]);
+    await s.keys(["Enter"]);
+    await s.waitFor('[role="dialog"]');
+    assert((await s.exec("return document.querySelector('#pages').value")) === "1", "range prefilled with page 1");
+    await s.waitUntil(async () => (await s.text("#pages-msg")) === "1 page selected", "valid");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => existsSync(out), "rotated output");
+  });
+});
+
+await test("right-click page menu lists page actions; Escape closes it", async () => {
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.contextClick('[data-page="0"]');
+    await s.waitFor('[role="menu"]');
+    const labels = await s.exec("return [...document.querySelectorAll('[role=menuitem]')].map(m => m.innerText.trim())");
+    for (const want of ["Extract page 1…", "Rotate page 1…", "Delete page 1…", "Zoom in", "Document properties"]) {
+      assert(labels.some((l) => l.startsWith(want)), `menu has ${want}: ${labels}`);
+    }
+    const inside = await s.exec("const r=document.querySelector('[role=menu]').getBoundingClientRect(); return r.right<=innerWidth && r.bottom<=innerHeight && r.left>=0 && r.top>=0");
+    assert(inside, "menu inside the window");
+    writeFileSync(join(ART, "context-menu.png"), await s.screenshot());
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => await s.exec("return !document.querySelector('[role=menu]')"), "menu closed");
+  });
+});
+
+await test("delete refuses removing every page", async () => {
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await s.keys(["Control", "Shift", "D"]);
+    await s.type("#pages", "1-5");
+    await s.waitUntil(async () => (await s.attr('[data-testid="tool-start"]', "title")) === "A PDF must keep at least one page.", "blocked with reason");
+  });
+});
+
+await test("settings: live theme preview, Cancel restores, Save persists across restart", async () => {
+  await withApp([join(FIX, "single-page.pdf")], async (s) => {
+    const before = await rootAttr(s, "theme");
+    await s.keys(["Control", ","]);
+    await s.waitFor('[role="dialog"]');
+    await s.click('[role="radiogroup"][aria-labelledby="seg-theme"] [role="radio"]:nth-child(3)');
+    await s.waitUntil(async () => (await rootAttr(s, "theme")) === "dark", "dark preview");
+    writeFileSync(join(ART, "settings-dark.png"), await s.screenshot());
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => (await rootAttr(s, "theme")) === before, "cancel restored theme");
+    await s.keys(["Control", ","]);
+    await s.click('[role="radiogroup"][aria-labelledby="seg-theme"] [role="radio"]:nth-child(3)');
+    await s.click('[role="radiogroup"][aria-labelledby="seg-density"] [role="radio"]:nth-child(2)');
+    await s.click(".dialog .dialog-footer .btn.primary");
+    await s.waitUntil(async () => await s.exec("return !document.querySelector('[role=dialog]')"), "dialog closed after save");
+  });
+  await withApp([join(FIX, "single-page.pdf")], async (s) => {
+    await s.waitUntil(async () => (await rootAttr(s, "theme")) === "dark", "dark after restart");
+    assert((await rootAttr(s, "density")) === "comfortable", "density persisted");
+    await pageLoaded(s, 0);
+    writeFileSync(join(ART, "viewer-dark-comfortable.png"), await s.screenshot());
+  });
+});
+
+await test("custom shortcut: conflicting binding is blocked, unique binding works", async () => {
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await s.keys(["Control", ","]);
+    await s.click('button[role="tab"]#tab-shortcuts');
+    await s.click('[data-shortcut-row="view.toggleThumbnails"] td:nth-child(3) button:first-child');
+    await s.keys(["Control", "o"]);
+    await s.waitFor('.dialog .banner.error[role="alert"]');
+    assert((await s.attr(".dialog .dialog-footer .btn.primary", "aria-disabled")) === "true", "save blocked by conflict");
+    await s.click('[data-shortcut-row="view.toggleThumbnails"] td:nth-child(3) button:first-child');
+    await s.keys(["Control", "Alt", "t"]);
+    await s.waitUntil(async () => await s.exec("return !document.querySelector('.dialog .banner.error')"), "conflict resolved");
+    await s.click(".dialog .dialog-footer .btn.primary");
+    await s.waitUntil(async () => await s.exec("return !document.querySelector('[role=dialog]')"), "saved");
+    assert(await s.exec("return !!document.querySelector('.sidebar')"), "thumbnails visible");
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "Alt", "t"]);
+    await s.waitUntil(async () => await s.exec("return !document.querySelector('.sidebar')"), "new shortcut toggled thumbnails");
+  });
+});
+
+await test("password-protected PDF: dialog, wrong password, then correct password", async () => {
+  const s = await Session.create(DRIVER, APP, appArgs([join(FIX, "encrypted-rc4-user-password.pdf")]));
+  try {
+    await s.waitFor("#pdf-password", { timeout: 20000 });
+    await s.type("#pdf-password", "wrong-password");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => (await s.text("#pw-err")).includes("did not work"), "wrong password message");
+    await s.type("#pdf-password", "pw-user-test");
+    await s.keys(["Enter"]);
+    await s.waitFor('.tab-label');
+    await pageLoaded(s, 0);
+    assert((await statusText(s)).includes("Protected"), "protected indicator");
+    const html = await s.exec("return document.documentElement.outerHTML");
+    assert(!html.includes("pw-user-test"), "password not left in the DOM");
+  } finally {
+    await s.delete();
+  }
+});
+
+await test("unsupported file shows a specific error and app stays usable", async () => {
+  const fake = join(work, "fake.pdf");
+  copyFileSync(join(FIX, "not-a-pdf.pdf"), fake);
+  const s = await Session.create(DRIVER, APP, appArgs([fake, join(FIX, "single-page.pdf")]));
+  try {
+    await s.waitFor('.tab-label', { timeout: 20000 });
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Couldn’t open fake.pdf") && t.includes("not a PDF")), "error notice");
+    const tabs = await s.exec("return document.querySelectorAll('.tab-label').length");
+    assert(tabs === 1, `only the valid file opened (${tabs})`);
+    writeFileSync(join(ART, "error-notice.png"), await s.screenshot());
+  } finally {
+    await s.delete();
+  }
+});
+
+await test("disabled controls explain why (no document open)", async () => {
+  await withApp([], async (s) => {
+    const title = await s.attr('[data-command="view.zoomIn"]', "title");
+    assert((await s.attr('[data-command="view.zoomIn"]', "aria-disabled")) === "true", "zoom disabled");
+    assert(title.includes("Open a PDF first"), `reason in tooltip: ${title}`);
+    const looks = await s.exec(`return [...document.querySelectorAll('[aria-disabled="true"], select:disabled')].map(e => getComputedStyle(e).opacity)`);
+    assert(looks.length > 0 && looks.every((o) => Number(o) < 0.6), `disabled controls look disabled (opacities ${looks})`);
+    writeFileSync(join(ART, "home.png"), await s.screenshot());
+  });
+});
+
+await test("command palette runs a command by keyboard", async () => {
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await s.keys(["Control", "k"]);
+    await s.type('input[aria-label="Type a command"]', "properties");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[role=dialog] h2')?.textContent")) === "Document properties", "properties dialog");
+    const txt = await s.exec("return document.querySelector('[role=dialog]').innerText");
+    assert(txt.includes("Pages") && txt.includes("5"), "properties show page count");
+  });
+});
+
+await test("tabs: two documents, Ctrl+Tab switches, Ctrl+W closes", async () => {
+  await withApp([join(FIX, "single-page.pdf"), join(FIX, "five-pages.pdf")], async (s) => {
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label').length")) === 2, "two tabs");
+    const active = () => s.exec("return document.querySelector('.tab-label[aria-current=page] .name').textContent");
+    const first = await active();
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "Tab"]);
+    await s.waitUntil(async () => (await active()) !== first, "switched tab");
+    await s.keys(["Control", "w"]);
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label').length")) === 1, "one tab left");
+  });
+});
+
+await test("narrow window keeps toolbar and dialogs usable", async () => {
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await s.setWindowRect(760, 520).catch(() => undefined);
+    await s.keys(["Control", "Shift", "M"]);
+    await s.waitFor('[role="dialog"]');
+    const fits = await s.exec("const r=document.querySelector('[role=dialog]').getBoundingClientRect(); return r.left>=0 && r.top>=0 && r.right<=innerWidth && r.bottom<=innerHeight");
+    assert(fits, "dialog inside the window");
+    writeFileSync(join(ART, "narrow-merge.png"), await s.screenshot());
+  });
+});
+
+await test("Ctrl+PageDown / Ctrl+PageUp step pages; previous tab with Ctrl+Shift+Tab", async () => {
+  await withApp([join(FIX, "single-page.pdf"), join(FIX, "five-pages.pdf")], async (s) => {
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label').length")) === 2, "two tabs");
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "PageDown"]);
+    await s.waitUntil(async () => (await currentPage(s)) === "2", "next page");
+    await s.keys(["Control", "PageDown"]);
+    await s.waitUntil(async () => (await currentPage(s)) === "3", "page 3");
+    await s.keys(["Control", "PageUp"]);
+    await s.waitUntil(async () => (await currentPage(s)) === "2", "previous page");
+    const active = () => s.exec("return document.querySelector('.tab-label[aria-current=page] .name').textContent");
+    await s.keys(["Control", "Shift", "Tab"]);
+    await s.waitUntil(async () => (await active()) === "single-page.pdf", "previous tab");
+    const nextTitle = await s.attr('[data-command="view.zoomIn"]', "title");
+    assert(!nextTitle.includes("Open a PDF"), "commands enabled with a document");
+  });
+});
+
+await test("fit width button restores a fitting zoom; close-find button works", async () => {
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    for (let i = 0; i < 4; i++) await s.click('[data-command="view.zoomIn"]');
+    const overflow = () => s.exec("const v=document.querySelector('.viewer'); return v.scrollWidth - v.clientWidth");
+    assert((await overflow()) > 50, "zoomed in beyond the window");
+    await s.click('[data-command="view.fitWidth"]');
+    await s.waitUntil(async () => (await overflow()) <= 1, "fits after Fit width");
+    await s.keys(["Control", "f"]);
+    await s.waitFor('[data-command="search.close"]');
+    await s.click('[data-command="search.close"]');
+    await s.waitUntil(async () => await s.exec("return !document.querySelector('.searchbar')"), "find closed by button");
+  });
+});
+
+await test("Ctrl+D shows document properties", async () => {
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "d"]);
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[role=dialog] h2')?.textContent")) === "Document properties", "properties");
+    const t = await s.exec("return document.querySelector('[role=dialog]').innerText");
+    assert(t.includes("Five pages") && t.includes("1.7"), `title and version shown: ${t}`);
+  });
+});
+
+await test("rotate all pages 180° (Ctrl+Shift+R) — rotation verified in the output", async () => {
+  const out = join(work, "rotate-all.pdf");
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "Shift", "R"]);
+    await s.waitFor('[role="dialog"]');
+    assert(await s.exec("return document.querySelector('input[type=checkbox]').checked"), "All pages preselected");
+    await s.click('[role="radiogroup"][aria-labelledby="rot-label"] [role="radio"]:nth-child(2)');
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => existsSync(out), "output written");
+  });
+  if (CLI) {
+    const info = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data;
+    assert(info.pages.every((p) => p.rotation === 180), `all pages at 180°: ${info.pages.map((p) => p.rotation)}`);
+  }
+});
+
+await test("keyboard shortcuts settings open from the command palette", async () => {
+  await withApp([join(FIX, "single-page.pdf")], async (s) => {
+    await s.keys(["Control", "k"]);
+    await s.waitFor('input[aria-label="Type a command"]');
+    await s.click('[role="option"][data-command="app.shortcuts"]');
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('#tab-shortcuts')?.getAttribute('aria-selected')")) === "true", "shortcuts tab selected");
+    const rows = await s.exec("return document.querySelectorAll('[data-shortcut-row]').length");
+    assert(rows >= 20, `shortcut table lists commands (${rows})`);
+  });
+});
+
+await test("show-in-folder and log-folder never fail silently", async () => {
+  await withApp([join(FIX, "single-page.pdf")], async (s) => {
+    for (const id of ["file.reveal", "app.openLogs"]) {
+      // ids exercised: "file.reveal", "app.openLogs"
+      const before = (await noticeTexts(s)).length;
+      await s.keys(["Control", "k"]);
+      await s.waitFor('input[aria-label="Type a command"]');
+      await s.click(`[role="option"][data-command="${id}"]`);
+      // Either the system file manager opens (no notice) or a specific error is shown; the app stays responsive.
+      await new Promise((r) => setTimeout(r, 1500));
+      const after = await noticeTexts(s);
+      if (after.length > before) assert(after.some((t) => t.startsWith("Couldn’t")), `failure explained: ${after}`);
+      assert((await s.exec("return document.querySelectorAll('.tab-label').length")) === 1, "app still responsive");
+    }
+  });
+});
+
+const selection = (s) => s.exec("return window.getSelection().toString()");
+/** Span in a page's text layer whose text contains `needle`, as a CSS selector via a marker attribute. */
+async function markSpan(s, page, needle) {
+  await s.waitUntil(() => s.exec(`return !!document.querySelector('[data-textlayer="${page}"] span')`), `text layer on page ${page + 1}`);
+  const width = await s.exec(
+    `const sp=[...document.querySelectorAll('[data-textlayer="${page}"] span')].find(x=>x.textContent.includes(arguments[0])); if(!sp) return 0; sp.setAttribute('data-e2e','target'); sp.scrollIntoView({block:'center', inline:'center'}); const r=sp.getBoundingClientRect(); return Math.max(r.width, r.height);`,
+    needle,
+  );
+  assert(width > 0, `text run containing ${needle} on page ${page + 1}`);
+  return width;
+}
+
+await test("double-click selects the word under the pointer; right-click → Copy", async () => {
+  await withApp([join(FIX, "single-page.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    const w = await markSpan(s, 0, "PWMARK001");
+    // "Marker token PWMARK001": aim at ~80% of the run, inside the last word.
+    await s.doubleClick('[data-e2e="target"]', w * 0.3, 0);
+    await s.waitUntil(async () => (await selection(s)).trim() === "PWMARK001", "word selected");
+    // Right-click on the selected word itself: the selection must survive and offer Copy.
+    await s.contextClick('[data-e2e="target"]', w * 0.3, 0);
+    await s.waitFor('[role="menuitem"][data-command="edit.copy"]');
+    await s.click('[role="menuitem"][data-command="edit.copy"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.startsWith("Copied") && t.includes("9 characters")), "copied the 9-character word");
+    assert((await selection(s)).trim() === "PWMARK001", "selection still present after using the menu");
+    const clip = await s.exec("return navigator.clipboard.readText().then(t => t, e => 'ERR ' + e.name)").catch((e) => `ERR ${e.message}`);
+    if (!String(clip).startsWith("ERR")) assert(clip.trim() === "PWMARK001", `clipboard holds the selection (${clip})`);
+    else console.log(`  note: clipboard read-back unavailable in this WebDriver session (${clip}); copy success notice verified instead`);
+  });
+});
+
+await test("text layer is aligned on a 90°-rotated page", async () => {
+  await withApp([join(FIX, "mixed-sizes-rotated.pdf")], async (s) => {
+    // Regression: the rotated page is laid out landscape and initial fit-width accounts for it.
+    const box = await s.exec("const p=document.querySelector('[data-page=\"2\"]'); return [p.offsetWidth, p.offsetHeight]");
+    assert(box[0] > box[1], `rotated page laid out landscape (${box})`);
+    const overflow = await s.exec("const v=document.querySelector('.viewer'); return v.scrollWidth - v.clientWidth");
+    assert(overflow <= 1, `fit width includes the rotated page (overflow ${overflow})`);
+    await s.click('[data-thumb="2"]');
+    await pageLoaded(s, 2);
+    await markSpan(s, 2, "PWMARK003");
+    // On a page rotated 90° clockwise the run reads top-to-bottom: aim 80% down its drawn box.
+    const r = await s.exec("const r=document.querySelector('[data-e2e=target]').getBoundingClientRect(); return [r.left, r.top, r.width, r.height]");
+    assert(r[3] > r[2], `rotated run is taller than wide (${r})`);
+    // Regression: the run must not be stretched beyond the rotated page box.
+    const page = await s.exec("const p=document.querySelector('[data-page=\"2\"]').getBoundingClientRect(); return [p.top, p.height]");
+    assert(r[3] < page[1] * 0.5, `run height ${r[3]} is plausible for page height ${page[1]}`);
+    await s.doubleClickAt(r[0] + r[2] / 2, r[1] + r[3] * 0.8);
+    await s.waitUntil(async () => (await selection(s)).trim() === "PWMARK003", "word selected on rotated page");
+    writeFileSync(join(ART, "rotated-selection.png"), await s.screenshot());
+  });
+});
+
+// Accessibility (Gate 3): axe-core is injected only into the test session; it is not part of the app.
+const AXE = (await import("node:fs")).readFileSync(new URL("../node_modules/axe-core/axe.min.js", import.meta.url), "utf8");
+async function axeCheck(s, name) {
+  // Measure the settled UI: colours sampled mid-fade (dialogs animate opacity) are not what users see.
+  // Two consecutive checks, each after two animation frames, so an animation that has not started
+  // yet (pending) on a just-mounted element is not missed.
+  const settled = () =>
+    s.execAsync("const done = arguments[arguments.length - 1]; requestAnimationFrame(() => requestAnimationFrame(() => done(document.getAnimations().every(a => !a.pending && a.playState !== 'running'))))");
+  await s.waitUntil(async () => (await settled()) && (await settled()), "animations settled");
+  await s.exec(`${AXE}; return typeof axe`);
+  const res = await s.execAsync(
+    "const done = arguments[arguments.length - 1]; axe.run(document, { resultTypes: ['violations'] }).then(r => done(r.violations.map(v => ({ id: v.id, impact: v.impact, help: v.help, nodes: v.nodes.length, sample: v.nodes[0]?.target?.join(' '), detail: v.nodes[0]?.any?.[0]?.message })))).catch(e => done([{ id: 'axe-error', impact: 'critical', help: String(e) }]));",
+  );
+  writeFileSync(join(ART, `axe-${name}.json`), JSON.stringify(res, null, 2));
+  const blocking = res.filter((v) => v.impact === "serious" || v.impact === "critical");
+  assert(blocking.length === 0, `${name}: ${blocking.map((v) => `${v.id} (${v.impact}, ${v.nodes} nodes, e.g. ${v.sample}): ${v.help}`).join("; ")}`);
+  return res;
+}
+
+await test("accessibility: no serious/critical axe violations on home, viewer, dialogs (light and dark)", async () => {
+  await withApp([], async (s) => {
+    await axeCheck(s, "home");
+  });
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    for (const theme of ["light", "dark"]) {
+      await s.exec(`document.documentElement.dataset.theme = "${theme}"; return 1`);
+      await axeCheck(s, `viewer-${theme}`);
+      await s.keys(["Control", "f"]);
+      await s.type('input[aria-label="Find in document"]', "PWMARK");
+      await s.keys(["Enter"]);
+      await s.waitUntil(async () => (await s.exec("return document.querySelector('.searchbar .count')?.textContent")) === "1 of 5", "search done");
+      await axeCheck(s, `search-${theme}`);
+      await s.keys(["Escape"]);
+      await s.click('[data-testid="viewer"]');
+      await s.keys(["Control", "Shift", "E"]);
+      await s.waitFor('[role="dialog"]');
+      await axeCheck(s, `extract-dialog-${theme}`);
+      await s.keys(["Escape"]);
+      await s.keys(["Control", ","]);
+      await s.waitFor('[role="dialog"]');
+      await axeCheck(s, `settings-${theme}`);
+      await s.keys(["Escape"]);
+    }
+  });
+});
+
+await test("bookmarks panel navigates; disabled with a reason when a document has none", async () => {
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "Shift", "B"]);
+    await s.waitFor('[data-bookmark="3"]');
+    const titles = await s.exec("return [...document.querySelectorAll('.bookmark .title')].map(t => t.textContent)");
+    assert(titles.join("|") === "Chapter 1|Chapter 2|Chapter 3|Chapter 4|Chapter 5", `titles ${titles}`);
+    await s.click('[data-bookmark="3"]');
+    await s.waitUntil(async () => (await currentPage(s)) === "4", "jumped to page 4");
+    await s.waitUntil(async () => (await s.attr('[data-bookmark="3"]', "aria-current")) === "location", "current bookmark marked");
+    await s.click("#sb-tab-pages");
+    await s.waitFor('[data-thumb="0"]');
+    await axeCheck(s, "bookmarks-sidebar");
+  });
+  await withApp([join(FIX, "single-page.pdf")], async (s) => {
+    assert((await s.attr("#sb-tab-bookmarks", "aria-disabled")) === "true", "bookmarks tab disabled");
+    assert((await s.attr("#sb-tab-bookmarks", "title")).includes("no bookmarks"), "reason shown");
+    const cmdTitle = await s.exec("return document.querySelector('#sb-tab-bookmarks').title");
+    assert(cmdTitle.length > 0, "tooltip present");
+  });
+});
+
+const annotCount = (s, kind) => s.exec(`return document.querySelectorAll('.annot${kind ? "." + kind : ""}').length`);
+const unsavedText = (s) => s.exec("return document.querySelector('[data-testid=unsaved]')?.textContent ?? ''");
+const sha = (p) => createHash("sha256").update(readFileSync(p)).digest("hex");
+
+await test("annotate: highlight/underline/strike/note from selection and menus; undo/redo; save a verified copy", async () => {
+  const src = join(FIX, "single-page.pdf");
+  const before = sha(src);
+  const out = join(work, "annotated.pdf");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    const w = await markSpan(s, 0, "PWMARK001");
+    const selectWord = async () => {
+      await s.doubleClick('[data-e2e="target"]', w * 0.3, 0);
+      await s.waitUntil(async () => (await selection(s)).trim() === "PWMARK001", "word selected");
+    };
+    // Disabled with a reason while nothing is selected.
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Highlight selected");
+    const opt = await s.exec("const o=document.querySelector('[role=option][data-command=\"annotate.highlight\"]'); return o ? o.getAttribute('aria-disabled') + '|' + o.textContent : null");
+    assert(opt && opt.startsWith("true") && opt.includes("Select text"), `highlight unavailable without a selection (${opt})`);
+    await s.keys(["Escape"]);
+
+    // 1. Right-click the selection → Highlight.
+    await selectWord();
+    await s.contextClick('[data-e2e="target"]', w * 0.3, 0);
+    await s.click('[role="menuitem"][data-command="annotate.highlight"]');
+    await s.waitUntil(async () => (await annotCount(s, "highlight")) === 1, "highlight drawn");
+    assert((await selection(s)) === "", "selection cleared so the highlight is visible");
+    await s.waitUntil(async () => (await unsavedText(s)) === "1 unsaved change", "status bar counts it");
+    // The overlay covers the word it was made from.
+    const cover = await s.exec(`const a=document.querySelector('.annot.highlight').getBoundingClientRect(); const t=document.querySelector('[data-e2e=target]').getBoundingClientRect();
+      return [a.left, a.right, a.top, a.bottom, t.left, t.right, t.top, t.bottom]`);
+    assert(cover[0] >= cover[4] - 2 && cover[1] <= cover[5] + 2 && Math.abs(cover[2] - cover[6]) < 3 && Math.abs(cover[3] - cover[7]) < 3, `highlight lies on the word (${cover})`);
+
+    // 2. Keyboard shortcut → Underline. 3. Menu → Strikethrough.
+    await selectWord();
+    await s.keys(["Control", "Shift", "U"]);
+    await s.waitUntil(async () => (await annotCount(s, "underline")) === 1, "underline drawn");
+    await selectWord();
+    await s.contextClick('[data-e2e="target"]', w * 0.3, 0);
+    await s.click('[role="menuitem"][data-command="annotate.strikeOut"]');
+    await s.waitUntil(async () => (await annotCount(s, "strike_out")) === 1, "strikethrough drawn");
+
+    // Undo / redo (Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z).
+    await s.keys(["Control", "z"]);
+    await s.waitUntil(async () => (await annotCount(s, "strike_out")) === 0, "undo removed the last annotation");
+    await s.keys(["Control", "y"]);
+    await s.waitUntil(async () => (await annotCount(s, "strike_out")) === 1, "redo restored it");
+    await s.keys(["Control", "z"]);
+    await s.keys(["Control", "Shift", "Z"]);
+    await s.waitUntil(async () => (await annotCount(s, "strike_out")) === 1, "Ctrl+Shift+Z redoes too");
+
+    // (Add is disabled until text is written.)
+    // 4. Right-click blank page area just below the marked line → Add note here…
+    await s.contextClick('[data-e2e="target"]', 0, 48);
+    await s.click('[role="menuitem"][data-command="annotate.note"]');
+    await s.waitFor("#note-text");
+    assert((await s.attr('[data-testid="note-add"]', "aria-disabled")) === "true", "Add disabled while the note is empty");
+    await s.click('[data-testid="note-add"]');
+    assert((await s.exec("return !!document.querySelector('#note-text')")) === true, "empty note is not added");
+    await s.type("#note-text", "PW note 1");
+    await axeCheck(s, "note-dialog");
+    await s.keys(["Control", "Enter"]);
+    await s.waitUntil(async () => (await annotCount(s, "note")) === 1, "note marker drawn");
+    await s.waitUntil(async () => (await unsavedText(s)) === "4 unsaved changes", "four unsaved changes");
+    await axeCheck(s, "viewer-with-annotations");
+    writeFileSync(join(ART, "annotations-pending.png"), await s.screenshot());
+
+    // Save a copy (Ctrl+S): default name next to the source; saved here into the work folder.
+    await s.keys(["Control", "s"]);
+    await s.waitFor("#output");
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("single-page-annotated.pdf"), "default output name");
+    assert((await s.text('[role="dialog"] h2')) === "Save a copy with your changes", "save dialog title");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved annotated.pdf")), "saved notice");
+    await s.waitUntil(async () => (await annotCount(s)) === 0 && (await unsavedText(s)) === "", "pending annotations cleared after saving");
+  });
+  assert(existsSync(out), "annotated copy exists");
+  const bytes = readFileSync(out).toString("latin1");
+  const subtypes = [...bytes.matchAll(/\/Subtype\s*\/(Highlight|Underline|StrikeOut|Text)\b/g)].map((m) => m[1]).sort();
+  assert(subtypes.join(",") === "Highlight,StrikeOut,Text,Underline", `annotation subtypes in the saved file: ${subtypes}`);
+  assert(bytes.includes("(PW note 1)"), "note text saved");
+  assert(sha(src) === before, "source PDF unchanged");
+  const n = pdfPages(out);
+  assert(n === null || n === 1, `copy keeps its page (got ${n})`);
+});
+
+await test("unsaved annotations: closing the tab asks (Save focused); Cancel keeps it; discard can be undone; Discard closes", async () => {
+  await withApp([join(FIX, "single-page.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    const w = await markSpan(s, 0, "PWMARK001");
+    await s.doubleClick('[data-e2e="target"]', w * 0.3, 0);
+    await s.waitUntil(async () => (await selection(s)).trim() === "PWMARK001", "word selected");
+    await s.keys(["Control", "Shift", "H"]);
+    await s.waitUntil(async () => (await annotCount(s, "highlight")) === 1, "highlight drawn");
+
+    await s.keys(["Control", "w"]);
+    await s.waitFor('[data-testid="unsaved-save"]');
+    assert((await s.exec("return document.activeElement?.dataset.testid")) === "unsaved-save", "Save copy… has initial focus");
+    await axeCheck(s, "unsaved-dialog");
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => (await s.exec("return !document.querySelector('[role=dialog]')")) === true, "prompt closed");
+    assert((await s.exec("return document.querySelectorAll('.tab-label').length")) === 1, "Cancel keeps the tab open");
+    assert((await annotCount(s, "highlight")) === 1, "and keeps the annotation");
+
+    // Discard from the command palette, then undo the discard from its notice.
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Discard unsaved");
+    await s.click('[role="option"][data-command="edit.discardChanges"]');
+    await s.waitUntil(async () => (await annotCount(s)) === 0, "discarded");
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.startsWith("Discarded 1 change")), "discard notice");
+    await s.click('.notice button[data-action="Undo"]');
+    await s.waitUntil(async () => (await annotCount(s, "highlight")) === 1, "discard undone");
+
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "w"]);
+    await s.click('[data-testid="unsaved-discard"]');
+    await s.waitFor(".home");
+  });
+});
+
+/** Send the window a real close request (title-bar X). Linux/X11 only; see e2e/wm_close.py. */
+function wmClose() {
+  const win = process.platform === "win32";
+  if (!win && (process.platform !== "linux" || !process.env.DISPLAY)) throw new Skip("needs an X11 display or Windows to send a window close request");
+  execFileSync(win ? "python" : "python3", ["-I", fileURLToPath(new URL("./wm_close.py", import.meta.url)), "PageWeave"], { stdio: "inherit" });
+}
+/** Click a control that quits the app: the driver may lose the session before it can reply. */
+const clickThatQuits = (s, css) =>
+  s.click(css).catch((e) => {
+    if (!/Session terminated without a reply|invalid session id/.test(String(e.message))) throw e;
+  });
+const appGone = (s) => s.waitUntil(() => s.exec("return 0").then(() => false, () => true), "app closed", 15000);
+const highlightMarker = async (s) => {
+  await pageLoaded(s, 0);
+  const w = await markSpan(s, 0, "PWMARK001");
+  await s.doubleClick('[data-e2e="target"]', w * 0.3, 0);
+  await s.waitUntil(async () => (await selection(s)).trim() === "PWMARK001", "word selected");
+  await s.keys(["Control", "Shift", "H"]);
+  await s.waitUntil(async () => (await annotCount(s, "highlight")) === 1, "highlight drawn");
+};
+
+await test("window close: clean app closes at once; unsaved annotations ask first (Cancel keeps app, Discard quits)", async () => {
+  await withApp([join(FIX, "single-page.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    wmClose();
+    await appGone(s);
+  });
+  await withApp([join(FIX, "single-page.pdf")], async (s) => {
+    await highlightMarker(s);
+    wmClose();
+    await s.waitFor('[data-testid="unsaved-save"]');
+    assert((await s.exec("return document.querySelector('[role=dialog] p').textContent")).includes("1 unsaved change"), "prompt names the count");
+    await s.click('[data-testid="unsaved-cancel"]');
+    await s.waitUntil(async () => (await s.exec("return !document.querySelector('[role=dialog]')")) === true, "prompt closed");
+    assert((await annotCount(s, "highlight")) === 1, "Cancel keeps the app and the annotation");
+    wmClose();
+    await clickThatQuits(s, '[data-testid="unsaved-discard"]');
+    await appGone(s);
+  });
+});
+
+await test("window close: Save copy… saves the annotations, then quits", async () => {
+  const out = join(work, "saved-on-quit.pdf");
+  await withApp([join(FIX, "single-page.pdf")], async (s) => {
+    await highlightMarker(s);
+    wmClose();
+    await s.click('[data-testid="unsaved-save"]');
+    await s.waitFor("#output");
+    await s.type("#output", out);
+    await clickThatQuits(s, '[data-testid="tool-start"]');
+    await appGone(s);
+  });
+  assert(existsSync(out), "annotated copy saved before quitting");
+  assert(/\/Subtype\s*\/Highlight\b/.test(readFileSync(out).toString("latin1")), "copy contains the highlight");
+});
+
+// Startup baseline (CLAUDE.md §6): the host logs ms from its entry point to UI ready and to the first
+// rendered page. Measured, not budgeted; the bound below only catches hangs.
+await test("startup timing: UI ready and first page logged by the host (baseline, 5 launches)", async () => {
+  const marks = [];
+  for (let i = 0; i < 5; i++) {
+    await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+      await pageLoaded(s, 0);
+      const dir = await s.execAsync("const done = arguments[arguments.length - 1]; window.__TAURI_INTERNALS__.invoke('log_dir').then(done, (e) => done('ERR ' + e))");
+      assert(!String(dir).startsWith("ERR"), `log dir: ${dir}`);
+      const log = join(dir, "pageweave.jsonl");
+      const read = () => (existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : []);
+      // Entries since this launch's startup event.
+      const run = () => {
+        const all = read();
+        const start = all.map((e) => e.event).lastIndexOf("startup");
+        return all.slice(start).filter((e) => e.event === "timing");
+      };
+      await s.waitUntil(() => run().some((e) => e.fields?.mark === "first_page"), "first_page mark logged");
+      const get = (m) => run().find((e) => e.fields?.mark === m);
+      const ms = (e) => e?.fields?.since_start_ms;
+      marks.push({ ui_ready: ms(get("ui_ready")), first_page: ms(get("first_page")) });
+    });
+  }
+  const pct = (xs, p) => [...xs].sort((a, b) => a - b)[Math.min(xs.length - 1, Math.floor(p * xs.length))];
+  const summary = {};
+  for (const k of ["ui_ready", "first_page"]) {
+    const xs = marks.map((m) => m[k]);
+    assert(xs.every((x) => Number.isFinite(x) && x > 0), `${k} recorded each launch (${xs})`);
+    summary[k] = { first: xs[0], p50: pct(xs, 0.5), max: Math.max(...xs), all: xs };
+  }
+  writeFileSync(join(ART, "perf-startup.json"), JSON.stringify({ platform: process.platform, ...summary }, null, 2));
+  console.log(`  startup: ui_ready p50 ${summary.ui_ready.p50} ms, first_page p50 ${summary.first_page.p50} ms (first launch ${summary.first_page.first} ms)`);
+  assert(summary.first_page.max < 20000, "first page appears (hang guard, not a budget)");
+});
+
+await test("interrupted task: reported at next start with its partial file removed; Run again saves the output", async () => {
+  // Plant exactly what a crash mid-job leaves behind: a journal entry from a process that no longer
+  // exists and its staged (uncommitted) output file. The app's real startup recovery must handle it.
+  const ident = JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8")).identifier;
+  const base = process.platform === "win32" ? process.env.LOCALAPPDATA : process.env.XDG_DATA_HOME;
+  if (!base) throw new Skip("the app data folder is not isolated for this run (XDG_DATA_HOME unset)");
+  const jobsDir = join(base, ident, "jobs");
+  mkdirSync(jobsDir, { recursive: true });
+  const outDir = mkdtempSync(join(work, "interrupted-"));
+  const out = join(outDir, "cut-short.pdf");
+  const deadPid = 4294967000;
+  const staged = join(outDir, `.pw-staged-${deadPid}-e2e.tmp`);
+  writeFileSync(staged, "partial output");
+  const entry = join(jobsDir, "job-e2e-interrupted.json");
+  writeFileSync(entry, JSON.stringify({
+    job_id: "e2e-interrupted", label: "extract_pages", pid: deadPid, started_unix_ms: Date.now() - 5000,
+    operation: { op: "extract_pages", input: join(FIX, "five-pages.pdf"), pages: "2-3", output: out }, collision: "fail",
+  }));
+  await withApp([], async (s) => {
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("A task was interrupted") && t.includes("Extract pages → cut-short.pdf") && t.includes("unfinished file was removed")), "interrupted-task notice");
+    assert(!existsSync(staged), "partial file removed");
+    assert(!existsSync(entry), "journal entry consumed (reported once)");
+    assert(!existsSync(out), "nothing was committed by the interrupted run");
+    await axeCheck(s, "interrupted-notice");
+    await s.click('.notice button[data-action="Run again"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved cut-short.pdf")), "run again succeeded");
+  });
+  assert(existsSync(out), "output saved by Run again");
+  const n = pdfPages(out);
+  assert(n === null || n === 2, `re-run output has 2 pages (got ${n})`);
+});
+
+await test("forms: fill text, checkbox, radio, choice and multiline; Ctrl+S saves a verified filled copy and the tab switches to it", async () => {
+  const src = join(FIX, "form-fields.pdf");
+  const before = sha(src);
+  const out = join(work, "filled.pdf");
+  const field = (name) => `[data-formlayer="0"] [data-field="${name}"]`;
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.waitFor(field("full_name"));
+    assert((await s.attr(field("full_name"), "aria-label")) === "Full name", "field is labelled by /TU");
+    await s.type(field("full_name"), "Ada Lovelace");
+    await s.click(field("subscribe"));
+    await s.click(`${field("plan")}[value="pro"]`);
+    await s.click(`${field("country")} option[value="Japan"]`);
+    await s.type(field("comments"), "Line one");
+    await s.typeKeys("\nLine two");
+    const state = () =>
+      s.exec(`const q = (n) => document.querySelector('[data-formlayer="0"] [data-field="' + n + '"]');
+        return [q('full_name').value, q('subscribe').checked, document.querySelector('[data-field="plan"][value="pro"]').checked, q('country').value, q('comments').value]`);
+    const want = JSON.stringify(["Ada Lovelace", true, true, "Japan", "Line one\nLine two"]);
+    assert(JSON.stringify(await state()) === want, `controls hold the edits (${JSON.stringify(await state())})`);
+    await s.waitUntil(async () => (await unsavedText(s)) === "5 unsaved changes", "five unsaved changes");
+    await axeCheck(s, "form-fields");
+    writeFileSync(join(ART, "form-filled.png"), await s.screenshot());
+
+    // Closing the tab with field edits asks first.
+    await s.keys(["Control", "w"]);
+    await s.waitFor('[data-testid="unsaved-cancel"]');
+    await s.click('[data-testid="unsaved-cancel"]');
+
+    // Ctrl+S from inside a field opens the save dialog.
+    await s.click(field("full_name"));
+    await s.keys(["Control", "s"]);
+    await s.waitFor("#output");
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("form-fields-filled.pdf"), "default output name");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved filled.pdf")), "saved notice");
+    // Save As semantics: the tab now shows the saved copy, with its own (filled) values and no pending changes.
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('.tab-label[aria-current=page] .name')?.textContent")) === "filled.pdf", "tab switched to the copy");
+    await s.waitFor(field("full_name"));
+    await s.waitUntil(async () => JSON.stringify(await state()).replace(/\\r/g, "") === want, "saved copy shows the filled values");
+    assert((await unsavedText(s)) === "", "no unsaved changes after saving");
+  });
+  assert(existsSync(out), "filled copy exists");
+  assert(sha(src) === before, "source PDF unchanged");
+  if (CLI) {
+    const listing = execFileSync(CLI, ["fields", out], { encoding: "utf8" });
+    for (const needle of ['full_name  (text) = "Ada Lovelace"', "subscribe  (checkbox) = checked", "options: basic [pro]", 'country  (combo) = "Japan"']) {
+      assert(listing.includes(needle), `CLI sees "${needle}" in the saved file:\n${listing}`);
+    }
+  }
+});
+
+await test("organize pages: keyboard reorder, rotate, duplicate; saved file verified independently", async () => {
+  const out = join(work, "organized.pdf");
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "Shift", "O"]);
+    await s.waitFor(".organize-grid");
+    assert((await s.exec("return document.activeElement?.classList.contains('organize-grid')")) === true, "page grid has focus");
+    assert((await s.attr('[data-testid="organize-save"]', "aria-disabled")) === "true", "Save disabled until something changes");
+    const refs = () => s.exec("return [...document.querySelectorAll('[data-page-ref]')].map(t => t.dataset.pageRef)");
+    await s.keys(["End"]);
+    for (let i = 0; i < 4; i++) await s.keys(["Control", "ArrowLeft"]); // page 5 to the front
+    await s.keys(["r"]); // turn it right
+    await s.keys(["Control", "d"]); // and duplicate it
+    const got = JSON.stringify(await refs());
+    assert(got === JSON.stringify(["0:4:90", "0:4:90", "0:0:0", "0:1:0", "0:2:0", "0:3:0"]), `tiles after keyboard edits: ${got}`);
+    await axeCheck(s, "organize-dialog");
+    writeFileSync(join(ART, "organize.png"), await s.screenshot());
+    await s.type("#organize-output", out);
+    await s.click('[data-testid="organize-save"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved organized.pdf")), "saved notice");
+  });
+  assert(existsSync(out), "organized file exists");
+  if (CLI) {
+    const info = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data;
+    assert(info.page_count === 6, `6 pages (got ${info.page_count})`);
+    assert(JSON.stringify(info.pages.map((p) => p.rotation)) === "[90,90,0,0,0,0]", `rotations ${JSON.stringify(info.pages.map((p) => p.rotation))}`);
+    const text = JSON.parse(execFileSync(CLI, ["--json", "text", out], { encoding: "utf8" })).result.data.pages.map((p) => p.text);
+    const marks = text.map((t) => (t.match(/PWMARK\d{3}/) ?? ["?"])[0]);
+    assert(JSON.stringify(marks) === JSON.stringify(["PWMARK005", "PWMARK005", "PWMARK001", "PWMARK002", "PWMARK003", "PWMARK004"]), `page order ${marks}`);
+  }
+});
+
+await test("page numbers: template preview, validation, saved numbers verified by the CLI", async () => {
+  const out = join(work, "numbered.pdf");
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Page numbers");
+    await s.click('[role="option"][data-command="pages.stamp"]');
+    await s.waitFor("#stamp-text");
+    assert((await s.text("#stamp-help")).includes("“Page 1 of 5”"), "live example of the default template");
+    await s.type("#stamp-text", "Doc {page}");
+    await s.type("#stamp-digits", "3");
+    await s.waitUntil(async () => (await s.text("#stamp-help")).includes("“Doc 001”"), "preview follows the template and digits");
+    await s.type("#stamp-size", "200");
+    await s.waitUntil(async () => (await s.attr('[data-testid="tool-start"]', "title")) === "Use a text size from 4 to 72.", "invalid size blocks Start with a reason");
+    await s.type("#stamp-size", "11");
+    await axeCheck(s, "stamp-dialog");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved numbered.pdf")), "saved notice");
+  });
+  assert(existsSync(out), "numbered file exists");
+  if (CLI) {
+    const pages = JSON.parse(execFileSync(CLI, ["--json", "text", out], { encoding: "utf8" })).result.data.pages.map((p) => p.text.replace(/\s+/g, ""));
+    pages.forEach((t, i) => assert(t.includes(`Doc${String(i + 1).padStart(3, "0")}`), `page ${i + 1} carries its number: ${t.slice(-40)}`));
+  }
+});
+
+await test("page reload: open documents come back as tabs and render", async () => {
+  await withApp([join(FIX, "single-page.pdf"), join(FIX, "five-pages.pdf")], async (s) => {
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label').length")) === 2, "two tabs");
+    await pageLoaded(s, 0);
+    // reload() returns before navigation starts: mark the old page so its tabs are not counted.
+    await s.exec("window.__beforeReload = true; location.reload(); return 1");
+    await s.waitUntil(
+      async () => (await s.exec("return window.__beforeReload ? -1 : document.querySelectorAll('.tab-label .name').length").catch(() => -1)) === 2,
+      "both tabs restored after reload",
+      20000,
+    );
+    const names = await s.exec("return [...document.querySelectorAll('.tab-label .name')].map(n => n.textContent)");
+    assert(JSON.stringify(names) === JSON.stringify(["single-page.pdf", "five-pages.pdf"]), `tab order kept (${names})`);
+    await pageLoaded(s, 0);
+    assert((await s.exec("return document.querySelector('.tab-label[aria-current=page] .name').textContent")) === "five-pages.pdf", "last document active");
+  });
+});
+
+await test("export pages as images: page range and resolution; PNG files written with the right size", async () => {
+  const dir = mkdtempSync(join(work, "images-"));
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Export pages");
+    await s.click('[role="option"][data-command="pages.exportImages"]');
+    await s.waitFor("#export-dpi");
+    await s.click('[role="dialog"] input[type="checkbox"]'); // untick "All pages"
+    await s.type("#pages", "2-3");
+    await s.waitUntil(async () => (await s.text("#pages-msg")) === "2 pages selected", "range validated");
+    await s.click('#export-dpi option[value="72"]');
+    await s.type("#output", dir);
+    await axeCheck(s, "export-images-dialog");
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved 2 files")), "saved notice");
+  });
+  const png = (n) => readFileSync(join(dir, `five-pages_p00${n}.png`));
+  for (const n of [2, 3]) {
+    const b = png(n);
+    assert(b.subarray(1, 4).toString() === "PNG", `page ${n} is a PNG`);
+    assert(b.readUInt32BE(16) === 612 && b.readUInt32BE(20) === 792, `page ${n} is 612×792 at 72 dpi (got ${b.readUInt32BE(16)}×${b.readUInt32BE(20)})`);
+  }
+  assert(!existsSync(join(dir, "five-pages_p001.png")), "only the chosen pages");
+});
+
+await test("export as text: chosen pages saved as UTF-8 text with page sections; existing file kept until Replace", async () => {
+  const dir = mkdtempSync(join(work, "text-"));
+  const out = join(dir, "five.txt");
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Export as text");
+    await s.click('[role="option"][data-command="pages.exportText"]');
+    await s.waitFor("#output");
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("five-pages.txt"), "default name is the document's with .txt");
+    await s.click('[role="dialog"] input[type="checkbox"]'); // untick "All pages"
+    await s.type("#pages", "2, 4");
+    await s.waitUntil(async () => (await s.text("#pages-msg")) === "2 pages selected", "range validated");
+    await s.type("#output", out);
+    await axeCheck(s, "export-text-dialog");
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved five.txt")), "saved notice");
+    const text = readFileSync(out, "utf8");
+    assert(text.includes("--- Page 2 ---\r\n") && text.includes("PWMARK002") && text.includes("PWMARK004"), "chosen pages written");
+    assert(!text.includes("PWMARK001") && !text.includes("PWMARK003"), "other pages left out");
+    // A second export to the same name asks before replacing.
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Export as text");
+    await s.click('[role="option"][data-command="pages.exportText"]');
+    await s.waitFor("#output");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(
+      async () => await s.exec("return [...document.querySelectorAll('[role=dialog] .btn.danger')].some(b => b.textContent.includes('Replace'))"),
+      "conflict offered",
+    );
+    assert(readFileSync(out, "utf8") === text, "file untouched until Replace");
+    await s.exec("[...document.querySelectorAll('[role=dialog] .btn.danger')].find(b => b.textContent.includes('Replace')).click()");
+    await s.waitUntil(async () => readFileSync(out, "utf8").includes("PWMARK001"), "replaced with all pages");
+  });
+});
+
+await test("reduce file size: tab menu and palette; smaller verified copy with the same text; sizes reported; second pass refused", async () => {
+  const src = join(FIX, "uncompressed-report.pdf");
+  const before = sha(src);
+  const out = join(work, "report-smaller.pdf");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Reduce file size");
+    await s.click('[role="option"][data-command="file.reduceSize"]');
+    await s.waitFor("#output");
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("uncompressed-report-smaller.pdf"), "default name");
+    assert((await s.exec("return document.querySelector('#pages')")) === null, "whole document, no page range");
+    await s.type("#output", out);
+    await axeCheck(s, "reduce-size-dialog");
+    writeFileSync(join(ART, "reduce-size-dialog.png"), await s.screenshot());
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved report-smaller.pdf") && /% smaller/.test(t)), "saved notice with sizes");
+  });
+  assert(sha(src) === before, "source untouched");
+  assert(statSync(out).size * 3 < statSync(src).size, "at least two thirds smaller");
+  if (CLI) {
+    const t = JSON.parse(execFileSync(CLI, ["--json", "text", "--pages", "4", out], { encoding: "utf8" }));
+    assert(JSON.stringify(t.result.data.pages[0].text).includes("PWREPORT4L40"), "last line of the last page is in the copy");
+  }
+  // Second pass on the result, from the tab menu: nothing left to gain is explained, nothing written.
+  const again = join(work, "report-again.pdf");
+  await withApp([out], async (s) => {
+    await pageLoaded(s, 0);
+    await s.contextClick(".tab-label[aria-current=page]");
+    await s.click('[role="menuitem"][data-command="file.reduceSize"]');
+    await s.waitFor("#output");
+    await s.type("#output", again);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => ((await s.exec("return document.querySelector('[role=dialog] [role=alert]')?.textContent ?? null")) ?? "").includes("already compact"), "explained");
+  });
+  assert(!existsSync(again), "nothing written");
+});
+
+await test("reduce file size with image resolution: preset applied; images resampled; text kept", async () => {
+  const src = join(FIX, "photo-heavy.pdf");
+  const out = join(work, "photo-smaller.pdf");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Reduce file size");
+    await s.click('[role="option"][data-command="file.reduceSize"]');
+    await s.waitFor('[data-testid="optimize-images"]');
+    assert((await s.exec("return document.querySelector('#optimize-preset')")) === null, "preset hidden while off");
+    await s.click('[data-testid="optimize-images"]');
+    await s.waitFor("#optimize-preset");
+    assert((await s.exec("return document.querySelector('#optimize-preset').value")) === "standard", "standard by default");
+    await s.click('#optimize-preset option[value="screen"]');
+    await s.type("#output", out);
+    await axeCheck(s, "reduce-size-images-dialog");
+    writeFileSync(join(ART, "reduce-size-images-dialog.png"), await s.screenshot());
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved photo-smaller.pdf") && /% smaller/.test(t)), "saved notice");
+  });
+  assert(statSync(out).size * 3 < statSync(src).size, `at least two thirds smaller (${statSync(src).size} -> ${statSync(out).size})`);
+  if (CLI) {
+    const t = JSON.parse(execFileSync(CLI, ["--json", "text", out], { encoding: "utf8" }));
+    const all = t.result.data.pages.map((p) => p.text).join(" ");
+    for (const m of ["PWPHOTO1", "PWPHOTO2", "PWPHOTO3", "PWPHOTO4"]) assert(all.includes(m), `${m} kept`);
+  }
+});
+
+await test("compare documents: with an open tab; difference list, side-by-side highlights, keyboard and buttons", async () => {
+  await withApp([join(FIX, "compare-old.pdf"), join(FIX, "compare-new.pdf")], async (s) => {
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label .name').length")) === 2, "both open");
+    await s.click(".tab-label[data-doc]:first-of-type");
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('.tab-label[aria-current=page] .name')?.textContent ?? null")) === "compare-old.pdf", "old active");
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Compare with");
+    await s.click('[role="option"][data-command="file.compare"]');
+    await s.waitFor('[data-testid="compare-start"]');
+    assert((await s.text('[data-testid="compare-order"]')).includes("Older: compare-old.pdf · Newer: compare-new.pdf"), "order shown");
+    await axeCheck(s, "compare-choose-dialog");
+    await s.click('[data-testid="compare-start"]');
+    await s.waitFor('[data-testid="compare-summary"]');
+    assert((await s.text('[data-testid="compare-summary"]')) === "4 pages changed · 1 page inserted · 1 page deleted", `summary: ${await s.text('[data-testid="compare-summary"]')}`);
+    const kinds = await s.exec("return [...document.querySelectorAll('.compare-item .compare-kind')].map(k => k.textContent)");
+    assert(JSON.stringify(kinds) === JSON.stringify(["Replaced", "Inserted", "Deleted", "Format", "Page deleted", "Page inserted", "Moved", "Moved", "Visual", "Page size"]), `items: ${kinds}`);
+    assert((await s.exec("return document.querySelector('.compare-meta')?.textContent ?? null")).includes("Report v1"), "title change listed");
+    // First item selected: both panes show page 2 with the replaced word highlighted on each side.
+    await s.waitUntil(
+      async () => (await s.exec("return [...document.querySelectorAll('.compare-pane img')].filter(i => i.complete && i.naturalWidth > 0).length")) === 2,
+      "two page images loaded",
+    );
+    assert((await s.exec("return [...document.querySelectorAll('.compare-pane-title')].map(t => t.textContent).join('|')")) === "Old · page 2|New · page 2", "page 2 on both sides");
+    assert((await s.exec("return document.querySelectorAll('.compare-box.current').length")) === 2, "current change boxed on both sides");
+    writeFileSync(join(ART, "compare-page2.png"), await s.screenshot());
+    // Keyboard: End jumps to the last difference (page size, page 6); Up goes back one.
+    await s.click(".compare-item[data-item='0']");
+    await s.keys(["End"]);
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('.compare-item[aria-selected=true] .compare-kind')?.textContent ?? null")) === "Page size", "End selects the last item");
+    await s.click('[aria-label="Previous difference"]');
+    assert((await s.exec("return document.querySelector('.compare-item[aria-selected=true] .compare-kind').textContent")) === "Visual", "previous button");
+    // The visual change on page 5 is drawn as a box near where the shape was drawn (lower middle).
+    const box = await s.exec("const b = document.querySelectorAll('.compare-pane')[1].querySelector('.compare-box.current'); return b ? [parseFloat(b.style.left), parseFloat(b.style.top)] : null");
+    assert(box && box[0] > 40 && box[0] < 55 && box[1] > 40 && box[1] < 70, `visual box position ${box}`);
+    // An inserted page: the old side says so.
+    await s.click(".compare-item.kind-page_inserted");
+    await s.waitUntil(async () => ((await s.exec("return document.querySelector('.compare-missing')?.textContent ?? null")) ?? "") === "Not in the old document", "missing side explained");
+    await axeCheck(s, "compare-result");
+    writeFileSync(join(ART, "compare-result.png"), await s.screenshot());
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[role=dialog]')")) === null, "closed");
+    assert((await s.exec("return document.querySelectorAll('.tab-label .name').length")) === 2, "tabs unchanged");
+  });
+});
+
+await test("compare documents: another file by path; errors explained; swap order", async () => {
+  await withApp([join(FIX, "compare-new.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Compare with");
+    await s.click('[role="option"][data-command="file.compare"]');
+    await s.waitFor("#compare-path");
+    assert((await s.attr('[data-testid="compare-start"]', "title")) === "Choose the file to compare with.", "disabled with a reason");
+    const alertText = async () => (await s.exec("return document.querySelector('[role=dialog] [role=alert]')?.textContent ?? null")) ?? "";
+    await s.type("#compare-path", join(FIX, "not-a-pdf.pdf"));
+    await s.click('[data-testid="compare-start"]');
+    await s.waitUntil(async () => (await alertText()).length > 0, "error shown");
+    await s.type("#compare-path", join(FIX, "encrypted-rc4-user-password.pdf"));
+    await s.click('[data-testid="compare-start"]');
+    await s.waitUntil(async () => /password/i.test(await alertText()), "password explained");
+    // The open document is the newer version here: swap, then compare.
+    await s.type("#compare-path", join(FIX, "compare-old.pdf"));
+    await s.click('[data-testid="compare-swap"]');
+    await s.waitUntil(async () => (await s.text('[data-testid="compare-order"]')).includes("Older: compare-old.pdf · Newer: compare-new.pdf"), "swapped");
+    await s.click('[data-testid="compare-start"]');
+    await s.waitFor('[data-testid="compare-summary"]');
+    assert((await s.text('[data-testid="compare-summary"]')) === "4 pages changed · 1 page inserted · 1 page deleted", "same result after swapping");
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[role=dialog]')")) === null, "closed");
+    assert((await s.exec("return document.querySelectorAll('.tab-label .name').length")) === 1, "the compared file did not become a tab");
+  });
+});
+
+await test("signatures: status bar summary and panel for valid, tampered, edited and unsigned files; unknown signers not trusted", async () => {
+  const files = ["signed-rsa.pdf", "signed-tampered.pdf", "signed-then-edited.pdf", "five-pages.pdf"];
+  await withApp(files.map((f) => join(FIX, f)), async (s) => {
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label .name').length")) === 4, "all open");
+    const summaryOf = async (name) => {
+      await s.exec(`[...document.querySelectorAll('.tab-label')].find(t => t.textContent.includes(${JSON.stringify(name)})).click()`);
+      await s.waitUntil(async () => (await s.exec("return document.querySelector('.tab-label[aria-current=page] .name')?.textContent ?? null")) === name, `${name} active`);
+      if (name === "five-pages.pdf") {
+        await pageLoaded(s, 0);
+        return (await s.exec("return document.querySelector('[data-testid=signature-summary]')?.textContent ?? null"));
+      }
+      await s.waitFor('[data-testid="signature-summary"]');
+      return s.text('[data-testid="signature-summary"]');
+    };
+    assert((await summaryOf("signed-rsa.pdf")) === "Signed, signer not trusted", "valid signature, unknown signer");
+    assert((await summaryOf("signed-tampered.pdf")) === "Signature invalid", "tampered");
+    assert((await summaryOf("signed-then-edited.pdf")) === "Signed, changed since", "edited after signing");
+    assert((await summaryOf("five-pages.pdf")) === null, "unsigned: no indicator");
+
+    // Panel details for the tampered file, opened from the status bar.
+    await summaryOf("signed-tampered.pdf");
+    await s.click('[data-testid="signature-summary"]');
+    await s.waitFor('#sb-tab-signatures[aria-selected="true"]');
+    await s.waitFor('[data-signature="0"]');
+    assert((await s.text('[data-signature="0"] [data-testid="signature-status"]')) === "Invalid", "panel status");
+    const panel = await s.exec("return document.querySelector('.signatures').textContent");
+    assert(panel.includes("PageWeave Test Signer") && panel.includes("changed after it was signed"), "signer and reason shown");
+    assert(panel.includes("Revocation") && panel.includes("not checked"), "what is not checked is said");
+    await axeCheck(s, "signatures-panel");
+    writeFileSync(join(ART, "signatures-panel.png"), await s.screenshot());
+
+    // Valid file: status and the field's page link.
+    await summaryOf("signed-rsa.pdf");
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-signature=\"0\"] [data-testid=signature-status]')?.textContent ?? null")) === "Valid, signer unknown", "valid in panel, signer unknown");
+    await s.exec("[...document.querySelectorAll('.signature .btn.link')].find(b => b.textContent === 'Go to page 1').click()");
+
+    // Unsigned file via the palette command.
+    await summaryOf("five-pages.pdf");
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Show signatures");
+    await s.click('[role="option"][data-command="view.showSignatures"]');
+    await s.waitUntil(async () => ((await s.exec("return document.querySelector('.signatures')?.textContent ?? null")) ?? "").includes("not digitally signed"), "unsigned explained");
+  });
+});
+
+await test("print: Ctrl+P, page range and resolution; prepared pages at page size handed to the print UI; cleaned up afterwards", async () => {
+  await withApp([join(FIX, "mixed-sizes-rotated.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    // The platform print UI cannot be driven here: record what would be printed instead.
+    await s.exec(`window.__prints = [];
+      window.print = () => {
+        const root = document.querySelector('#print-root');
+        window.__prints.push({
+          sheets: [...root.querySelectorAll('.print-sheet')].map(d => [d.style.width, d.style.height, d.style.getPropertyValue('page')]),
+          images: [...root.querySelectorAll('img')].map(i => [i.complete, i.naturalWidth, i.naturalHeight]),
+          css: document.querySelector('#print-css').textContent,
+        });
+      }; return 1`);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "p"]);
+    await s.waitFor('[data-testid="print-start"]');
+    await s.click('[data-testid="print-range"]');
+    await s.type("#print-pages", "2-3");
+    await s.waitUntil(async () => (await s.text("#print-pages-msg")) === "2 pages selected", "range validated");
+    await s.click('#print-quality option[value="standard"]');
+    await axeCheck(s, "print-dialog");
+    await s.click('[data-testid="print-start"]');
+    await s.waitUntil(async () => (await s.exec("return window.__prints.length")) === 1, "print UI opened once");
+    const job = await s.exec("return window.__prints[0]");
+    // Where the driver supports W3C "Print Page", render with print media while the pages are
+    // prepared: exactly the prepared sheets print (one PDF page each), none of the app's screens.
+    try {
+      const pdf = Buffer.from(await s.cmd("POST", "/print", { background: true }), "base64");
+      const out = join(ART, "print-media.pdf");
+      writeFileSync(out, pdf);
+      if (CLI) {
+        const info = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data;
+        assert(info.page_count === 2, `print media renders the 2 prepared pages (got ${info.page_count})`);
+      }
+    } catch (e) {
+      console.log(`  note: WebDriver print-to-PDF unavailable here (${String(e.message ?? e).slice(0, 100)}); sheet layout checked from the DOM only`);
+    }
+    await s.exec("window.dispatchEvent(new Event('afterprint')); return 1");
+    // Page 2 is A4; page 3 is Letter turned 90° (printed landscape, as displayed).
+    assert(JSON.stringify(job.sheets.map((x) => [x[0], x[1]])) === JSON.stringify([["595pt", "842pt"], ["792pt", "612pt"]]), `sheet sizes ${JSON.stringify(job.sheets)}`);
+    assert(job.images.every((i) => i[0] && i[1] > 0), "every page image loaded before printing");
+    assert(Math.abs(job.images[0][1] - Math.round((595 * 150) / 72)) <= 2, `A4 at 150 dpi is ~1240 px wide (${job.images[0][1]})`);
+    assert(job.css.includes("size: 595pt 842pt") && job.css.includes("size: 792pt 612pt"), "page sizes in @page rules");
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[role=dialog]')")) === null, "dialog closes after printing");
+    assert((await s.exec("return document.querySelector('#print-root')")) === null, "prepared pages removed");
+    // Ctrl+P inside a text field never reaches the browser's own print (which would print the
+    // app's screens): the key's default action is prevented. (Listener added after the app's.)
+    await s.exec("window.addEventListener('keydown', (e) => { if (e.ctrlKey && e.key.toLowerCase() === 'p') window.__ctrlPPrevented = e.defaultPrevented; }); return 1");
+    await s.keys(["Control", "f"]);
+    await s.waitFor(".searchbar input");
+    await s.keys(["Control", "p"]);
+    assert((await s.exec("return window.__ctrlPPrevented")) === true, "browser print prevented in a text field");
+  });
+});
+
+await test("straighten pages: Pages menu; skewed scans turned straight, text page left; verified by measuring the copy", async () => {
+  const out = join(work, "straightened.pdf");
+  await withApp([join(FIX, "skewed-scan.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Straighten");
+    await s.click('[role="option"][data-command="pages.deskew"]');
+    await s.waitFor("#output");
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("skewed-scan-straightened.pdf"), "default name");
+    await s.type("#output", out);
+    await axeCheck(s, "deskew-dialog");
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved straightened.pdf") && t.includes("3 pages straightened")), "saved notice");
+  });
+  if (CLI) {
+    // Measuring the copy again finds nothing left to straighten.
+    const again = spawnSync(CLI, ["--json", "deskew", "-o", join(work, "again.pdf"), out], { encoding: "utf8" });
+    assert(JSON.parse(again.stdout).error.code === "deskew.nothing", `copy is straight: ${again.stdout.slice(0, 200)}`);
+  }
+  // Nothing to do: the dialog explains and writes nothing.
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Straighten");
+    await s.click('[role="option"][data-command="pages.deskew"]');
+    await s.waitFor("#output");
+    await s.type("#output", join(work, "never.pdf"));
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => ((await s.exec("return document.querySelector('[role=dialog] [role=alert]')?.textContent ?? null")) ?? "").includes("No page needed straightening"), "explained");
+  });
+  assert(!existsSync(join(work, "never.pdf")), "nothing written");
+});
+
+await test("remove blank pages: found with thumbnails; sensitivity; untick one; removed into a new file", async () => {
+  const out = join(work, "no-blank.pdf");
+  await withApp([join(FIX, "blank-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Remove blank");
+    await s.click('[role="option"][data-command="pages.removeBlank"]');
+    // Standard: the empty page (2) and the dusty scan (3); the page number page and faint table stay.
+    await s.waitUntil(async () => (await s.exec("return [...document.querySelectorAll('[data-blank-page]')].map(c => c.dataset.blankPage).join(',')")) === "1,2", "pages 2 and 3 found");
+    assert((await s.text('[data-testid="blank-remove"]')) === "Remove 2 pages", "count on the button");
+    // Only truly empty pages: the dusty scan is no longer listed.
+    await s.click('#blank-preset option[value="empty"]');
+    await s.waitUntil(async () => (await s.exec("return [...document.querySelectorAll('[data-blank-page]')].map(c => c.dataset.blankPage).join(',')")) === "1", "only page 2");
+    await s.click('#blank-preset option[value="standard"]');
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('[data-blank-page]').length")) === 2, "back to two");
+    await s.click('[data-blank-page="2"]'); // keep the dusty scan after all
+    assert((await s.text('[data-testid="blank-remove"]')) === "Remove 1 page", "unticked");
+    await s.type("#blank-output", out);
+    await axeCheck(s, "remove-blank-dialog");
+    writeFileSync(join(ART, "remove-blank-dialog.png"), await s.screenshot());
+    await s.click('[data-testid="blank-remove"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved no-blank.pdf")), "saved notice");
+  });
+  if (CLI) {
+    const info = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data;
+    assert(info.page_count === 5, `one page removed (${info.page_count})`);
+    const t = JSON.parse(execFileSync(CLI, ["--json", "text", out], { encoding: "utf8" })).result.data.pages.map((p) => p.text).join(" ");
+    assert(t.includes("PWBLANK1") && t.includes("PWBLANK6"), "text pages kept");
+  }
+  // A document without blank pages says so and offers nothing to remove.
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Remove blank");
+    await s.click('[role="option"][data-command="pages.removeBlank"]');
+    await s.waitFor('[data-testid="blank-none"]');
+    assert((await s.attr('[data-testid="blank-remove"]', "title")) === "No blank pages found.", "disabled with a reason");
+  });
+});
+
+await test("extract images: Pages menu; JPEG saved exactly, others as PNG, repeats once; none found explained", async () => {
+  const dir = mkdtempSync(join(work, "extract-"));
+  await withApp([join(FIX, "photo-heavy.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Extract images");
+    await s.click('[role="option"][data-command="pages.extractImages"]');
+    await s.waitFor("#output");
+    await s.type("#output", dir);
+    await axeCheck(s, "extract-images-dialog");
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved 4 files")), "saved notice");
+  });
+  const files = readdirSync(dir).sort();
+  assert(JSON.stringify(files) === JSON.stringify(["photo-heavy_p001_01.jpg", "photo-heavy_p002_01.png", "photo-heavy_p003_01.png", "photo-heavy_p003_02.png"]), `files: ${files}`);
+  assert(readFileSync(join(dir, files[0])).subarray(0, 2).toString("hex") === "ffd8", "a JPEG file");
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Extract images");
+    await s.click('[role="option"][data-command="pages.extractImages"]');
+    await s.waitFor("#output");
+    await s.type("#output", dir);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => ((await s.exec("return document.querySelector('[role=dialog] [role=alert]')?.textContent ?? null")) ?? "").includes("no embedded images"), "explained");
+  });
+});
+
+await test("turn pages upright: Pages menu; sideways and upside-down scans turned; verified rotations", async () => {
+  const out = join(work, "upright.pdf");
+  await withApp([join(FIX, "turned-scan.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Turn pages upright");
+    await s.click('[role="option"][data-command="pages.orient"]');
+    await s.waitFor("#output");
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("turned-scan-upright.pdf"), "default name");
+    // Two pages keep the scenario short (each page is read four times).
+    await s.click('[role="dialog"] input[type="checkbox"]'); // untick "All pages"
+    await s.type("#pages", "1-2");
+    await s.type("#output", out);
+    await axeCheck(s, "orient-dialog");
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved upright.pdf") && t.includes("2 pages turned upright")), "saved notice", 180000);
+  });
+  if (CLI) {
+    const info = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data;
+    const rot = info.pages.map((p) => p.rotation);
+    assert(JSON.stringify(rot.slice(0, 3)) === "[90,180,0]", `rotations ${JSON.stringify(rot)}`);
+  }
+});
+
+await test("sign with a certificate: wrong password explained; visible signature placed as previewed; verified valid", async () => {
+  const out = join(work, "signed.pdf");
+  const cert = join(FIX, "..", "keys", "test-signer-rsa.p12");
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Sign with a certificate");
+    await s.click('[role="option"][data-command="file.sign"]');
+    await s.waitFor("#sign-cert");
+    assert((await s.attr('[data-testid="sign-start"]', "title")) === "Choose your certificate file (.pfx or .p12).", "blocked with a reason");
+    await s.type("#sign-cert", cert);
+    await s.type("#sign-pw", "wrong-password");
+    await s.type("#sign-reason", "Approved");
+    await s.type("#sign-output", out);
+    await s.waitFor('[data-testid="placement-box"]');
+    await axeCheck(s, "sign-dialog");
+    writeFileSync(join(ART, "sign-dialog.png"), await s.screenshot());
+    await s.click('[data-testid="sign-start"]');
+    await s.waitUntil(async () => ((await s.exec("return document.querySelector('[role=dialog] [role=alert]')?.textContent ?? null")) ?? "").includes("password is not correct"), "wrong password explained");
+    assert(!existsSync(out), "nothing written");
+    await s.exec("const i = document.querySelector('#sign-pw'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, ''); i.dispatchEvent(new Event('input', { bubbles: true })); return 1");
+    await s.type("#sign-pw", "pageweave-test");
+    await s.click('[data-testid="sign-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved signed.pdf") && t.includes("Signed as PageWeave Test Signer")), "saved notice");
+  });
+  if (CLI) {
+    const v = JSON.parse(execFileSync(CLI, ["--json", "signatures", out], { encoding: "utf8" })).result.data.signatures;
+    assert(v.length === 1 && v[0].status === "valid" && v[0].covers_whole_file && v[0].page === 0 && v[0].reason === "Approved", `verified: ${JSON.stringify(v).slice(0, 300)}`);
+  }
+});
+
+await test("signature or initials: typed and drawn (pointer) placed as previewed; labelled as not a digital signature", async () => {
+  const typedOut = join(work, "typed-sig.pdf");
+  const drawnOut = join(work, "drawn-sig.pdf");
+  const open = async (s) => {
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Add signature or initials");
+    await s.click('[role="option"][data-command="file.signatureMark"]');
+    await s.waitFor("#mark-text");
+  };
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await open(s);
+    assert((await s.text('[role="dialog"] .hint')).includes("not a digital signature"), "honest label");
+    assert((await s.attr('[data-testid="mark-start"]', "title")) === "Type your name or initials.", "blocked with a reason");
+    await s.type("#mark-text", "Ada Lovelace");
+    // The preview is decorative (aria-hidden), which WebDriver reports as not displayed.
+    assert((await s.exec("return document.querySelector('.typed-preview').textContent")) === "Ada Lovelace", "preview");
+    await s.replaceText("#mark-output", typedOut);
+    await s.waitFor('[data-testid="placement-box"]');
+    await axeCheck(s, "signature-mark-dialog");
+    writeFileSync(join(ART, "signature-mark-typed.png"), await s.screenshot());
+    await s.click('[data-testid="mark-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved typed-sig.pdf")), "typed saved");
+    // Drawn: real pointer strokes on the pad.
+    await open(s);
+    await s.click("#mark-tab-drawn");
+    await s.waitFor('[data-testid="signature-pad"]');
+    assert((await s.attr('[data-testid="mark-start"]', "title")) === "Draw your signature first.", "draw first");
+    const r = await s.exec("const b = document.querySelector('[data-testid=signature-pad]').getBoundingClientRect(); return [b.left, b.top, b.width, b.height]");
+    const [x, y, w, h] = r;
+    await s.dragAt(x + w * 0.1, y + h * 0.6, x + w * 0.5, y + h * 0.3, 10);
+    await s.dragAt(x + w * 0.5, y + h * 0.3, x + w * 0.9, y + h * 0.7, 10);
+    assert((await s.attr('[data-testid="signature-pad"]', "aria-label")) === "Signature drawing, 2 strokes", "two strokes recorded");
+    await s.click('[data-testid="pad-clear"]');
+    assert((await s.attr('[data-testid="signature-pad"]', "aria-label")) === "Empty signature drawing area", "cleared");
+    await s.dragAt(x + w * 0.1, y + h * 0.5, x + w * 0.9, y + h * 0.5, 10);
+    await s.click('#mark-position option[value="top-left"]');
+    await s.replaceText("#mark-output", drawnOut);
+    writeFileSync(join(ART, "signature-mark-drawn.png"), await s.screenshot());
+    await s.click('[data-testid="mark-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved drawn-sig.pdf")), "drawn saved");
+  });
+  if (CLI) {
+    const t = JSON.parse(execFileSync(CLI, ["--json", "text", "--pages", "1", typedOut], { encoding: "utf8" })).result.data.pages[0].text;
+    assert(t.includes("Ada Lovelace"), "typed name is text in the copy");
+    assert(statSync(drawnOut).size > statSync(join(FIX, "five-pages.pdf")).size, "drawn copy written");
+  }
+});
+
+await test("trust a signer: unknown → trust the CA after seeing its fingerprint → trusted; remove → unknown again", async () => {
+  if (!CLI) throw new Skip("needs the CLI to sign the test file");
+  const signed = join(work, "to-trust.pdf");
+  const r = spawnSync(CLI, ["sign", "--certificate", join(FIX, "..", "keys", "test-signer-rsa.p12"), "-o", signed, join(FIX, "five-pages.pdf")], { input: "pageweave-test\n", encoding: "utf8" });
+  assert(r.status === 0, `signed: ${r.stderr}`);
+  await withApp([signed], async (s) => {
+    await s.waitFor('[data-testid="signature-summary"]');
+    assert((await s.text('[data-testid="signature-summary"]')) === "Signed, signer not trusted", "unknown at first");
+    await s.click('[data-testid="signature-summary"]');
+    await s.waitFor('[data-testid="trust-signer"]');
+    await s.click('[data-testid="trust-signer"]');
+    await s.waitFor('[data-trust-position="1"]');
+    const dialog = await s.text('[role="dialog"]');
+    assert(dialog.includes("Only PageWeave Test Signer") && dialog.includes("Everything issued by PageWeave Test CA"), "both choices offered");
+    assert(/([0-9A-F]{2}:){31}[0-9A-F]{2}/.test(dialog), "fingerprints shown");
+    await axeCheck(s, "trust-dialog");
+    await s.click('[data-trust-position="1"]');
+    await s.click('[data-testid="trust-confirm"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Trusted PageWeave Test CA")), "trusted notice");
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=signature-summary]')?.textContent ?? null")) === "Signed", "status bar now trusted");
+    assert((await s.text('[data-signature="0"] [data-testid="signature-status"]')) === "Valid, trusted", "panel trusted");
+    assert((await s.exec("return document.querySelector('.signatures').textContent")).includes("PageWeave Test Signer → PageWeave Test CA"), "chain shown");
+    writeFileSync(join(ART, "signatures-trusted.png"), await s.screenshot());
+    // Manage from the palette, then from the panel link; remove the trust again (also leaves later
+    // scenarios unaffected).
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Trusted certificates");
+    await s.click('[role="option"][data-command="file.trustedCertificates"]');
+    await s.waitFor('[data-trusted="PageWeave Test CA"]');
+    await s.keys(["Escape"]);
+    await s.exec("[...document.querySelectorAll('.signatures .btn.link')].find(b => b.textContent.startsWith('Trusted certificates')).click()");
+    await s.waitFor('[data-trusted="PageWeave Test CA"]');
+    await axeCheck(s, "trusted-certificates-dialog");
+    await s.click('[aria-label="Remove PageWeave Test CA from trusted certificates"]');
+    await s.waitFor('[data-testid="trusted-none"]');
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=signature-summary]')?.textContent ?? null")) === "Signed, signer not trusted", "unknown again");
+  });
+});
+
+await test("edit text and pictures: inline text edit, drag and turn a picture, add text, undo/redo; saved copy verified", async () => {
+  const out = join(work, "content-edited.pdf");
+  await withApp([join(FIX, "embedded-font.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "e"]);
+    await s.waitFor('[data-testid="edit-layer"]');
+    assert((await s.attr('[data-command="edit.toggleEditMode"]', "aria-pressed")) === "true", "Edit mode shown as on");
+    await s.waitFor('[data-edit-text="0"]');
+    assert((await s.attr('[data-edit-text="0"]', "aria-label")) === "Edit text: Invoice 2026 total due", "text run listed");
+    // Text: click the run, change the wording inline, Enter commits.
+    await s.click('[data-edit-text="0"]');
+    await s.replaceText('[data-testid="edit-text-input"]', "Invoice 2026 total sum");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => (await s.attr('[data-edit-text="0"]', "aria-label")) === "Edit text: Invoice 2026 total sum", "edit recorded");
+    await s.waitFor('[data-testid="edit-preview"]');
+    // Escape in the inline field cancels without recording a change.
+    await s.click('[data-edit-text="2"]');
+    await s.replaceText('[data-testid="edit-text-input"]', "never saved");
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => (await s.exec("return !document.querySelector('[data-testid=edit-text-input]')")) === true, "cancelled");
+    assert((await s.exec("return !!document.querySelector('[data-testid=edit-layer]')")) === true, "Escape in the field keeps Edit mode");
+    await s.waitUntil(async () => (await unsavedText(s)) === "1 unsaved change", "one change");
+    // Picture: drag it to the right with the pointer, then turn it from its toolbar.
+    const [x, y, w, h] = await s.exec("const b = document.querySelector('[data-edit-image=\"0\"]').getBoundingClientRect(); return [b.left, b.top, b.width, b.height]");
+    await s.dragAt(x + w / 2, y + h / 2, x + w / 2 + 120, y + h / 2, 10);
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-edit-image=\"0\"]').getBoundingClientRect().left")) > x + 100, "box follows the move");
+    await s.click('[data-edit-image="0"]');
+    await s.click('[aria-label="Turn picture 90° clockwise"]');
+    await s.waitUntil(async () => (await unsavedText(s)) === "3 unsaved changes", "move and turn recorded");
+    // The toolbar's Delete removes the picture's box; undo brings it back.
+    await s.click('[aria-label="Delete picture"]');
+    await s.waitUntil(async () => (await s.exec("return !document.querySelector('[data-edit-image]')")) === true, "picture deleted");
+    await s.keys(["Control", "z"]);
+    await s.waitUntil(async () => (await s.exec("return !!document.querySelector('[data-edit-image]')")) === true, "delete undone");
+    await s.waitUntil(async () => (await unsavedText(s)) === "3 unsaved changes", "still three changes");
+    // Add text: arm the tool, click on the page, type, Enter.
+    await s.click('[data-command="edit.addText"]');
+    await s.click('[data-testid="add-text-capture"]');
+    await s.type('[data-testid="add-text-input"]', "PWADDED note");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => (await unsavedText(s)) === "4 unsaved changes", "added text recorded");
+    // Undo and redo walk the content edits.
+    await s.keys(["Control", "z"]);
+    await s.waitUntil(async () => (await unsavedText(s)) === "3 unsaved changes", "undo");
+    await s.keys(["Control", "y"]);
+    await s.waitUntil(async () => (await unsavedText(s)) === "4 unsaved changes", "redo");
+    await axeCheck(s, "edit-mode");
+    writeFileSync(join(ART, "edit-mode.png"), await s.screenshot());
+    // Escape on the page leaves Edit mode; the edits stay pending.
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => (await s.exec("return !document.querySelector('[data-testid=edit-layer]')")) === true, "Edit mode off");
+    await s.keys(["Control", "s"]);
+    await s.waitFor("#output");
+    assert((await s.text('[role="dialog"] .hint')).includes("4 content edits"), "save dialog counts the content edits");
+    await s.replaceText("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved content-edited.pdf")), "saved notice");
+    await s.waitUntil(async () => (await unsavedText(s)) === "", "pending edits cleared after saving");
+  });
+  assert(existsSync(out), "edited copy exists");
+  if (CLI) {
+    const t = JSON.parse(execFileSync(CLI, ["--json", "text", "--pages", "1", out], { encoding: "utf8" })).result.data.pages[0].text;
+    assert(t.includes("Invoice 2026 total sum") && !t.includes("total due"), `text replaced: ${t}`);
+    assert(t.includes("PWADDED note"), "added text present");
+    assert(t.includes("Standard font line"), "cancelled edit not applied");
+    const objs = JSON.parse(execFileSync(CLI, ["--json", "objects", "--page", "1", out], { encoding: "utf8" })).result.data;
+    assert(objs.images.length === 1 && objs.images[0].width_px === 80 && objs.images[0].height_px === 120, `picture turned: ${JSON.stringify(objs.images)}`);
+    const before = JSON.parse(execFileSync(CLI, ["--json", "objects", "--page", "1", join(FIX, "embedded-font.pdf")], { encoding: "utf8" })).result.data;
+    assert(objs.images[0].rect.left > before.images[0].rect.left + 40, "picture moved right");
+  }
+});
+
+await test("protect with password: AES-256 copy needs the password; wrong password refused; content intact", async () => {
+  const src = join(FIX, "five-pages.pdf");
+  const before = sha(src);
+  const out = join(work, "locked.pdf");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Protect with password");
+    await s.click('[role="option"][data-command="file.protect"]');
+    await s.waitFor("#protect-pw");
+    const reason = () => s.attr('[data-testid="protect-start"]', "title");
+    assert((await reason()) === "Enter a password.", "disabled with a reason until a password is entered");
+    await s.type("#protect-pw", "E2e-pw 1");
+    await s.type("#protect-confirm", "E2e-pw 2");
+    await s.waitUntil(async () => (await reason()) === "The passwords do not match.", "mismatch explained");
+    assert((await s.attr("#protect-pw", "type")) === "password", "hidden by default");
+    await s.click('button[aria-label="Show passwords"]');
+    assert((await s.attr("#protect-pw", "type")) === "text", "show toggle reveals");
+    await s.click('button[aria-label="Hide passwords"]');
+    await s.type("#protect-confirm", "E2e-pw 1");
+    await s.click('input[data-perm="print"]');
+    await s.waitFor("#protect-owner");
+    await s.type("#protect-output", out);
+    await axeCheck(s, "protect-dialog");
+    await s.waitUntil(async () => (await s.attr('[data-testid="protect-start"]', "aria-disabled")) === null, "ready");
+    await s.click('[data-testid="protect-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved locked.pdf")), "saved notice", 30000);
+    // Open the copy: it asks for the password; a wrong one is refused.
+    await s.exec("[...document.querySelectorAll('.notice button')].find(b => b.textContent === 'Open').click(); return 1");
+    await s.waitFor("#pdf-password");
+    await s.type("#pdf-password", "wrong");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => (await s.text("#pw-err")).length > 0, "wrong password message");
+    await s.type("#pdf-password", "E2e-pw 1");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => (await s.exec("return [...document.querySelectorAll('.tab-label .name')].map(n => n.textContent)")).includes("locked.pdf"), "opens with the password");
+    await pageLoaded(s, 0);
+  });
+  assert(sha(src) === before, "source PDF unchanged");
+  assert(!readFileSync(out).toString("latin1").includes("PWMARK"), "content not readable without decrypting");
+  if (CLI) {
+    const locked = spawnSync(CLI, ["inspect", out]);
+    assert(locked.status === 5, `CLI needs the password (exit ${locked.status})`);
+    const r = spawnSync(CLI, ["--json", "--password-stdin", "text", "--pages", "4", out], { input: "E2e-pw 1\n", encoding: "utf8" });
+    assert(r.status === 0 && JSON.parse(r.stdout).result.data.pages[0].text.includes("PWMARK004"), `independent text check: ${r.stdout.slice(0, 200)}`);
+  }
+});
+
+await test("images to PDF: opens from the start screen; explains what is missing; accessible", async () => {
+  await withApp([], async (s) => {
+    await s.click('[data-command="file.imagesToPdf"]');
+    await s.waitFor('[data-testid="images-start"]');
+    assert((await s.attr('[data-testid="images-start"]', "title")) === "Add images first.", "disabled with a reason");
+    assert((await s.text('[role="dialog"] h2')) === "Create PDF from images", "dialog title");
+    await axeCheck(s, "images-to-pdf-dialog");
+    writeFileSync(join(ART, "images-to-pdf-dialog.png"), await s.screenshot());
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[role=dialog]')")) === null, "closed");
+  });
+  if (CLI) {
+    // The conversion itself, through the same engine (the native file picker cannot be automated).
+    const out = join(work, "from-images.pdf");
+    execFileSync(CLI, ["images-to-pdf", join(FIX, "../images/photo-exif-rotate.jpg"), join(FIX, "../images/alpha.png"), "-o", out]);
+    const v = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data;
+    assert(v.page_count === 2 && v.pages[0].rotation === 90, `converted: ${JSON.stringify(v.pages.map((p) => p.rotation))}`);
+  }
+});
+
+await test("bookmarks: add from the page menu, rename, nest, reorder, delete; saved outline read back exactly", async () => {
+  const src = join(FIX, "five-pages.pdf");
+  const before = sha(src);
+  const out = join(work, "outline.pdf");
+  const titles = (s) => s.exec("return [...document.querySelectorAll('[data-bookmark-title]')].map(i => i.value)");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.contextClick('[data-page="0"]');
+    await s.waitFor('[role="menu"]');
+    assert((await s.text('[role="menuitem"][data-command="file.editBookmarks"]')).startsWith("Add bookmark for page 1"), "menu entry names the page");
+    await s.click('[role="menuitem"][data-command="file.editBookmarks"]');
+    await s.waitFor('[data-bookmark-title="5"]');
+    assert(JSON.stringify(await titles(s)) === JSON.stringify(["Chapter 1", "Chapter 2", "Chapter 3", "Chapter 4", "Chapter 5", "Page 1"]), `rows: ${await titles(s)}`);
+    // Rename the new one and make it a sub-bookmark of Chapter 5.
+    await s.type('[data-bookmark-title="5"]', "Summary");
+    await s.click('[data-testid="bookmark-indent"]');
+    // A sub-bookmark cannot move above its parent's siblings: Move up is disabled with a reason.
+    assert((await s.attr('[data-testid="bookmark-up"]', "aria-disabled")) === "true", "move up disabled for an only child");
+    // Delete Chapter 2, then move Chapter 1 down below Chapter 3.
+    await s.click('[data-bookmark-title="1"]');
+    await s.click('[data-testid="bookmark-delete"]');
+    await s.click('[data-bookmark-title="0"]');
+    await s.click('[data-testid="bookmark-down"]');
+    assert(JSON.stringify(await titles(s)) === JSON.stringify(["Chapter 3", "Chapter 1", "Chapter 4", "Chapter 5", "Summary"]), `after edits: ${await titles(s)}`);
+    // An out-of-range page blocks saving with a reason.
+    await s.replaceText('[data-bookmark-page="0"]', "9");
+    await s.waitUntil(async () => ((await s.attr('[data-testid="bookmarks-save"]', "title")) ?? "").includes("from 1 to 5"), "page range explained");
+    await s.replaceText('[data-bookmark-page="0"]', "3");
+    await s.type("#bookmarks-output", out);
+    await axeCheck(s, "edit-bookmarks-dialog");
+    writeFileSync(join(ART, "edit-bookmarks-dialog.png"), await s.screenshot());
+    await s.waitUntil(async () => (await s.attr('[data-testid="bookmarks-save"]', "aria-disabled")) === null, "ready");
+    await s.click('[data-testid="bookmarks-save"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved outline.pdf")), "saved notice", 30000);
+  });
+  assert(sha(src) === before, "source PDF unchanged");
+  if (CLI) {
+    const b = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data.bookmarks;
+    const got = b.map((x) => `${x.depth}:${x.title}@${x.page}`).join("|");
+    assert(got === "0:Chapter 3@2|0:Chapter 1@0|0:Chapter 4@3|0:Chapter 5@4|1:Summary@0", `outline read back: ${got}`);
+  }
+});
+
+await test("attachments: the sidebar lists embedded files; one is saved exactly as stored", async () => {
+  const src = join(FIX, "hidden-info.pdf");
+  const before = sha(src);
+  const out = join(work, "from-pdf.txt");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click("#sb-tab-attachments");
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-attachment=\"0\"] .name')?.textContent ?? null")) === "secret.txt", "embedded file listed");
+    await axeCheck(s, "attachments-panel");
+    await s.click('button[aria-label="Save secret.txt"]');
+    await s.waitFor("#attachment-output");
+    assert((await s.exec("return document.querySelector('#attachment-output').value")).endsWith("secret.txt"), "default name from the attachment");
+    await s.type("#attachment-output", out);
+    await axeCheck(s, "save-attachment-dialog");
+    await s.click('[data-testid="attachment-save"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved from-pdf.txt")), "saved notice", 30000);
+    const texts = await noticeTexts(s);
+    assert(texts.some((t) => t.includes("trust")), "warns to open only trusted files");
+    // A text file is not opened in PageWeave: the notice offers Show in folder, not Open.
+    const actions = await s.exec("return [...document.querySelectorAll('.notice')].filter(n => n.textContent.includes('from-pdf.txt')).flatMap(n => [...n.querySelectorAll('button')].map(b => b.textContent))");
+    assert(!actions.includes("Open") && actions.includes("Show in folder"), `notice actions: ${actions}`);
+  });
+  assert(sha(src) === before, "source PDF unchanged");
+  assert(readFileSync(out, "utf8") === "Embedded PWATTACH-DOC", "bytes exactly as stored");
+});
+
+await test("crop pages: margins in millimetres, shaded preview, rotated page cropped as displayed, verified", async () => {
+  const src = join(FIX, "mixed-sizes-rotated.pdf");
+  const before = sha(src);
+  const out = join(work, "trimmed.pdf");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Crop pages");
+    await s.click('[role="option"][data-command="pages.crop"]');
+    await s.waitFor("#crop-top");
+    assert((await s.attr('[data-testid="tool-start"]', "title")) === "Enter at least one margin to crop.", "disabled with a reason");
+    await s.type("#crop-top", "25.4");
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=crop-preview] .cut').style.height")) !== "0px", "preview shades the top");
+    await s.type("#crop-left", "500");
+    await s.waitUntil(async () => (await s.attr('[data-testid="tool-start"]', "title")) === "The margins leave almost nothing of the page.", "too much refused");
+    await s.type("#crop-left", "0");
+    await s.type("#output", out);
+    await axeCheck(s, "crop-dialog");
+    writeFileSync(join(ART, "crop-dialog.png"), await s.screenshot());
+    await s.waitUntil(async () => (await s.attr('[data-testid="tool-start"]', "aria-disabled")) === null, "ready");
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved trimmed.pdf")), "saved notice", 30000);
+    assert((await noticeTexts(s)).some((t) => t.includes("hidden, not removed")), "says cropping does not remove content");
+  });
+  assert(sha(src) === before, "source PDF unchanged");
+  if (CLI) {
+    const pages = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data.pages;
+    // 25.4 mm = 72 pt off the displayed top: page 1 (letter) gets shorter; page 3 (/Rotate 90) loses it from its left side.
+    assert(Math.abs(pages[0].height_pt - 720) < 0.1 && Math.abs(pages[0].width_pt - 612) < 0.1, `page 1: ${JSON.stringify(pages[0])}`);
+    assert(Math.abs(pages[2].width_pt - 540) < 0.1 && Math.abs(pages[2].height_pt - 792) < 0.1, `page 3: ${JSON.stringify(pages[2])}`);
+  }
+});
+
+await test("watermark: Pages menu, preview follows angle, chosen pages only, translucent result verified", async () => {
+  const src = join(FIX, "five-pages.pdf");
+  const before = sha(src);
+  const out = join(work, "stamped-draft.pdf");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.exec("[...document.querySelectorAll('button[aria-haspopup=menu]')].find(b => b.textContent.trim() === 'Pages').click(); return 1");
+    await s.click('[role="menuitem"][data-command="pages.watermark"]');
+    await s.waitFor("#wm-text");
+    assert((await s.text('[role="dialog"] h2')) === "Watermark", "dialog title");
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("five-pages-watermarked.pdf"), "default output name");
+    await s.type("#wm-text", "DRAFT COPY");
+    await s.click('[role="radio"][data-angle="0"]');
+    const transform = () => s.exec("return document.querySelector('[data-testid=wm-preview] text').getAttribute('transform')");
+    assert(/^rotate\(-?0 48 62\)$/.test(await transform()), `preview follows the angle: ${await transform()}`);
+    await s.click('[role="radio"][data-angle="45"]');
+    assert((await transform()) === "rotate(-45 48 62)", "preview at 45°");
+    assert((await s.attr('[data-testid="wm-preview"]', "aria-label")).includes("45°"), "preview has an accessible description");
+    // Only pages 2 and 4.
+    await s.click('[role="dialog"] input[type=checkbox]');
+    await s.type("#pages", "2, 4");
+    await s.waitUntil(async () => (await s.text("#pages-msg")) === "2 pages selected", "range checked");
+    await s.type("#output", out);
+    await axeCheck(s, "watermark-dialog");
+    writeFileSync(join(ART, "watermark-dialog.png"), await s.screenshot());
+    await s.waitUntil(async () => (await s.attr('[data-testid="tool-start"]', "aria-disabled")) === null, "ready");
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved stamped-draft.pdf")), "saved notice", 30000);
+    // Open the copy: the watermark is findable on page 2.
+    await s.exec("[...document.querySelectorAll('.notice button')].find(b => b.textContent === 'Open').click(); return 1");
+    await s.waitUntil(async () => (await s.exec("return [...document.querySelectorAll('.tab-label .name')].map(n => n.textContent)")).includes("stamped-draft.pdf"), "copy opened");
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "f"]);
+    await s.type('input[aria-label="Find in document"]', "DRAFT");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => /^1 of 2/.test(await s.text(".searchbar .count")), "found on two pages");
+    await s.keys(["Escape"]);
+  });
+  assert(sha(src) === before, "source PDF unchanged");
+  if (CLI) {
+    const r = JSON.parse(execFileSync(CLI, ["--json", "search", out, "DRAFT"], { encoding: "utf8" })).result.data;
+    assert(r.count === 2 && r.hits.map((h) => h.page).join() === "1,3", `independent check: ${JSON.stringify(r.hits.map((h) => h.page))}`);
+  }
+});
+
+await test("document properties: edit from the properties dialog; saved copy shows the new values; unchanged values kept", async () => {
+  const src = join(FIX, "five-pages.pdf");
+  const before = sha(src);
+  const out = join(work, "retitled.pdf");
+  const title = "Retitled — Überblick";
+  const propRows = (s) => s.exec("return Object.fromEntries([...document.querySelectorAll('[role=dialog] tr')].map(r => [r.querySelector('th').textContent, r.querySelector('td').textContent]))");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "d"]);
+    await s.waitFor('[data-command="file.editProperties"]');
+    await s.click('[data-command="file.editProperties"]');
+    await s.waitFor("#prop-title");
+    assert((await s.exec("return document.querySelector('#prop-title').value")) === "Five pages", "prefilled from the file");
+    assert((await s.attr('[data-testid="props-start"]', "title")) === "Change a property first.", "disabled until something changes");
+    await s.type("#prop-title", title);
+    // Empty the author field with real keys (select all, delete).
+    await s.click("#prop-author");
+    await s.keys(["Control", "a"]);
+    await s.keys(["Backspace"]);
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('#prop-author').value")) === "", "author emptied");
+    await s.type("#prop-subject", "Quarterly");
+    await s.type("#props-output", out);
+    await axeCheck(s, "edit-properties-dialog");
+    writeFileSync(join(ART, "edit-properties-dialog.png"), await s.screenshot());
+    await s.waitUntil(async () => (await s.attr('[data-testid="props-start"]', "aria-disabled")) === null, "ready");
+    await s.click('[data-testid="props-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved retitled.pdf")), "saved notice", 30000);
+    await s.exec("[...document.querySelectorAll('.notice button')].find(b => b.textContent === 'Open').click(); return 1");
+    await s.waitUntil(async () => (await s.exec("return [...document.querySelectorAll('.tab-label .name')].map(n => n.textContent)")).includes("retitled.pdf"), "copy opened");
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "d"]);
+    await s.waitFor('[role="dialog"] tr');
+    const rows = await propRows(s);
+    assert(rows.Title === title && rows.Author === "—" && rows.Subject === "Quarterly" && rows.Bookmarks === "5", `properties of the copy: ${JSON.stringify(rows)}`);
+    await s.keys(["Escape"]);
+  });
+  assert(sha(src) === before, "source PDF unchanged");
+  if (CLI) {
+    const v = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data;
+    assert(v.title === title && v.author === null && v.subject === "Quarterly" && v.page_count === 5, `independent check: ${JSON.stringify(v).slice(0, 200)}`);
+  }
+});
+
+await test("remove password: copy opens without a password; unavailable with a reason on unprotected files; owner restrictions honoured", async () => {
+  const src = join(FIX, "encrypted-rc4-user-password.pdf");
+  const before = sha(src);
+  const out = join(work, "unlocked.pdf");
+  const restricted = join(work, "restricted.pdf");
+  if (CLI) {
+    const r = spawnSync(CLI, ["protect", "--no-modify", "--owner-password-stdin", "-o", restricted, join(FIX, "five-pages.pdf")], { input: "reader\nowner\n" });
+    assert(r.status === 0, "restricted test file made by the CLI");
+  }
+  const openPalette = async (s, text) => {
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', text);
+    await s.waitFor('[role="option"][data-command="file.unprotect"]');
+  };
+  // withApp waits for a tab, so an unprotected file opens alongside the protected one.
+  await withApp([join(FIX, "single-page.pdf"), src], async (s) => {
+    await s.waitFor("#pdf-password");
+    await s.type("#pdf-password", "pw-user-test");
+    await s.keys(["Enter"]);
+    // Wait for the protected file's tab (the first tab may already show a page; found on Windows CI).
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label .name').length")) === 2, "both open");
+    await pageLoaded(s, 0);
+    await openPalette(s, "Remove password");
+    await s.click('[role="option"][data-command="file.unprotect"]');
+    await s.waitFor("#unprotect-output");
+    assert((await s.exec("return document.querySelector('#unprotect-output').value")).endsWith("encrypted-rc4-user-password-unprotected.pdf"), "default output name");
+    await s.type("#unprotect-output", out);
+    await axeCheck(s, "unprotect-dialog");
+    await s.click('[data-testid="unprotect-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved unlocked.pdf")), "saved notice", 30000);
+    // The copy opens straight away: no password prompt.
+    await s.exec("[...document.querySelectorAll('.notice button')].find(b => b.textContent === 'Open').click(); return 1");
+    await s.waitUntil(async () => (await s.exec("return [...document.querySelectorAll('.tab-label .name')].map(n => n.textContent)")).includes("unlocked.pdf"), "copy opened");
+    await pageLoaded(s, 0);
+    assert((await s.exec("return document.querySelector('#pdf-password')")) === null, "no password asked");
+    // On the unprotected copy the command is unavailable and says why.
+    await openPalette(s, "Remove password");
+    const reason = await s.exec("const o = document.querySelector('[data-command=\"file.unprotect\"]'); return o.getAttribute('aria-disabled') + '|' + o.textContent");
+    assert(reason.startsWith("true|") && reason.includes("not password protected"), `disabled with a reason: ${reason}`);
+    await s.keys(["Escape"]);
+  });
+  assert(sha(src) === before, "source PDF unchanged");
+  if (CLI) {
+    // A file with owner restrictions, opened with its open password: refused, nothing written.
+    const v = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data;
+    assert(v.encrypted === false && v.page_count === 5, `independent check: ${JSON.stringify(v).slice(0, 200)}`);
+    await withApp([join(FIX, "single-page.pdf"), restricted], async (s) => {
+      await s.waitFor("#pdf-password");
+      await s.type("#pdf-password", "reader");
+      await s.keys(["Enter"]);
+      await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label .name').length")) === 2, "both open");
+      await pageLoaded(s, 0);
+      await openPalette(s, "Remove password");
+      await s.click('[role="option"][data-command="file.unprotect"]');
+      await s.waitFor("#unprotect-output");
+      await s.click('[data-testid="unprotect-start"]');
+      await s.waitUntil(async () => ((await s.exec("return document.querySelector('[role=dialog] .banner.error')?.textContent ?? ''")) || "").includes("restricted"), "restriction explained", 30000);
+      assert(!existsSync(join(work, "restricted-unprotected.pdf")), "nothing written");
+    });
+  }
+});
+
+await test("remove hidden information: findings listed, verified copy has none, kept content stays; protected files refused with a reason", async () => {
+  const src = join(FIX, "hidden-info.pdf");
+  const before = sha(src);
+  const out = join(work, "cleaned.pdf");
+  // Null until the dialog has rendered (the palette closes first), so waitUntil keeps polling.
+  const finding = (s, k) => s.exec(`return document.querySelector('[data-finding=${k}]')?.textContent ?? null`);
+  await withApp([src, join(FIX, "encrypted-rc4-user-password.pdf")], async (s) => {
+    // The protected file opens with its password first; the dialog refuses it with a reason.
+    await s.waitFor("#pdf-password");
+    await s.type("#pdf-password", "pw-user-test");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label .name').length")) === 2, "both open");
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Remove hidden");
+    await s.click('[role="option"][data-command="file.sanitize"]');
+    await s.waitUntil(async () => ((await s.attr('[data-testid="sanitize-start"]', "title")) ?? "").includes("Password-protected"), "protected file refused with a reason");
+    await s.keys(["Escape"]);
+    // Switch to the file with hidden information.
+    await s.exec("[...document.querySelectorAll('.tab-label .name')].find(n => n.textContent === 'hidden-info.pdf').click(); return 1");
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Remove hidden");
+    await s.click('[role="option"][data-command="file.sanitize"]');
+    await s.waitUntil(async () => (await finding(s, "scripts")) === "7 found", "findings listed");
+    assert((await finding(s, "metadata")).startsWith("Title, Author"), "metadata kinds listed");
+    assert((await finding(s, "attachments")) === "2 found: notes.txt, secret.txt", "attachment names");
+    assert((await finding(s, "hidden_layers")) === "Draft notes", "hidden layer named");
+    assert((await finding(s, "form_fields")) === "1 found", "field found");
+    assert((await s.exec("return document.querySelector('input[data-kind=form_fields]').checked")) === false, "fields kept by default");
+    assert((await s.text('[data-testid="sanitize-always"]')).includes("were found"), "earlier versions reported");
+    assert((await s.exec("return document.querySelector('#sanitize-output').value")).endsWith("hidden-info-cleaned.pdf"), "default output name");
+    await s.click("input[data-kind=web_links]");
+    await s.type("#sanitize-output", out);
+    await axeCheck(s, "sanitize-dialog");
+    writeFileSync(join(ART, "sanitize-dialog.png"), await s.screenshot());
+    await s.click('[data-testid="sanitize-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved cleaned.pdf")), "saved notice", 30000);
+    // Open the copy and inspect it again: nothing selected is left.
+    await s.exec("[...document.querySelectorAll('.notice button')].find(b => b.textContent === 'Open').click(); return 1");
+    await s.waitUntil(async () => (await s.exec("return [...document.querySelectorAll('.tab-label .name')].map(n => n.textContent)")).includes("cleaned.pdf"), "copy opened");
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Remove hidden");
+    await s.click('[role="option"][data-command="file.sanitize"]');
+    await s.waitUntil(async () => (await finding(s, "scripts")) === "None found", "copy re-inspected");
+    for (const k of ["metadata", "attachments", "hidden_layers", "comments", "web_links"]) {
+      assert((await finding(s, k)) === "None found", `${k} gone`);
+    }
+    assert((await finding(s, "form_fields")) === "1 found", "field kept");
+    await s.keys(["Escape"]);
+  });
+  assert(sha(src) === before, "source PDF unchanged");
+  if (CLI) {
+    const t = JSON.parse(execFileSync(CLI, ["--json", "text", "--pages", "1", out], { encoding: "utf8" })).result.data.pages[0].text;
+    assert(t.includes("PWBODY") && t.includes("PWLAYER-SHOWN") && !t.includes("PWLAYER-HIDDEN"), `independent text check: ${t.slice(0, 200)}`);
+    const f = JSON.parse(execFileSync(CLI, ["--json", "sanitize", "--inspect", out], { encoding: "utf8" })).result.data;
+    assert(f.scripts === 0 && f.attachments === 0 && f.comments === 0 && f.web_links === 0 && !f.earlier_versions && f.metadata.length === 0, `independent inspection: ${JSON.stringify(f)}`);
+  }
+});
+
+await test("OCR: a scanned file becomes searchable from the Pages menu; the copy opens with selectable text", async () => {
+  const src = join(FIX, "scanned.pdf");
+  const before = sha(src);
+  const out = join(work, "searchable.pdf");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    // Nothing to find before recognition.
+    await s.keys(["Control", "f"]);
+    await s.type('input[aria-label="Find in document"]', "Description");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => (await s.text(".searchbar .count")) === "No matches", "no text before OCR");
+    await s.keys(["Escape"]);
+    // Pages menu → Recognize text (OCR)…
+    await s.exec("[...document.querySelectorAll('button[aria-haspopup=menu]')].find(b => b.textContent.trim() === 'Pages').click(); return 1");
+    await s.click('[role="menuitem"][data-command="pages.ocr"]');
+    await s.waitFor("#output");
+    assert((await s.text('[role="dialog"] h2')) === "Recognize text (OCR)", "dialog title");
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("scanned-searchable.pdf"), "default output name");
+    assert((await s.text('[data-testid="tool-start"]')) === "Recognize", "start button label");
+    await axeCheck(s, "ocr-dialog");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved searchable.pdf")), "saved notice", 240000);
+    // Open the copy from the notice and find text in it.
+    await s.exec("[...document.querySelectorAll('.notice button')].find(b => b.textContent === 'Open').click(); return 1");
+    await s.waitUntil(async () => (await s.exec("return [...document.querySelectorAll('.tab-label .name')].map(n => n.textContent)")).includes("searchable.pdf"), "copy opened");
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "f"]);
+    await s.type('input[aria-label="Find in document"]', "Description");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => /^1 of 1/.test(await s.text(".searchbar .count")), "found after OCR");
+    await s.keys(["Escape"]);
+    // The recognised text is selectable in the viewer's text layer.
+    await markSpan(s, 0, "Invoice");
+    await s.doubleClickAt(...(await s.exec("const r=document.querySelector('[data-e2e=target]').getBoundingClientRect(); return [r.left + 8, r.top + r.height/2]")));
+    await s.waitUntil(async () => (await selection(s)).trim().length > 0, "word selectable");
+  });
+  assert(existsSync(out), "searchable copy exists");
+  assert(sha(src) === before, "source PDF unchanged");
+  if (CLI) {
+    const t = JSON.parse(execFileSync(CLI, ["--json", "text", "--pages", "1", out], { encoding: "utf8" })).result.data.pages[0].text;
+    assert(t.includes("Invoice") && t.includes("Description"), `independent text check: ${t.slice(0, 200)}`);
+  }
+});
+
+await test("redaction: mark by search, selection and dragged area; review; apply a verified copy with the content gone", async () => {
+  const src = join(FIX, "redaction.pdf");
+  const before = sha(src);
+  const out = join(work, "redacted.pdf");
+  await withApp([src], async (s) => {
+    const marks = () => s.exec("return document.querySelector('[data-testid=redaction-marks]')?.textContent ?? ''");
+    await pageLoaded(s, 0);
+    // Apply is unavailable, with a reason, until something is marked.
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Apply redactions");
+    const applyOpt = await s.exec("const o=document.querySelector(`[role=option][data-command='${arguments[0]}']`); return o ? o.getAttribute('aria-disabled') + '|' + o.textContent : null", "redact.apply");
+    assert(applyOpt && applyOpt.startsWith("true") && applyOpt.includes("Mark text or areas"), `apply unavailable without marks (${applyOpt})`);
+    await s.keys(["Escape"]);
+    // 1. Find → Mark all for redaction (disabled with a reason before there are matches).
+    await s.keys(["Control", "f"]);
+    const reason = await s.attr('[data-command="redact.markMatches"]', "title");
+    assert(reason.includes("Find text first"), `mark-all explains why it is unavailable (${reason})`);
+    await s.type('input[aria-label="Find in document"]', "SECRET-4711");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => (await s.attr('[data-command="redact.markMatches"]', "aria-disabled")) === null, "mark-all enabled once there are matches");
+    await s.click('[data-command="redact.markMatches"]');
+    await s.waitUntil(async () => (await annotCount(s, "redact")) === 1, "search match marked");
+    await s.keys(["Escape"]);
+
+    // 2. Selected word → Ctrl+Shift+X.
+    await markSpan(s, 0, "PWHIDE");
+    await s.doubleClickAt(...(await s.exec("const r=document.querySelector('[data-e2e=target]').getBoundingClientRect(); return [r.right - 20, r.top + r.height/2]")));
+    await s.waitUntil(async () => (await selection(s)).trim() === "PWHIDE", "word selected");
+    await s.keys(["Control", "Shift", "X"]);
+    await s.waitUntil(async () => (await annotCount(s, "redact")) === 2, "selection marked");
+
+    // 3. Mark areas mode (command palette) → drag over the image at 450–482 × 300–332 pt.
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Mark areas");
+    await s.click('[role="option"][data-command="redact.markArea"]');
+    await s.waitFor('[data-testid="mark-mode"]');
+    // Page point (x, y) in PDF space → viewport pixels, measured after scrolling settles.
+    await s.exec("document.querySelector('.viewer [data-page=\"0\"]').scrollIntoView({block:'center'}); return 1");
+    await new Promise((r) => setTimeout(r, 200));
+    const box = await s.exec("const r=document.querySelector('.viewer [data-page=\"0\"]').getBoundingClientRect(); return [r.left, r.top, r.width/612]");
+    const at = (x, y) => [box[0] + x * box[2], box[1] + (792 - y) * box[2]];
+    await s.dragAt(...at(444, 344), ...at(488, 294));
+    await s.waitUntil(async () => (await annotCount(s, "redact")) === 3, "dragged area marked");
+    assert((await selection(s)) === "", "dragging in mark mode does not select text");
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=mark-mode]')")), "Escape ends mark mode");
+    await s.waitUntil(async () => (await marks()) === "3 redaction marks — Apply…", "status bar counts the marks");
+    await axeCheck(s, "viewer-with-redaction-marks");
+    writeFileSync(join(ART, "redaction-marks.png"), await s.screenshot());
+
+    // 4. Right-click a mark → Remove; the notice's Undo brings it back.
+    await s.contextClickAt(...at(466, 316));
+    await s.waitFor('[role="menuitem"]');
+    const labels = await s.exec("return [...document.querySelectorAll('[role=menuitem]')].map(m => m.textContent)");
+    assert(labels.some((l) => l.startsWith("Remove this redaction mark")), `menu offers removing the mark (${labels})`);
+    await s.exec("[...document.querySelectorAll('[role=menuitem]')].find(m => m.textContent.startsWith('Remove this redaction mark')).click(); return 1");
+    await s.waitUntil(async () => (await annotCount(s, "redact")) === 2, "mark removed");
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Redaction mark removed")), "removal notice");
+    await s.exec("[...document.querySelectorAll('.notice button')].find(b => b.textContent === 'Undo').click(); return 1");
+    await s.waitUntil(async () => (await annotCount(s, "redact")) === 3, "Undo restores the mark");
+
+    // Whole page: page 2's context menu → Mark page 2 for redaction.
+    await s.exec("document.querySelector('.viewer [data-page=\"1\"]').scrollIntoView({block:'center'}); return 1");
+    await s.contextClick('.viewer [data-page="1"]', 0, 0);
+    await s.click('[role="menuitem"][data-command="redact.markPage"]');
+    await s.waitUntil(async () => (await marks()) === "4 redaction marks — Apply…", "whole page marked");
+
+    // 5. Closing the tab asks; marks cannot be saved into a copy, and the prompt says so.
+    await s.keys(["Control", "w"]);
+    await s.waitFor('[data-testid="unsaved-marks"]');
+    assert(!(await s.exec("return !!document.querySelector('[data-testid=unsaved-save]')")), "no Save copy for marks only");
+    await s.click('[data-testid="unsaved-cancel"]');
+
+    // 6. Review and apply.
+    await s.click('[data-testid="redaction-marks"]');
+    await s.waitFor('[data-testid="redact-preview"] li');
+    const preview = await s.exec("return document.querySelector('[data-testid=redact-preview]').textContent");
+    for (const want of ["SECRET-4711", "PWHIDE", "1 image", "Page 2: “Page two visible"]) assert(preview.includes(want), `preview lists ${want}: ${preview}`);
+    assert((await s.exec("return document.querySelector('#redact-output').value")).endsWith("redaction-redacted.pdf"), "default output name");
+    await axeCheck(s, "redact-dialog");
+    writeFileSync(join(ART, "redaction-dialog.png"), await s.screenshot());
+    await s.type("#redact-output", out);
+    await s.click('[data-testid="redact-apply"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved redacted.pdf")), "saved notice", 30000);
+    await s.waitUntil(async () => (await annotCount(s, "redact")) === 0 && (await marks()) === "", "marks used up");
+    await s.waitUntil(async () => (await s.exec("return [...document.querySelectorAll('.tab-label .name')].map(n => n.textContent)")).includes("redacted.pdf"), "redacted copy opened for inspection");
+  });
+  assert(existsSync(out), "redacted copy exists");
+  assert(sha(src) === before, "source PDF unchanged");
+  const raw = readFileSync(out).toString("latin1");
+  for (const gone of ["SECRET", "PWHIDE", "PWFORMX"]) assert(!raw.includes(gone), `${gone} not in the file bytes`);
+  if (CLI) {
+    const t = JSON.parse(execFileSync(CLI, ["--json", "text", "--pages", "1", out], { encoding: "utf8" })).result.data.pages[0].text;
+    assert(!t.includes("SECRET") && !t.includes("PWHIDE") && t.includes("is closed") && t.includes("Public footer text"), `independent text check: ${t}`);
+    const t2 = JSON.parse(execFileSync(CLI, ["--json", "text", "--pages", "2", out], { encoding: "utf8" })).result.data.pages[0].text;
+    assert(t2.trim() === "", `whole-page redaction leaves no text on page 2: ${t2}`);
+  }
+});
+
+/* ------------------------------------------------------------------ */
+const summary = {
+  app: APP,
+  when: new Date().toISOString(),
+  passed: results.filter((r) => r.status === "PASS").length,
+  failed: results.filter((r) => r.status === "FAIL").length,
+  skipped: results.filter((r) => r.status === "SKIP").length,
+  launch_retries: launchRetries,
+  results,
+};
+writeFileSync(join(ART, "e2e-results.json"), JSON.stringify(summary, null, 2));
+console.log(`\n${summary.passed} passed, ${summary.failed} failed, ${summary.skipped} skipped, ${launchRetries.length} app launch retr${launchRetries.length === 1 ? "y" : "ies"}`);
+process.exit(summary.failed ? 1 : 0);

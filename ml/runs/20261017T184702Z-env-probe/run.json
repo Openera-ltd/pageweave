@@ -1,0 +1,14 @@
+{
+  "run_id": "20261017T184702Z-env-probe",
+  "purpose": "environment probe retry: dataset was still processing on the first run",
+  "created_utc": "2026-10-17T18:47:05+00:00",
+  "kernel": "kuyamblaisetimchia/pageweave-env-probe",
+  "code_commit": "d82965caa120bc3d56348c5019a336b6319c151c",
+  "kernel_files_sha256": "0d7dc9a8b88b562128b2956a9d7a99d71c66e0b27a67d02c6681ce18fb6fc9ae",
+  "datasets": [
+    "kuyamblaisetimchia/pageweave-ocr-corpus-v1"
+  ],
+  "gpu_hours_ceiling": 1,
+  "status": "superseded",
+  "superseded_utc": "2026-10-17T19:39:37+00:00"
+}

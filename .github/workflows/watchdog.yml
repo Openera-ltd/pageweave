@@ -1,0 +1,40 @@
+name: Watchdog
+
+# PRD 12: deterministic health check every 10 minutes. GitHub runs schedules only from the default
+# branch and on a best-effort basis; missed intervals are detected and reported by the script.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  issues: write
+  contents: read
+
+# Never let two checks overlap.
+concurrency:
+  group: watchdog
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: tools
+      - name: Run watchdog
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          WATCH_BRANCHES: ${{ vars.WATCH_BRANCHES || 'main' }}
+          WATCHDOG_REPORT: watchdog-report.json
+        run: python3 -I tools/watchdog.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: watchdog-report
+          path: watchdog-report.json
+          retention-days: 7

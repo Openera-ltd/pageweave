@@ -1,0 +1,20 @@
+{
+  "bundle": {
+    "targets": [
+      "deb"
+    ],
+    "resources": {
+      "../../third_party/pdfium/linux-x64/lib/libpdfium.so": "libpdfium.so",
+      "../../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
+      "../../third_party/licenses/pdfium/": "licenses/pdfium/",
+      "../../third_party/licenses/rust-crates.txt": "licenses/rust-crates.txt",
+      "../../third_party/licenses/ui-npm.txt": "licenses/ui-npm.txt",
+      "../../third_party/ocr/linux-x64/libonnxruntime.so": "ocr/libonnxruntime.so",
+      "../../third_party/ocr/linux-x64/det.onnx": "ocr/det.onnx",
+      "../../third_party/ocr/linux-x64/rec.onnx": "ocr/rec.onnx",
+      "../../third_party/ocr/linux-x64/rec_dict.txt": "ocr/rec_dict.txt",
+      "../../third_party/licenses/onnxruntime/": "licenses/onnxruntime/",
+      "../../third_party/licenses/ppocr/": "licenses/ppocr/"
+    }
+  }
+}

@@ -1,0 +1,26 @@
+[package]
+name = "pw-cli"
+description = "PageWeave command-line interface"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "pageweave"
+path = "src/main.rs"
+
+[dependencies]
+pw-core.workspace = true
+pw-pdf.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+pw-ocr.workspace = true
+lopdf.workspace = true
+
+[lints]
+workspace = true

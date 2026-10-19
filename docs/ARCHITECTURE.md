@@ -28,6 +28,15 @@ Long-running work must run off the UI thread. Job contract should include a uniq
 
 Bound concurrency based on measured CPU, RAM, GPU and I/O constraints. Avoid loading all models at once. Cancellation must stop safely at a well-defined boundary and clean temporary artifacts without corrupting the source. For recoverable work, persist enough state to resume after app restart. A job that cannot be resumed must say so before starting if that affects user expectations.
 
+Implemented (2026-10-17): `pw_core::journal`. Each file-writing job run by the app keeps an entry in
+`<app data>/jobs/` (operation and collision policy, never the password) for exactly as long as it runs;
+a drop guard removes it on success, failure, cancellation or panic. Staged outputs are named
+`.pw-staged-<pid>-*.tmp`, and every running instance holds a lock on `instance-<pid>.lock`. At startup,
+entries of ended processes are recovered: that process's staged files in the job's output folder are
+removed (committed outputs are never touched), the user is told, and "Run again" resubmits the same
+operation. Current operations finish in milliseconds to seconds, so they restart rather than resume
+from a mid-job checkpoint; long jobs (conversion, OCR) will need real checkpoints.
+
 ## Files and data integrity
 
 - Keep source files immutable by default.

@@ -1,0 +1,9 @@
+# Files verified by SHA-256 must keep their exact bytes on every platform (Windows checkouts convert
+# text line endings by default; the pinned OCR dictionary failed its hash check there).
+resources/ocr/*.txt -text
+*.pdf binary
+*.ttf binary
+*.otf binary
+*.onnx binary
+*.jpg binary
+*.png binary
