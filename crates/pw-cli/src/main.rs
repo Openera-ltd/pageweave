@@ -438,6 +438,19 @@ enum Command {
     Run { request: PathBuf },
     /// List the operations this build supports.
     Capabilities,
+    /// Serve PageWeave's tools to an AI agent over MCP (stdio). Files only inside the --root
+    /// folders; tools that create files only with --allow-write; existing files are never replaced.
+    Mcp {
+        /// A folder the agent may use (repeat for several).
+        #[arg(long = "root", required = true, value_name = "FOLDER")]
+        roots: Vec<PathBuf>,
+        /// Also offer tools that create new files inside those folders.
+        #[arg(long)]
+        allow_write: bool,
+        /// Operations run at the same time.
+        #[arg(long, default_value_t = 2, value_parser = clap::value_parser!(u8).range(1..=8))]
+        workers: u8,
+    },
 }
 
 /// "10MB", "500 KB", "2.5mb", "123456" (bytes) → bytes; 1 KB = 1024 bytes.
@@ -467,7 +480,7 @@ fn capabilities() -> serde_json::Value {
 
 fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
     let op = match &cli.command {
-        Command::Capabilities => return Ok(None),
+        Command::Capabilities | Command::Mcp { .. } => return Ok(None),
         Command::Run { request } => {
             let text = if request.as_os_str() == "-" {
                 let mut s = String::new();
@@ -1041,6 +1054,19 @@ fn run() -> ExitCode {
             return ExitCode::from(if e.use_stderr() { 1 } else { 0 });
         }
     };
+    if let Command::Mcp { roots, allow_write, workers } = &cli.command {
+        // stdout carries the protocol only; problems starting up go to stderr.
+        let roots = match pw_mcp::Roots::new(roots) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("error: {}", e.message);
+                return ExitCode::from(e.category.exit_code().clamp(2, 255) as u8);
+            }
+        };
+        let cfg = pw_mcp::Config { roots, allow_write: *allow_write, workers: *workers as usize };
+        pw_mcp::serve(cfg, std::io::stdin().lock(), std::io::stdout());
+        return ExitCode::SUCCESS;
+    }
     let outcome = (|| -> Result<serde_json::Value, PwError> {
         let Some(mut req) = build_request(&cli)? else {
             return Ok(capabilities());

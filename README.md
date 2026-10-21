@@ -105,6 +105,33 @@ pageweave sanitize --inspect report.pdf
 pageweave sanitize --remove-web-links -o report-clean.pdf report.pdf
 ```
 
+## Use with an AI agent (MCP)
+
+`pageweave mcp` lets an AI agent that supports the Model Context Protocol (for example Claude Desktop or
+Claude Code) use PageWeave's own document tools. It runs over standard input/output — nothing listens on
+the network — and only touches files inside the folders you name:
+
+```json
+{
+  "mcpServers": {
+    "pageweave": {
+      "command": "C:\\Program Files\\PageWeave\\pageweave.exe",
+      "args": ["mcp", "--root", "C:\\Users\\you\\Documents\\PDFs", "--allow-write"]
+    }
+  }
+}
+```
+
+- Read tools: `list_capabilities`, `inspect_document`, `extract_text`, `search_text`, `list_form_fields`,
+  `compare_documents`, `check_signatures`.
+- With `--allow-write` also: `extract_pages`, `delete_pages`, `rotate_pages`, `merge_documents`,
+  `split_document`, `fill_form`, `recognize_text` (OCR, with progress and cancel), `reduce_file_size`,
+  `export_text`. These only create **new** files; existing files are never replaced or changed.
+- Not available through MCP: password-protected files, signing, redaction, removing hidden information,
+  passwords and attachments. Paths outside the named folders (including through symbolic links) are refused.
+- The agent and its AI model are separate from PageWeave; nothing here sends documents anywhere. What the
+  agent does with text it reads from your documents is up to the agent.
+
 ## Privacy
 
 PageWeave's own code makes no network requests while you work with documents (this has not yet been

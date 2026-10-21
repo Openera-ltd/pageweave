@@ -3698,6 +3698,7 @@ dependencies = [
  "clap",
  "lopdf",
  "pw-core",
+ "pw-mcp",
  "pw-ocr",
  "pw-pdf",
  "serde_json",
@@ -3716,6 +3717,18 @@ dependencies = [
  "thiserror 2.0.21",
  "time",
  "uuid",
+]
+
+[[package]]
+name = "pw-mcp"
+version = "0.1.0"
+dependencies = [
+ "dunce",
+ "pw-core",
+ "pw-pdf",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

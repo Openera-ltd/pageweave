@@ -227,3 +227,11 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - First real-app split scenario added (there was none before): bookmarks and size, files checked on disk.
 - Clear form fields (Edit, palette): text emptied, checkboxes unticked, editable combos emptied, as unsaved edits with Undo; non-editable choices and radios cannot be emptied by the fill engine, so they are kept and the notice says how many. Reset to /DV defaults not done.
 - Ran: fmt, clippy clean; Rust 311 passed; vitest 111 passed; audit 74/74; E2E new scenarios pass (split, clear form).
+
+## 2026-10-21 — Session 2, checkpoint 3: MCP server (PRD 17)
+- New crate `pw-mcp`, exposed as `pageweave mcp --root DIR [--allow-write] [--workers N]` (decision D-014). Stdio JSON-RPC 2.0; initialize/ping/tools.list/tools.call; protocol 2025-06-18 (2025-03-26, 2024-11-05 accepted).
+- 16 tools, each one existing typed `Operation` (no second implementation): 7 read-only, 9 that create new files (only listed and allowed with `--allow-write`). Not exposed: protected files, signing, redaction, sanitize, passwords, attachments, form-data files.
+- Path policy: canonicalize (symlinks resolved), must be inside a root; outputs must not exist (dangling symlinks included), fixed extension, folder must exist inside a root; collision policy always `fail`. Unknown arguments rejected. Limits: 1 MB per message (over-long lines consumed and refused), 8 active calls. Progress notifications when a progress token is given; `notifications/cancelled` cancels the job (verified: no output committed); EOF cancels running jobs; finished jobs pruned.
+- Tests: pw-mcp path policy (2, incl. symlink escapes on Unix); `pw-cli/tests/mcp.rs` (4, real server process, every advertised tool called and checked; OCR progress + cancel), run 4× without a failure.
+- Ran: fmt, clippy clean; Rust 317 passed, 0 failed; license bundle regenerated (adds pw-mcp only).
+- NOT done: local HTTP API, external AI provider orchestration, MCP on Windows verified by hand (CI runs the same tests on Windows).

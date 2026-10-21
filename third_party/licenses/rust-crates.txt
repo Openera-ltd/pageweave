@@ -6155,6 +6155,7 @@ MIT License (MIT) — used by:
   pageweave-app 0.1.0
   pw-cli 0.1.0
   pw-core 0.1.0
+  pw-mcp 0.1.0
   pw-ocr 0.1.0
   pw-pdf 0.1.0
   asn1-rs-impl 0.2.0
