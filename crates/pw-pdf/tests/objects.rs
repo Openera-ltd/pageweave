@@ -268,3 +268,34 @@ fn a_save_with_only_object_edits_is_valid_and_applies() {
     });
     assert_eq!(empty.validate().expect_err("empty").code, "edits.empty");
 }
+
+#[test]
+fn combined_edits_never_replace_the_source_even_with_replace() {
+    // Regression: with object edits plus annotations the last stage read a staged copy and only
+    // protected that copy, so Replace could overwrite the original.
+    use pw_core::ops::{AnnotationKind, AnnotationSpec, RectPt};
+    let dir = tempfile::tempdir().expect("tmp");
+    let src = dir.path().join("mine.pdf");
+    std::fs::copy(fixture("embedded-font.pdf"), &src).expect("copy");
+    let before = std::fs::read(&src).expect("read");
+    let l = list(&src);
+    let mut req = OperationRequest::new(Operation::ApplyEdits {
+        input: src.clone(),
+        form_values: vec![],
+        annotations: vec![AnnotationSpec {
+            page: 0,
+            kind: AnnotationKind::Highlight,
+            rects: vec![RectPt { left: 72.0, bottom: 638.0, right: 166.0, top: 650.0 }],
+            color: "#ffd400".into(),
+            contents: None,
+        }],
+        object_edits: vec![PageEdits {
+            page: 0,
+            edits: vec![text_edit(&run(&l, "Invoice").objects, "Invoice 2026 total sum")],
+        }],
+        output: src.clone(),
+    });
+    req.collision = pw_core::output::CollisionPolicy::Replace;
+    assert!(execute(&req, None).is_err(), "writing over the source must be refused");
+    assert_eq!(std::fs::read(&src).expect("read"), before, "source unchanged");
+}

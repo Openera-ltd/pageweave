@@ -556,7 +556,17 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
                     let stage = dir.join(format!("{}objects.pdf", pw_core::output::staged_prefix(std::process::id())));
                     std::fs::write(&stage, &edited.bytes)
                         .map_err(|e| pw_core::PwError::from_io(&e, "temporary file"))?;
-                    let r = crate::forms::apply_edits(&stage, opts.password, form_values, annotations, output, policy);
+                    // The original stays protected too: the output may never replace it.
+                    let protected = [input.clone(), stage.clone()];
+                    let r = crate::forms::apply_edits_protecting(
+                        &stage,
+                        opts.password,
+                        form_values,
+                        annotations,
+                        output,
+                        policy,
+                        &protected,
+                    );
                     let _ = std::fs::remove_file(&stage);
                     let (c, w2) = r?;
                     w.extend(w2);
