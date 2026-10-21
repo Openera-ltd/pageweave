@@ -71,6 +71,7 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `pages.stamp` | Page numbers and stamps… | — | Exercised by tests |
 | `pages.exportImages` | Export pages as images… | — | Exercised by tests |
 | `pages.exportText` | Export as text… | — | Exercised by tests |
+| `pages.labels` | Page labels… | — | Exercised by tests |
 | `pages.deskew` | Straighten pages… | — | Exercised by tests |
 | `pages.orient` | Turn pages upright… | — | Exercised by tests |
 | `pages.removeBlank` | Remove blank pages… | — | Exercised by tests |
@@ -83,4 +84,4 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `app.commandPalette` | Command palette | Ctrl+K, Ctrl+Shift+P | Exercised by tests |
 | `app.openLogs` | Show log folder | — | Exercised by tests |
 
-Coverage: 76 of 76 commands exercised by unit or real-app E2E tests.
+Coverage: 77 of 77 commands exercised by unit or real-app E2E tests.

@@ -30,6 +30,43 @@ pub enum SplitMode {
     MaxSize { max_bytes: u64 },
 }
 
+/// Numbering style of a page label range (PDF 32000-1 §12.4.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LabelStyle {
+    /// 1, 2, 3
+    Decimal,
+    /// I, II, III
+    RomanUpper,
+    /// i, ii, iii
+    RomanLower,
+    /// A … Z, AA … ZZ
+    LettersUpper,
+    /// a … z, aa … zz
+    LettersLower,
+    /// Prefix only, no number.
+    None,
+}
+
+/// Pages from `start` (0-based) up to the next range are labelled `prefix` + number in `style`,
+/// counting from `first`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PageLabelRange {
+    pub start: u32,
+    pub style: LabelStyle,
+    #[serde(default)]
+    pub prefix: String,
+    #[serde(default = "default_first_label")]
+    pub first: u32,
+}
+
+fn default_first_label() -> u32 {
+    1
+}
+
+pub const MAX_LABEL_RANGES: usize = 1000;
+pub const MAX_LABEL_PREFIX_CHARS: usize = 50;
+
 /// Kinds of sensitive text PageWeave can find for redaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -792,6 +829,13 @@ pub enum Operation {
         old: PathBuf,
         new: PathBuf,
     },
+    /// Set the page labels (the numbers readers show, e.g. i–iv then 1–20) in a new verified file.
+    /// An empty list removes the labels.
+    SetPageLabels {
+        input: PathBuf,
+        ranges: Vec<PageLabelRange>,
+        output: PathBuf,
+    },
     /// What can be checked automatically about the document's accessibility (tags, language,
     /// title, alternate text, table headers, form labels, …), plus items a person must review.
     CheckAccessibility {
@@ -865,6 +909,7 @@ pub const OPERATION_IDS: &[&str] = &[
     "watermark",
     "crop_pages",
     "set_bookmarks",
+    "set_page_labels",
     "images_to_pdf",
     "export_text",
     "optimize",
@@ -918,6 +963,7 @@ impl Operation {
             Operation::Watermark { .. } => "watermark",
             Operation::CropPages { .. } => "crop_pages",
             Operation::SetBookmarks { .. } => "set_bookmarks",
+            Operation::SetPageLabels { .. } => "set_page_labels",
             Operation::ImagesToPdf { .. } => "images_to_pdf",
             Operation::ExportText { .. } => "export_text",
             Operation::Optimize { .. } => "optimize",
@@ -1011,6 +1057,7 @@ impl Operation {
             | Operation::FindBlankPages { input, .. }
             | Operation::ExtractImages { input, .. }
             | Operation::SetBookmarks { input, .. }
+            | Operation::SetPageLabels { input, .. }
             | Operation::ExportText { input, .. }
             | Operation::Optimize { input, .. }
             | Operation::ExtractAttachment { input, .. }
@@ -1069,6 +1116,7 @@ impl Operation {
             | Operation::CropPages { output, .. }
             | Operation::ExtractAttachment { output, .. }
             | Operation::SetBookmarks { output, .. }
+            | Operation::SetPageLabels { output, .. }
             | Operation::ImagesToPdf { output, .. }
             | Operation::ExportText { output, .. }
             | Operation::Optimize { output, .. }
@@ -1133,6 +1181,41 @@ impl Operation {
             }
             Operation::Split { split: SplitMode::MaxSize { max_bytes }, .. } if *max_bytes < MIN_SPLIT_BYTES => {
                 return Err(PwError::invalid("split.max_size", "Choose a size limit of at least 10 KB."));
+            }
+            Operation::SetPageLabels { ranges, .. } => {
+                if ranges.len() > MAX_LABEL_RANGES {
+                    return Err(PwError::invalid("labels.too_many", "Too many label ranges."));
+                }
+                if let Some(first) = ranges.first() {
+                    if first.start != 0 {
+                        return Err(PwError::invalid("labels.first_page", "The first range must start on page 1."));
+                    }
+                }
+                for w in ranges.windows(2) {
+                    if w[1].start <= w[0].start {
+                        return Err(PwError::invalid(
+                            "labels.order",
+                            "Ranges must start on different pages, in page order.",
+                        ));
+                    }
+                }
+                for r in ranges {
+                    if r.prefix.chars().count() > MAX_LABEL_PREFIX_CHARS {
+                        return Err(PwError::invalid("labels.prefix", "A label prefix is too long."));
+                    }
+                    if r.prefix.chars().any(char::is_control) {
+                        return Err(PwError::invalid(
+                            "labels.prefix",
+                            "A label prefix can't contain control characters.",
+                        ));
+                    }
+                    if r.first == 0 || r.first > 1_000_000 {
+                        return Err(PwError::invalid("labels.first", "Numbering starts at 1 to 1,000,000."));
+                    }
+                    if r.style == LabelStyle::None && r.prefix.trim().is_empty() {
+                        return Err(PwError::invalid("labels.empty", "A range without numbers needs a prefix."));
+                    }
+                }
             }
             Operation::FindPatterns { patterns, custom, .. } => {
                 let custom = custom.as_deref().map(str::trim).filter(|c| !c.is_empty());

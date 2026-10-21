@@ -285,6 +285,17 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(w);
             (vec![out(&c, Some(n))], json!({ "page_count": n }))
         }
+        Operation::SetPageLabels { input, ranges, output } => {
+            let page_progress = |done: u64, total: u64| {
+                if let Some(c) = ctx {
+                    c.set_progress(done, total, "pages");
+                }
+            };
+            let (c, n, w) =
+                crate::pagelabels::set_page_labels(input, &opts, ranges, output, policy, &cancelled, &page_progress)?;
+            warnings.extend(w);
+            (vec![out(&c, Some(n))], json!({ "page_count": n, "ranges": ranges.len() }))
+        }
         Operation::SetProperties { input, title, author, subject, keywords, output } => {
             let page_progress = |done: u64, total: u64| {
                 if let Some(c) = ctx {

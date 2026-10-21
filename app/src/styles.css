@@ -2045,3 +2045,41 @@ kbd,
   gap: var(--space-2);
   margin-top: var(--space-2);
 }
+
+/* Page labels */
+.labels-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.labels-table th {
+  text-align: left;
+  font-weight: 600;
+  font-size: var(--font-size-1);
+  padding: 0 var(--space-2) var(--space-2) 0;
+}
+.labels-table td {
+  padding: 0 var(--space-2) var(--space-2) 0;
+}
+.labels-table .input,
+.labels-table .select {
+  width: 100%;
+  min-width: 0;
+}
+.labels-table td:last-child {
+  width: 36px;
+}
+.labels-table {
+  table-layout: fixed;
+}
+.labels-table th:nth-child(1) {
+  width: 96px;
+}
+.labels-table th:nth-child(2) {
+  width: 150px;
+}
+.labels-table th:nth-child(4) {
+  width: 100px;
+}
+.labels-table th:nth-child(5) {
+  width: 40px;
+}

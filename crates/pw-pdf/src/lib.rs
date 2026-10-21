@@ -28,6 +28,7 @@ mod ocr;
 mod optimize;
 pub mod orient;
 mod outline;
+mod pagelabels;
 mod patterns;
 mod properties;
 mod protect;

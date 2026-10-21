@@ -249,3 +249,8 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - Not a PDF/UA or WCAG verdict (stated in UI, CLI and MCP description). No tag editing/auto-fix yet.
 - Ran: fmt, clippy clean; Rust 331 passed; vitest 114; audit 76/76; license check ok; new E2E scenario passes.
 - CI run #73 (MCP fix) Linux E2E 68/69: "print" failed with "stale element reference" — the scenario's check returned the dialog element itself from a script, and the dialog was removed while the driver serialized it. Test-harness defect, not app behaviour (print code unchanged; scenario passes locally). Eight such checks now return booleans; rule noted on the harness `exec` helper.
+
+## 2026-10-21 — Session 2, checkpoint 6: page labels
+- `set_page_labels` (PRD 05 "label"): typed ranges → catalog /PageLabels number tree (lopdf, rewritten copy); verified per page against `pw_core::labels::label_for` as PDFium reads it, plus render equality; empty list removes. Validation: first range on page 1, increasing starts, prefix ≤ 50 chars without control characters, start 1–1,000,000, prefix-only ranges need a prefix.
+- Ran: fmt, clippy clean; Rust 335 passed; vitest 117; audit 77/77; new E2E scenario passes.
+- CLI `labels --range PAGE:STYLE[:FIRST[:PREFIX]]` / `--remove`; app Pages ▸ Page labels… (editable ranges, live preview, invalid ranges explained, Remove labels when present); thumbnails already showed labels. First screenshot showed unbalanced columns → fixed widths.

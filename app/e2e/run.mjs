@@ -2418,6 +2418,40 @@ await test("accessibility check: problems grouped with text labels, review items
   });
 });
 
+await test("page labels: roman front matter then prefixed numbers; preview; saved copy shows them in thumbnails", async () => {
+  const out = join(work, "five-labelled.pdf");
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Page labels");
+    await s.click('[role="option"][data-command="pages.labels"]');
+    await s.waitFor('[data-testid="labels-start"]');
+    const setSelect = (label, value) =>
+      s.exec(`const el = document.querySelector('[aria-label="' + arguments[0] + '"]'); el.value = arguments[1]; el.dispatchEvent(new Event('change', { bubbles: true })); return 1`, label, value);
+    await setSelect("Range 1: numbers", "roman_lower");
+    await s.click('[data-testid="labels-add"]');
+    await s.type('[aria-label="Range 2: from page"]', "3");
+    await s.type('[aria-label="Range 2: prefix"]', "Ch-");
+    await s.waitUntil(async () => (await s.text('[data-testid="labels-preview"]')) === "Page 1 → i · Page 2 → ii · Page 3 → Ch-1 · Page 4 → Ch-2 · Page 5 → Ch-3", "preview");
+    await s.type('[aria-label="Range 2: from page"]', "1");
+    await s.waitUntil(async () => (await s.attr('[data-testid="labels-start"]', "title")) === "Range 2 must start after range 1.", "invalid range explained");
+    await s.type('[aria-label="Range 2: from page"]', "3");
+    await s.type("#labels-output", out);
+    await axeCheck(s, "page-labels-dialog");
+    writeFileSync(join(ART, "page-labels.png"), await s.screenshot());
+    await s.click('[data-testid="labels-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved five-labelled.pdf")), "saved notice");
+    await s.click('.notice button[data-action="Open"]');
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('.tab-label[aria-current=page] .name')?.textContent")) === "five-labelled.pdf", "copy opened");
+    await s.waitUntil(async () => JSON.stringify(await s.exec("return [...document.querySelectorAll('[data-thumb] .num')].map(n => n.textContent)")) === JSON.stringify(["i", "ii", "Ch-1", "Ch-2", "Ch-3"]), "thumbnails show the labels");
+  });
+  if (CLI) {
+    const pages = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data.pages.map((p) => p.label);
+    assert(JSON.stringify(pages) === JSON.stringify(["i", "ii", "Ch-1", "Ch-2", "Ch-3"]), `CLI labels ${JSON.stringify(pages)}`);
+  }
+});
+
 /* ------------------------------------------------------------------ */
 const summary = {
   app: APP,

@@ -64,6 +64,7 @@ import { UnprotectDialog } from "./components/UnprotectDialog";
 import { ExportFormDataDialog, ImportFormDataDialog } from "./components/FormDataDialogs";
 import { RedactPatternsDialog } from "./components/RedactPatternsDialog";
 import { AccessibilityDialog } from "./components/AccessibilityDialog";
+import { PageLabelsDialog } from "./components/PageLabelsDialog";
 import type { ImportPlan } from "./formData";
 import { EditPropertiesDialog } from "./components/EditPropertiesDialog";
 import { SaveAttachmentDialog } from "./components/SaveAttachmentDialog";
@@ -94,6 +95,7 @@ type DialogState =
   | { kind: "exportFormData" }
   | { kind: "redactPatterns" }
   | { kind: "accessibility" }
+  | { kind: "pageLabels" }
   | { kind: "importFormData" }
   | { kind: "compare" }
   | { kind: "print" }
@@ -130,6 +132,7 @@ const OPERATION_TITLES: Partial<Record<Operation["op"], string>> = {
   sanitize: "Remove hidden information",
   unprotect: "Remove password",
   set_properties: "Edit document properties",
+  set_page_labels: "Set page labels",
   extract_attachment: "Save attached file",
   set_bookmarks: "Edit bookmarks",
   images_to_pdf: "Create PDF from images",
@@ -891,6 +894,7 @@ export function App() {
     "pages.stamp": { run: () => openTool("stamp"), available: all(needDoc, noDialog) },
     "pages.exportImages": { run: () => openTool("images"), available: all(needDoc, noDialog) },
     "pages.exportText": { run: () => openTool("text"), available: all(needDoc, noDialog) },
+    "pages.labels": { run: () => setDialog({ kind: "pageLabels" }), available: all(needDoc, noDialog) },
     "pages.deskew": { run: () => openTool("deskew"), available: all(needDoc, noDialog) },
     "pages.orient": { run: () => openTool("orient"), available: all(needDoc, noDialog) },
     "pages.extractImages": { run: () => openTool("extractImages"), available: all(needDoc, noDialog) },
@@ -1106,7 +1110,7 @@ export function App() {
 
   const pagesMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
-    setMenu({ label: "Page tools", x: r.left, y: r.bottom + 2, items: [item("pages.organize"), "separator", item("pages.extract"), item("pages.delete"), item("pages.rotate"), item("pages.split"), item("pages.stamp"), item("pages.watermark"), item("pages.crop"), item("pages.exportImages"), item("pages.extractImages"), item("pages.exportText"), item("pages.ocr"), item("pages.deskew"), item("pages.orient"), item("pages.removeBlank"), "separator", item("pages.merge")] });
+    setMenu({ label: "Page tools", x: r.left, y: r.bottom + 2, items: [item("pages.organize"), "separator", item("pages.extract"), item("pages.delete"), item("pages.rotate"), item("pages.split"), item("pages.stamp"), item("pages.watermark"), item("pages.crop"), item("pages.exportImages"), item("pages.extractImages"), item("pages.exportText"), item("pages.labels"), item("pages.ocr"), item("pages.deskew"), item("pages.orient"), item("pages.removeBlank"), "separator", item("pages.merge")] });
   };
 
   /* ---------- Job results ---------- */
@@ -1507,6 +1511,7 @@ export function App() {
       {dialog?.kind === "editProperties" && active && <EditPropertiesDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "unprotect" && active && <UnprotectDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "sanitize" && active && <SanitizeDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
+      {dialog?.kind === "pageLabels" && active && <PageLabelsDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "accessibility" && active && <AccessibilityDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onGoToPage={goToPage} />}
       {dialog?.kind === "redactPatterns" && active && (
         <RedactPatternsDialog

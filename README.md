@@ -15,7 +15,7 @@ Implemented and tested:
 | Area | What works | Evidence |
 |---|---|---|
 | PDF engine | Open (with password), inspect metadata/pages/bookmarks, extract text, search with match geometry, render pages | `crates/pw-pdf/tests/engine.rs` (Linux and Windows CI) |
-| Page operations | Organize (reorder, duplicate, rotate, remove, insert pages from another file in one step), page numbers / headers / footers / Bates-style numbering, export pages as PNG images, extract, delete, rotate, split (every N pages, by ranges, by bookmarks with parts named after them, or by largest file size), combine — always to a **new** file; source never modified; outputs re-opened and verified before an atomic commit; explicit conflict policy | engine tests (outputs re-parsed with an independent parser) |
+| Page operations | Organize (reorder, duplicate, rotate, remove, insert pages from another file in one step), page numbers / headers / footers / Bates-style numbering, page labels (i–iv then 1, 2, … with prefixes), export pages as PNG images, extract, delete, rotate, split (every N pages, by ranges, by bookmarks with parts named after them, or by largest file size), combine — always to a **new** file; source never modified; outputs re-opened and verified before an atomic commit; explicit conflict policy | engine tests (outputs re-parsed with an independent parser) |
 | CLI | `pageweave` with JSON output and stable exit codes | `crates/pw-cli/tests/cli.rs`; packaged Windows smoke test in CI |
 | Desktop app | Tabs, continuous viewer, thumbnails, bookmarks, zoom/fit, find with highlights, text selection and copy, page tools, settings (theme/accent/density/text size/motion/shortcuts), command palette, context menus, drag-and-drop and command-line open | `app/e2e/run.mjs` drives the real app (66 scenarios incl. axe-core accessibility checks) on Linux and Windows CI; Windows installer install/launch/uninstall smoke in CI |
 | Forms | Fill AcroForm text, multiline, checkbox, radio, combo and list fields directly on the page; values are entered through PDFium's form filler so the saved copy's appearances show them; Ctrl+S saves all changes (fields and annotations) into one verified copy, then the tab switches to it | engine tests verify values, button states and regenerated appearance streams with an independent parser and by rendering; E2E fills every kind in the real app and checks the saved file with the CLI |
@@ -102,6 +102,7 @@ pageweave compare report-v1.pdf report-v2.pdf          # page, text, format and 
 pageweave split --by-bookmarks 1 --out-dir chapters/ book.pdf   # or --max-size 10MB
 pageweave form-export -o answers.xfdf form.pdf             # or answers.json / --format json
 pageweave form-import --preview form.pdf answers.xfdf   # which fields it fills; -o filled.pdf to fill
+pageweave labels --range 1:roman-lower --range 5:decimal -o book-labelled.pdf book.pdf
 pageweave accessibility report.pdf                     # automated checks + what to review by hand
 pageweave patterns --kinds email,phone,card,iban,ssn report.pdf   # sensitive text with positions
 pageweave sanitize --inspect report.pdf

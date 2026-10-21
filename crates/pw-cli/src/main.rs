@@ -59,6 +59,18 @@ enum Command {
     Inspect { file: PathBuf },
     /// List form fields (names, kinds, values, options) as JSON.
     Fields { file: PathBuf },
+    /// Set page labels (the numbers readers show) in a new file: --range PAGE:STYLE[:FIRST[:PREFIX]]
+    /// per range, e.g. --range 1:roman-lower --range 5:decimal --range 17:decimal:1:A-; styles:
+    /// decimal, roman-upper, roman-lower, letters-upper, letters-lower, none. --remove clears them.
+    Labels {
+        file: PathBuf,
+        #[arg(long = "range", value_name = "PAGE:STYLE[:FIRST[:PREFIX]]", required_unless_present = "remove")]
+        ranges: Vec<String>,
+        #[arg(long, conflicts_with = "ranges")]
+        remove: bool,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
     /// Check what can be checked automatically about accessibility (tags, language, title,
     /// alternate text, table headers, form labels, …) and list what a person must review.
     Accessibility { file: PathBuf },
@@ -478,6 +490,34 @@ enum Command {
     },
 }
 
+/// "5:roman-lower", "17:decimal:1:A-" → a label range (pages 1-based on the command line).
+fn parse_label_range(s: &str) -> Result<pw_core::ops::PageLabelRange, PwError> {
+    use pw_core::ops::LabelStyle as L;
+    let bad = || {
+        PwError::invalid(
+            "labels.syntax",
+            format!("“{s}” is not a label range; use PAGE:STYLE[:FIRST[:PREFIX]], e.g. 5:decimal."),
+        )
+    };
+    let mut parts = s.splitn(4, ':');
+    let page: u32 = parts.next().and_then(|p| p.trim().parse().ok()).filter(|p| *p >= 1).ok_or_else(bad)?;
+    let style = match parts.next().map(|x| x.trim().to_ascii_lowercase()).as_deref() {
+        Some("decimal") => L::Decimal,
+        Some("roman-upper") => L::RomanUpper,
+        Some("roman-lower") => L::RomanLower,
+        Some("letters-upper") => L::LettersUpper,
+        Some("letters-lower") => L::LettersLower,
+        Some("none") => L::None,
+        _ => return Err(bad()),
+    };
+    let first = match parts.next() {
+        Some(f) if !f.trim().is_empty() => f.trim().parse().map_err(|_| bad())?,
+        _ => 1,
+    };
+    let prefix = parts.next().unwrap_or("").to_string();
+    Ok(pw_core::ops::PageLabelRange { start: page - 1, style, prefix, first })
+}
+
 /// "10MB", "500 KB", "2.5mb", "123456" (bytes) → bytes; 1 KB = 1024 bytes.
 fn parse_size(s: &str) -> Result<u64, PwError> {
     let bad = || PwError::invalid("split.size_syntax", format!("“{s}” is not a size; use e.g. 500KB or 10MB."));
@@ -520,6 +560,11 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
         }
         Command::Inspect { file } => Operation::Inspect { input: file.clone() },
         Command::Fields { file } => Operation::FormFields { input: file.clone() },
+        Command::Labels { file, ranges, remove: _, output } => Operation::SetPageLabels {
+            input: file.clone(),
+            ranges: ranges.iter().map(|r| parse_label_range(r)).collect::<Result<_, _>>()?,
+            output: output.clone(),
+        },
         Command::Accessibility { file } => Operation::CheckAccessibility { input: file.clone() },
         Command::Patterns { file, kinds, custom, pages } => {
             use pw_core::ops::TextPattern as T;

@@ -935,3 +935,34 @@ fn accessibility_reports_checks_and_review_items() {
     let r = bin().args(["--json", "accessibility"]).arg(fixture("tagged-accessible.pdf")).output().expect("run");
     assert_eq!(json(&r)["result"]["data"]["failed"], 0);
 }
+
+#[test]
+fn labels_set_and_remove() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("l.pdf");
+    let r = bin()
+        .args(["labels", "--range", "1:roman-lower", "--range", "3:decimal:1:Ch-", "-o"])
+        .arg(&out)
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let info = json(&bin().args(["--json", "inspect"]).arg(&out).output().expect("run"));
+    let labels: Vec<&str> = info["result"]["data"]["pages"]
+        .as_array()
+        .expect("pages")
+        .iter()
+        .map(|p| p["label"].as_str().unwrap_or(""))
+        .collect();
+    assert_eq!(labels, ["i", "ii", "Ch-1", "Ch-2", "Ch-3"]);
+    let out2 = dir.path().join("n.pdf");
+    let r = bin().args(["labels", "--remove", "-o"]).arg(&out2).arg(&out).output().expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let r = bin()
+        .args(["labels", "--range", "0:decimal", "-o"])
+        .arg(dir.path().join("x.pdf"))
+        .arg(&out)
+        .output()
+        .expect("run");
+    assert_eq!(r.status.code(), Some(2), "page 0 is invalid input");
+}
