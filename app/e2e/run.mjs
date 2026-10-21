@@ -2496,6 +2496,73 @@ await test("comments panel: delete a note and change a highlight's comment; clos
   }
 });
 
+await test("batch: reduce size of the open files into a folder, again with existing results kept, then an OCR batch stopped part-way", async () => {
+  const dir = mkdtempSync(join(work, "batch-"));
+  const scans = [1, 2, 3].map((i) => {
+    const p = join(dir, `scan${i}.pdf`);
+    copyFileSync(join(FIX, "scanned.pdf"), p);
+    return p;
+  });
+  const outDir = join(dir, "out");
+  mkdirSync(outDir);
+  const openBatch = async (s) => {
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Process several");
+    await s.click('[role="option"][data-command="file.batch"]');
+    await s.waitFor('[data-testid="batch-start"]');
+  };
+  const setAction = (s, v) => s.exec("const el = document.querySelector('#batch-action'); el.value = arguments[0]; el.dispatchEvent(new Event('change', { bubbles: true })); return 1", v);
+  await withApp([join(FIX, "uncompressed-report.pdf"), join(FIX, "five-pages.pdf")], async (s) => {
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label').length")) === 2, "two tabs");
+    await pageLoaded(s, 0);
+    await openBatch(s);
+    assert((await s.attr('[data-testid="batch-start"]', "title")) === "Add PDF files first.", "needs files");
+    await s.click('[data-testid="batch-add-open"]');
+    await s.type("#batch-folder", outDir);
+    await setAction(s, "optimize");
+    await axeCheck(s, "batch-dialog");
+    await s.click('[data-testid="batch-start"]');
+    await s.waitUntil(async () => (await s.text('[data-testid="batch-summary"]')) === "2 done (of 2)", "results", 60000);
+    const rows = await s.exec("return [...document.querySelectorAll('[data-testid=batch-results] li')].map(l => l.dataset.state + '|' + l.textContent)");
+    assert(rows[0].startsWith("done|uncompressed-report.pdf") && rows[0].includes("Saved uncompressed-report-smaller.pdf"), `rows: ${JSON.stringify(rows)}`);
+    writeFileSync(join(ART, "batch-results.png"), await s.screenshot());
+    await s.click('[data-testid="batch-close"]');
+    // The same batch again: existing results are kept and new ones get another name.
+    await openBatch(s);
+    await s.click('[data-testid="batch-add-open"]');
+    await s.type("#batch-folder", outDir);
+    await setAction(s, "optimize");
+    await s.click('[data-testid="batch-start"]');
+    await s.waitUntil(async () => (await s.text('[data-testid="batch-summary"]')) === "2 done (of 2)", "second run", 60000);
+    await s.click('[data-testid="batch-close"]');
+  });
+  const outs = readdirSync(outDir).filter((f) => f.endsWith(".pdf")).sort();
+  assert(outs.length === 4 && outs.includes("uncompressed-report-smaller.pdf") && outs.includes("five-pages-smaller.pdf"), `both runs kept: ${JSON.stringify(outs)}`);
+  if (CLI) {
+    const t = JSON.parse(execFileSync(CLI, ["--json", "text", "--pages", "1", join(outDir, "five-pages-smaller.pdf")], { encoding: "utf8" })).result.data.pages[0].text;
+    assert(t.includes("PWMARK001"), "result keeps the text");
+  }
+
+  await withApp(scans, async (s) => {
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label').length")) === 3, "three tabs");
+    await pageLoaded(s, 0);
+    await openBatch(s);
+    await s.click('[data-testid="batch-add-open"]');
+    await s.type("#batch-folder", outDir);
+    await setAction(s, "ocr");
+    await s.click('[data-testid="batch-start"]');
+    await s.waitFor('[data-testid="batch-stop"]');
+    assert((await s.attr('[data-testid="batch-close"]', "aria-disabled")) === "true", "can't close while running");
+    await s.click('[data-testid="batch-stop"]');
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=batch-stop]')")), "batch stopped", 60000);
+    const sum = await s.text('[data-testid="batch-summary"]');
+    assert(/cancelled/.test(sum), `some files were stopped: ${sum}`);
+  });
+  const leftovers = readdirSync(outDir).filter((f) => f.startsWith(".pw-staged"));
+  assert(leftovers.length === 0, `no partial files left: ${leftovers}`);
+});
+
 /* ------------------------------------------------------------------ */
 const summary = {
   app: APP,

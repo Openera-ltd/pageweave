@@ -262,3 +262,8 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - **Pre-existing bug fixed:** closing a tab asked first only for unsaved annotations and form edits; unsaved text/picture edits were closed without asking. Now every kind of unsaved change asks (E2E covers comment changes).
 - CLI `annotations` (list, `--delete PAGE:INDEX:TYPE`, `--set-text PAGE:INDEX:TYPE=TEXT`); app Sidebar ▸ Comments.
 - Ran: fmt, clippy clean; Rust 340 passed; vitest 121; audit 77/77; Linux real-app E2E full suite 73/73.
+
+## 2026-10-21 — Session 2, checkpoint 8: batch processing (PRD 06)
+- App File ▸ Process several files… (also on the start screen): one action over many PDFs, each file one existing typed job (host queue, bounded workers); names unique within the batch, collision "rename" so existing results are kept; per-file state and reason; Stop the rest cancels queued and running jobs; Close disabled while running.
+- Ran: fmt, clippy clean; vitest 125; audit 78/78; new E2E scenario passes (Rust unchanged).
+- First E2E assumption was wrong (the five-page fixture can be made smaller too) — the app was right; the scenario now checks a repeat run keeps both results, and a component test covers the failure display.

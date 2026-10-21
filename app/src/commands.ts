@@ -14,6 +14,7 @@ export type CommandId =
   | "file.attachFiles"
   | "file.editBookmarks"
   | "file.imagesToPdf"
+  | "file.batch"
   | "file.unprotect"
   | "file.sanitize"
   | "file.exportFormData"
@@ -104,6 +105,7 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "file.attachFiles", label: "Attach files…", category: "File", shortcuts: [] },
   { id: "file.editProperties", label: "Edit document properties…", category: "File", shortcuts: [] },
   { id: "file.unprotect", label: "Remove password…", category: "File", shortcuts: [] },
+  { id: "file.batch", label: "Process several files…", category: "File", shortcuts: [] },
   { id: "file.sanitize", label: "Remove hidden information…", category: "File", shortcuts: [] },
   { id: "file.exportFormData", label: "Export form data…", category: "File", shortcuts: [] },
   { id: "file.accessibility", label: "Check accessibility…", category: "File", shortcuts: [] },

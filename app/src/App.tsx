@@ -66,6 +66,7 @@ import { RedactPatternsDialog } from "./components/RedactPatternsDialog";
 import { toChanges, type AnnotChanges } from "./annotationChanges";
 import { AccessibilityDialog } from "./components/AccessibilityDialog";
 import { PageLabelsDialog } from "./components/PageLabelsDialog";
+import { BatchDialog } from "./components/BatchDialog";
 import type { ImportPlan } from "./formData";
 import { EditPropertiesDialog } from "./components/EditPropertiesDialog";
 import { SaveAttachmentDialog } from "./components/SaveAttachmentDialog";
@@ -97,6 +98,7 @@ type DialogState =
   | { kind: "redactPatterns" }
   | { kind: "accessibility" }
   | { kind: "pageLabels" }
+  | { kind: "batch" }
   | { kind: "importFormData" }
   | { kind: "compare" }
   | { kind: "print" }
@@ -833,6 +835,7 @@ export function App() {
     "file.trustedCertificates": { run: () => setDialog({ kind: "trustedCertificates" }), available: noDialog },
     "file.signatureMark": { run: () => setDialog({ kind: "signatureMark" }), available: all(needDoc, noDialog) },
     "file.imagesToPdf": { run: () => setDialog({ kind: "images", files: [] }), available: noDialog },
+    "file.batch": { run: () => setDialog({ kind: "batch" }), available: noDialog },
     "file.editBookmarks": { run: () => setDialog({ kind: "bookmarks", addOnOpen: false, page: view.page }), available: all(needDoc, noDialog) },
     "file.attachFiles": { run: () => active && attachFiles(active), available: all(needDoc, noDialog) },
     "file.editProperties": { run: () => setDialog({ kind: "editProperties" }), available: all(needDoc, () => (dialog && dialog.kind !== "properties" ? "Close the open dialog first." : true)) },
@@ -1444,6 +1447,7 @@ export function App() {
             dropActive={dropActive}
             onOpen={openDialog}
             onImagesToPdf={() => setDialog({ kind: "images", files: [] })}
+            onBatch={() => setDialog({ kind: "batch" })}
             onOpenRecent={(p) => openPath(p)}
             onRemoveRecent={removeRecent}
             openShortcut={bindings["file.open"]?.[0]}
@@ -1526,6 +1530,7 @@ export function App() {
       {dialog?.kind === "editProperties" && active && <EditPropertiesDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "unprotect" && active && <UnprotectDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "sanitize" && active && <SanitizeDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
+      {dialog?.kind === "batch" && <BatchDialog openFiles={tabs.map((t) => t.path)} jobs={jobs} onClose={() => setDialog(null)} />}
       {dialog?.kind === "pageLabels" && active && <PageLabelsDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "accessibility" && active && <AccessibilityDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onGoToPage={goToPage} />}
       {dialog?.kind === "redactPatterns" && active && (

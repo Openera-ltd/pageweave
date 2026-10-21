@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatBytes } from "../format";
-import { CaseSensitive, ChevronDown, ChevronUp, FileText, FolderOpen, Images, Trash2, WholeWord, X } from "lucide-react";
+import { CaseSensitive, ChevronDown, ChevronUp, FileText, FolderOpen, Images, Layers, Trash2, WholeWord, X } from "lucide-react";
 import { COMMANDS, type CommandHandlers, type CommandId } from "../commands";
 import { basename, dirname } from "../paths";
 import type { JobSnapshot, OpenedDoc, PwError } from "../types";
@@ -13,6 +13,7 @@ export function Home({
   dropActive,
   onOpen,
   onImagesToPdf,
+  onBatch,
   onOpenRecent,
   onRemoveRecent,
   openShortcut,
@@ -21,6 +22,7 @@ export function Home({
   dropActive: boolean;
   onOpen: () => void;
   onImagesToPdf: () => void;
+  onBatch: () => void;
   onOpenRecent: (path: string) => void;
   onRemoveRecent: (path: string) => void;
   openShortcut?: string;
@@ -38,6 +40,9 @@ export function Home({
         </button>{" "}
         <button type="button" className="btn outline" data-command="file.imagesToPdf" onClick={onImagesToPdf}>
           <Images /> Create PDF from images…
+        </button>{" "}
+        <button type="button" className="btn outline" data-command="file.batch" onClick={onBatch}>
+          <Layers /> Process several files…
         </button>
         {recent.length > 0 && (
           <>

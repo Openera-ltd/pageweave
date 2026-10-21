@@ -16,6 +16,7 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `file.attachFiles` | Attach files… | — | Exercised by tests |
 | `file.editProperties` | Edit document properties… | — | Exercised by tests |
 | `file.unprotect` | Remove password… | — | Exercised by tests |
+| `file.batch` | Process several files… | — | Exercised by tests |
 | `file.sanitize` | Remove hidden information… | — | Exercised by tests |
 | `file.exportFormData` | Export form data… | — | Exercised by tests |
 | `file.accessibility` | Check accessibility… | — | Exercised by tests |
@@ -84,4 +85,4 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `app.commandPalette` | Command palette | Ctrl+K, Ctrl+Shift+P | Exercised by tests |
 | `app.openLogs` | Show log folder | — | Exercised by tests |
 
-Coverage: 77 of 77 commands exercised by unit or real-app E2E tests.
+Coverage: 78 of 78 commands exercised by unit or real-app E2E tests.
