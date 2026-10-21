@@ -248,3 +248,4 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - CLI `accessibility`, MCP `check_accessibility` (18 tools), app File ▸ Check accessibility… (status words in text, not colour alone; page buttons; axe clean).
 - Not a PDF/UA or WCAG verdict (stated in UI, CLI and MCP description). No tag editing/auto-fix yet.
 - Ran: fmt, clippy clean; Rust 331 passed; vitest 114; audit 76/76; license check ok; new E2E scenario passes.
+- CI run #73 (MCP fix) Linux E2E 68/69: "print" failed with "stale element reference" — the scenario's check returned the dialog element itself from a script, and the dialog was removed while the driver serialized it. Test-harness defect, not app behaviour (print code unchanged; scenario passes locally). Eight such checks now return booleans; rule noted on the harness `exec` helper.

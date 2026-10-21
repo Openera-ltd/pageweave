@@ -1290,7 +1290,7 @@ await test("reduce file size: tab menu and palette; smaller verified copy with t
     await s.click('[role="option"][data-command="file.reduceSize"]');
     await s.waitFor("#output");
     assert((await s.exec("return document.querySelector('#output').value")).endsWith("uncompressed-report-smaller.pdf"), "default name");
-    assert((await s.exec("return document.querySelector('#pages')")) === null, "whole document, no page range");
+    assert((await s.exec("return !!document.querySelector('#pages')")) === false, "whole document, no page range");
     await s.type("#output", out);
     await axeCheck(s, "reduce-size-dialog");
     writeFileSync(join(ART, "reduce-size-dialog.png"), await s.screenshot());
@@ -1326,7 +1326,7 @@ await test("reduce file size with image resolution: preset applied; images resam
     await s.type('[role="dialog"] input', "Reduce file size");
     await s.click('[role="option"][data-command="file.reduceSize"]');
     await s.waitFor('[data-testid="optimize-images"]');
-    assert((await s.exec("return document.querySelector('#optimize-preset')")) === null, "preset hidden while off");
+    assert((await s.exec("return !!document.querySelector('#optimize-preset')")) === false, "preset hidden while off");
     await s.click('[data-testid="optimize-images"]');
     await s.waitFor("#optimize-preset");
     assert((await s.exec("return document.querySelector('#optimize-preset').value")) === "standard", "standard by default");
@@ -1386,7 +1386,7 @@ await test("compare documents: with an open tab; difference list, side-by-side h
     await axeCheck(s, "compare-result");
     writeFileSync(join(ART, "compare-result.png"), await s.screenshot());
     await s.keys(["Escape"]);
-    await s.waitUntil(async () => (await s.exec("return document.querySelector('[role=dialog]')")) === null, "closed");
+    await s.waitUntil(async () => (await s.exec("return !!document.querySelector('[role=dialog]')")) === false, "closed");
     assert((await s.exec("return document.querySelectorAll('.tab-label .name').length")) === 2, "tabs unchanged");
   });
 });
@@ -1414,7 +1414,7 @@ await test("compare documents: another file by path; errors explained; swap orde
     await s.waitFor('[data-testid="compare-summary"]');
     assert((await s.text('[data-testid="compare-summary"]')) === "4 pages changed · 1 page inserted · 1 page deleted", "same result after swapping");
     await s.keys(["Escape"]);
-    await s.waitUntil(async () => (await s.exec("return document.querySelector('[role=dialog]')")) === null, "closed");
+    await s.waitUntil(async () => (await s.exec("return !!document.querySelector('[role=dialog]')")) === false, "closed");
     assert((await s.exec("return document.querySelectorAll('.tab-label .name').length")) === 1, "the compared file did not become a tab");
   });
 });
@@ -1507,8 +1507,8 @@ await test("print: Ctrl+P, page range and resolution; prepared pages at page siz
     assert(job.images.every((i) => i[0] && i[1] > 0), "every page image loaded before printing");
     assert(Math.abs(job.images[0][1] - Math.round((595 * 150) / 72)) <= 2, `A4 at 150 dpi is ~1240 px wide (${job.images[0][1]})`);
     assert(job.css.includes("size: 595pt 842pt") && job.css.includes("size: 792pt 612pt"), "page sizes in @page rules");
-    await s.waitUntil(async () => (await s.exec("return document.querySelector('[role=dialog]')")) === null, "dialog closes after printing");
-    assert((await s.exec("return document.querySelector('#print-root')")) === null, "prepared pages removed");
+    await s.waitUntil(async () => (await s.exec("return !!document.querySelector('[role=dialog]')")) === false, "dialog closes after printing");
+    assert((await s.exec("return !!document.querySelector('#print-root')")) === false, "prepared pages removed");
     // Ctrl+P inside a text field never reaches the browser's own print (which would print the
     // app's screens): the key's default action is prevented. (Listener added after the app's.)
     await s.exec("window.addEventListener('keydown', (e) => { if (e.ctrlKey && e.key.toLowerCase() === 'p') window.__ctrlPPrevented = e.defaultPrevented; }); return 1");
@@ -1893,7 +1893,7 @@ await test("images to PDF: opens from the start screen; explains what is missing
     await axeCheck(s, "images-to-pdf-dialog");
     writeFileSync(join(ART, "images-to-pdf-dialog.png"), await s.screenshot());
     await s.keys(["Escape"]);
-    await s.waitUntil(async () => (await s.exec("return document.querySelector('[role=dialog]')")) === null, "closed");
+    await s.waitUntil(async () => (await s.exec("return !!document.querySelector('[role=dialog]')")) === false, "closed");
   });
   if (CLI) {
     // The conversion itself, through the same engine (the native file picker cannot be automated).
@@ -2128,7 +2128,7 @@ await test("remove password: copy opens without a password; unavailable with a r
     await s.exec("[...document.querySelectorAll('.notice button')].find(b => b.textContent === 'Open').click(); return 1");
     await s.waitUntil(async () => (await s.exec("return [...document.querySelectorAll('.tab-label .name')].map(n => n.textContent)")).includes("unlocked.pdf"), "copy opened");
     await pageLoaded(s, 0);
-    assert((await s.exec("return document.querySelector('#pdf-password')")) === null, "no password asked");
+    assert((await s.exec("return !!document.querySelector('#pdf-password')")) === false, "no password asked");
     // On the unprotected copy the command is unavailable and says why.
     await openPalette(s, "Remove password");
     const reason = await s.exec("const o = document.querySelector('[data-command=\"file.unprotect\"]'); return o.getAttribute('aria-disabled') + '|' + o.textContent");
