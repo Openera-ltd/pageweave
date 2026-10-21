@@ -8,6 +8,7 @@
 //! so multi-call sequences over PDFium's global state are atomic. The form module calls a few
 //! PDFium functions directly (pdfium-render does not expose its form-fill handle) under the same lock.
 
+mod accessibility;
 mod attachments;
 mod blank;
 mod compare;
@@ -36,6 +37,7 @@ mod sign;
 mod signatures;
 mod unprotect;
 
+pub use accessibility::{check_accessibility, AccessibilityCheck, AccessibilityReport, CheckStatus};
 pub use attachments::{add_attachments, clean_name, extract_attachment, list_attachments, AttachmentInfo};
 pub use blank::{find_blank_pages, PageInk};
 pub use compare::{compare, ChangeKind, CompareReport, PairStatus, MAX_COMPARE_PAGES};

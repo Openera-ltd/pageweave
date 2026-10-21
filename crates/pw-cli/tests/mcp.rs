@@ -162,6 +162,7 @@ fn read_only_server_lists_and_runs_read_tools_and_refuses_writing() {
             "compare-new.pdf",
             "signed-rsa.pdf",
             "sensitive-info.pdf",
+            "tagged-issues.pdf",
         ],
     );
     let mut c = Client::start(&[root.path()], false);
@@ -177,6 +178,7 @@ fn read_only_server_lists_and_runs_read_tools_and_refuses_writing() {
             "list_form_fields",
             "compare_documents",
             "check_signatures",
+            "check_accessibility",
             "find_sensitive_text"
         ],
         "write tools are not even listed"
@@ -199,6 +201,9 @@ fn read_only_server_lists_and_runs_read_tools_and_refuses_writing() {
     assert!(hits["data"]["count"].as_u64().unwrap_or(0) >= 3, "{hits}");
     let fields = c.ok("list_form_fields", json!({ "path": "form-fields.pdf" }));
     assert_eq!(fields["data"]["fields"][0]["name"], "full_name");
+    let acc = c.ok("check_accessibility", json!({ "path": "tagged-issues.pdf" }));
+    assert_eq!(acc["data"]["tagged"], true);
+    assert!(acc["data"]["failed"].as_u64().unwrap_or(0) >= 3, "{acc}");
     let found = c.ok("find_sensitive_text", json!({ "path": "sensitive-info.pdf", "kinds": ["email", "iban"] }));
     let kinds: Vec<&str> =
         found["data"]["hits"].as_array().expect("hits").iter().map(|h| h["kind"].as_str().unwrap_or("")).collect();
@@ -275,7 +280,7 @@ fn write_tools_create_verified_new_files_and_leave_sources_alone() {
     let before = std::fs::read(root.path().join("five-pages.pdf")).expect("read");
     let mut c = Client::start(&[root.path()], true);
     let names = tool_names(&mut c);
-    assert_eq!(names.len(), 17, "{names:?}");
+    assert_eq!(names.len(), 18, "{names:?}");
 
     let r = c.ok("extract_pages", json!({ "path": "five-pages.pdf", "pages": "4, 2", "output": "ex.pdf" }));
     assert_eq!(r["outputs"][0]["pages"], 2);

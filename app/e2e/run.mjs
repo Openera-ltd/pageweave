@@ -2398,6 +2398,26 @@ await test("mark patterns for redaction: find sensitive text, untick one match, 
   }
 });
 
+await test("accessibility check: problems grouped with text labels, review items listed, page buttons jump", async () => {
+  await withApp([join(FIX, "tagged-issues.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Check accessibility");
+    await s.click('[role="option"][data-command="file.accessibility"]');
+    await s.waitUntil(async () => (await s.text('[data-testid="a11y-summary"]')).includes("to fix"), "report shown");
+    const fix = await s.text('[data-testid="a11y-group-fail"]');
+    for (const want of ["Fails", "Document language", "Pictures have alternate text", "Form fields are labelled"]) assert(fix.includes(want), `needs fixing lists ${want}: ${fix}`);
+    const warn = await s.text('[data-testid="a11y-group-warning"]');
+    assert(warn.includes("Tables have header cells") && warn.includes("Fonts embedded") && warn.includes("Helvetica"), `warnings: ${warn}`);
+    assert((await s.text('[data-testid="a11y-group-manual"]')).includes("Reading order"), "manual review items");
+    await axeCheck(s, "accessibility-dialog");
+    writeFileSync(join(ART, "accessibility-check.png"), await s.screenshot());
+    await s.click('[aria-label="Go to page 1 (Pictures have alternate text)"]');
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=a11y-summary]')")), "dialog closed after jumping");
+  });
+});
+
 /* ------------------------------------------------------------------ */
 const summary = {
   app: APP,

@@ -792,6 +792,11 @@ pub enum Operation {
         old: PathBuf,
         new: PathBuf,
     },
+    /// What can be checked automatically about the document's accessibility (tags, language,
+    /// title, alternate text, table headers, form labels, …), plus items a person must review.
+    CheckAccessibility {
+        input: PathBuf,
+    },
     /// Find sensitive text — built-in kinds and/or a custom regular expression — with the position
     /// of every match (read-only; used to mark text for redaction).
     FindPatterns {
@@ -852,6 +857,7 @@ pub const OPERATION_IDS: &[&str] = &[
     "export_images",
     "redaction_preview",
     "find_patterns",
+    "check_accessibility",
     "ocr_pages",
     "protect",
     "unprotect",
@@ -904,6 +910,7 @@ impl Operation {
             Operation::ExportImages { .. } => "export_images",
             Operation::RedactionPreview { .. } => "redaction_preview",
             Operation::FindPatterns { .. } => "find_patterns",
+            Operation::CheckAccessibility { .. } => "check_accessibility",
             Operation::OcrPages { .. } => "ocr_pages",
             Operation::Protect { .. } => "protect",
             Operation::Unprotect { .. } => "unprotect",
@@ -941,6 +948,7 @@ impl Operation {
                 | Operation::FormFields { .. }
                 | Operation::ReadFormData { .. }
                 | Operation::FindPatterns { .. }
+                | Operation::CheckAccessibility { .. }
                 | Operation::ExtractText { .. }
                 | Operation::Search { .. }
                 | Operation::RedactionPreview { .. }
@@ -985,6 +993,7 @@ impl Operation {
             | Operation::ExportImages { input, .. }
             | Operation::RedactionPreview { input, .. }
             | Operation::FindPatterns { input, .. }
+            | Operation::CheckAccessibility { input }
             | Operation::OcrPages { input, .. }
             | Operation::Protect { input, .. }
             | Operation::Unprotect { input, .. }
@@ -1027,6 +1036,7 @@ impl Operation {
             | Operation::FormFields { .. }
             | Operation::ReadFormData { .. }
             | Operation::FindPatterns { .. }
+            | Operation::CheckAccessibility { .. }
             | Operation::ExtractText { .. }
             | Operation::Search { .. }
             | Operation::RedactionPreview { .. }

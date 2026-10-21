@@ -1997,3 +1997,51 @@ kbd,
   flex: 0 0 64px;
   font-weight: 600;
 }
+
+/* Accessibility check */
+.a11y-heading {
+  font-size: var(--font-size-2);
+  margin: var(--space-4) 0 var(--space-2);
+}
+.a11y-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2);
+}
+.a11y-list li {
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+.a11y-list li:last-child {
+  border-bottom: 0;
+}
+.a11y-status {
+  flex: 0 0 auto;
+  min-width: 88px;
+  font-weight: 600;
+  font-size: var(--font-size-1);
+}
+.a11y-status.fail {
+  color: var(--danger);
+}
+.a11y-status.warning {
+  color: var(--warning);
+}
+.a11y-status.pass {
+  color: var(--success);
+}
+.a11y-status.manual,
+.a11y-status.not_applicable {
+  color: var(--text-muted);
+}
+.a11y-names {
+  overflow-wrap: anywhere;
+}
+.a11y-pages {
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}

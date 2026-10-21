@@ -922,3 +922,16 @@ fn patterns_lists_sensitive_text_with_positions() {
     let r = bin().args(["patterns"]).arg(fixture("sensitive-info.pdf")).output().expect("run");
     assert_eq!(r.status.code(), Some(2), "nothing to look for is invalid input");
 }
+
+#[test]
+fn accessibility_reports_checks_and_review_items() {
+    let r = bin().args(["accessibility"]).arg(fixture("tagged-issues.pdf")).output().expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let out = String::from_utf8_lossy(&r.stdout);
+    assert!(out.contains("FAIL    Document language"), "{out}");
+    assert!(out.contains("FAIL    Pictures have alternate text") && out.contains("pages: 1"), "{out}");
+    assert!(out.contains("REVIEW  Reading order"), "{out}");
+    assert!(out.contains("not a PDF/UA or WCAG verdict"), "{out}");
+    let r = bin().args(["--json", "accessibility"]).arg(fixture("tagged-accessible.pdf")).output().expect("run");
+    assert_eq!(json(&r)["result"]["data"]["failed"], 0);
+}

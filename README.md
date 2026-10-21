@@ -47,6 +47,7 @@ Known limitations (selection):
 - XFA forms are detected but cannot be displayed or filled.
 - No measured performance budgets or hardware support claims yet (`docs/HARDWARE_SUPPORT.md`).
 - Screen-reader behaviour has not yet been verified with Narrator/NVDA.
+- Accessibility check: automated structure checks plus a list of what to review by hand; it does not edit or add tags and is not a PDF/UA or WCAG conformance verdict.
 
 ## Architecture
 
@@ -101,6 +102,7 @@ pageweave compare report-v1.pdf report-v2.pdf          # page, text, format and 
 pageweave split --by-bookmarks 1 --out-dir chapters/ book.pdf   # or --max-size 10MB
 pageweave form-export -o answers.xfdf form.pdf             # or answers.json / --format json
 pageweave form-import --preview form.pdf answers.xfdf   # which fields it fills; -o filled.pdf to fill
+pageweave accessibility report.pdf                     # automated checks + what to review by hand
 pageweave patterns --kinds email,phone,card,iban,ssn report.pdf   # sensitive text with positions
 pageweave sanitize --inspect report.pdf
 pageweave sanitize --remove-web-links -o report-clean.pdf report.pdf
@@ -124,7 +126,7 @@ the network — and only touches files inside the folders you name:
 ```
 
 - Read tools: `list_capabilities`, `inspect_document`, `extract_text`, `search_text`, `list_form_fields`,
-  `compare_documents`, `check_signatures`, `find_sensitive_text`.
+  `compare_documents`, `check_signatures`, `check_accessibility`, `find_sensitive_text`.
 - With `--allow-write` also: `extract_pages`, `delete_pages`, `rotate_pages`, `merge_documents`,
   `split_document`, `fill_form`, `recognize_text` (OCR, with progress and cancel), `reduce_file_size`,
   `export_text`. These only create **new** files; existing files are never replaced or changed.

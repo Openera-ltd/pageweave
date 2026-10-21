@@ -127,6 +127,10 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(w);
             (vec![out(&c, None)], json!({ "fields": n, "format": format }))
         }
+        Operation::CheckAccessibility { input } => {
+            let report = crate::accessibility::check_accessibility(input, &opts)?;
+            (vec![], serde_json::to_value(&report).unwrap_or_default())
+        }
         Operation::FindPatterns { input, patterns, custom, pages } => {
             let report = crate::patterns::find_patterns(
                 input,

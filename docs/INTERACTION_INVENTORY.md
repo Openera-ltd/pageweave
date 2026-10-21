@@ -18,6 +18,7 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `file.unprotect` | Remove password… | — | Exercised by tests |
 | `file.sanitize` | Remove hidden information… | — | Exercised by tests |
 | `file.exportFormData` | Export form data… | — | Exercised by tests |
+| `file.accessibility` | Check accessibility… | — | Exercised by tests |
 | `file.importFormData` | Import form data… | — | Exercised by tests |
 | `edit.clearForm` | Clear form fields | — | Exercised by tests |
 | `file.reduceSize` | Reduce file size… | — | Exercised by tests |
@@ -82,4 +83,4 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `app.commandPalette` | Command palette | Ctrl+K, Ctrl+Shift+P | Exercised by tests |
 | `app.openLogs` | Show log folder | — | Exercised by tests |
 
-Coverage: 75 of 75 commands exercised by unit or real-app E2E tests.
+Coverage: 76 of 76 commands exercised by unit or real-app E2E tests.

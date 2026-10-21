@@ -59,6 +59,9 @@ enum Command {
     Inspect { file: PathBuf },
     /// List form fields (names, kinds, values, options) as JSON.
     Fields { file: PathBuf },
+    /// Check what can be checked automatically about accessibility (tags, language, title,
+    /// alternate text, table headers, form labels, …) and list what a person must review.
+    Accessibility { file: PathBuf },
     /// Find sensitive text — e-mail addresses, phone numbers, card numbers, IBANs, US SSNs and/or a
     /// custom regular expression — with the position of each match (to redact with `redact`).
     Patterns {
@@ -517,6 +520,7 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
         }
         Command::Inspect { file } => Operation::Inspect { input: file.clone() },
         Command::Fields { file } => Operation::FormFields { input: file.clone() },
+        Command::Accessibility { file } => Operation::CheckAccessibility { input: file.clone() },
         Command::Patterns { file, kinds, custom, pages } => {
             use pw_core::ops::TextPattern as T;
             let patterns = kinds
@@ -1050,6 +1054,37 @@ fn print_human(r: &OperationResult) {
                     a["annotations"]
                 );
             }
+        }
+        "check_accessibility" => {
+            for c in r.data["checks"].as_array().into_iter().flatten() {
+                let status = match c["status"].as_str().unwrap_or("") {
+                    "pass" => "PASS",
+                    "fail" => "FAIL",
+                    "warning" => "WARN",
+                    "manual" => "REVIEW",
+                    _ => "N/A",
+                };
+                println!("{status:<7} {}: {}", c["title"].as_str().unwrap_or(""), c["detail"].as_str().unwrap_or(""));
+                let pages: Vec<String> = c["pages"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|p| p.as_u64())
+                    .map(|p| (p + 1).to_string())
+                    .collect();
+                if !pages.is_empty() {
+                    println!("        pages: {}", pages.join(", "));
+                }
+                let names: Vec<&str> = c["names"].as_array().into_iter().flatten().filter_map(|n| n.as_str()).collect();
+                if !names.is_empty() {
+                    println!("        {}", names.join(", "));
+                }
+            }
+            let d = &r.data;
+            println!(
+                "{} passed, {} failed, {} warnings, {} to review by hand (automated checks only; not a PDF/UA or WCAG verdict)",
+                d["passed"], d["failed"], d["warnings"], d["manual"]
+            );
         }
         "find_patterns" => {
             let hits = r.data["hits"].as_array().cloned().unwrap_or_default();

@@ -105,6 +105,14 @@ pub const TOOLS: &[Tool] = &[
         schema: || obj(json!({ "path": path_prop("PDF file") }), &["path"]),
     },
     Tool {
+        name: "check_accessibility",
+        title: "Check accessibility",
+        description: "Automated accessibility checks of a PDF (tags, language, title, alternate text for pictures, table headers, headings, form field labels, link descriptions, tab order, embedded fonts, text on every page) plus the items a person must review. Not a PDF/UA or WCAG conformance verdict.",
+        effect: Effect::ReadOnly,
+        long: false,
+        schema: || obj(json!({ "path": path_prop("PDF file") }), &["path"]),
+    },
+    Tool {
         name: "find_sensitive_text",
         title: "Find sensitive text",
         description: "Find e-mail addresses, phone numbers, payment card numbers (Luhn-checked), IBANs (checksum-checked), US Social Security numbers and/or a custom regular expression, with the page and position of each match. Matches are candidates for review, not a guarantee that nothing else is sensitive.",
@@ -407,6 +415,7 @@ pub fn operation(tool: &Tool, a: &Value, roots: &Roots) -> PwResult<Operation> {
                 whole_word: x.whole_word,
             }
         }
+        "check_accessibility" => Operation::CheckAccessibility { input: roots.input(&args::<PathArg>(a)?.path)? },
         "find_sensitive_text" => {
             let x: PatternsArg = args(a)?;
             Operation::FindPatterns {

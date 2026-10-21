@@ -63,6 +63,7 @@ import { TrustSignerDialog, TrustedCertificatesDialog } from "./components/Trust
 import { UnprotectDialog } from "./components/UnprotectDialog";
 import { ExportFormDataDialog, ImportFormDataDialog } from "./components/FormDataDialogs";
 import { RedactPatternsDialog } from "./components/RedactPatternsDialog";
+import { AccessibilityDialog } from "./components/AccessibilityDialog";
 import type { ImportPlan } from "./formData";
 import { EditPropertiesDialog } from "./components/EditPropertiesDialog";
 import { SaveAttachmentDialog } from "./components/SaveAttachmentDialog";
@@ -92,6 +93,7 @@ type DialogState =
   | { kind: "sanitize" }
   | { kind: "exportFormData" }
   | { kind: "redactPatterns" }
+  | { kind: "accessibility" }
   | { kind: "importFormData" }
   | { kind: "compare" }
   | { kind: "print" }
@@ -806,6 +808,7 @@ export function App() {
     "file.properties": { run: () => setDialog({ kind: "properties" }), available: all(needDoc, noDialog) },
     "file.protect": { run: () => setDialog({ kind: "protect" }), available: all(needDoc, noDialog) },
     "file.sanitize": { run: () => setDialog({ kind: "sanitize" }), available: all(needDoc, noDialog) },
+    "file.accessibility": { run: () => setDialog({ kind: "accessibility" }), available: all(needDoc, noDialog) },
     "file.exportFormData": { run: () => setDialog({ kind: "exportFormData" }), available: all(needDoc, noDialog, formAvail) },
     "file.importFormData": { run: () => setDialog({ kind: "importFormData" }), available: all(needDoc, noDialog, formAvail) },
     "edit.clearForm": { run: () => active && clearForm(active.doc_id), available: all(needDoc, noDialog, formAvail) },
@@ -1086,6 +1089,10 @@ export function App() {
               item("file.exportFormData", "Export form data…", () => setDialog({ kind: "exportFormData" }), dialog ? "Close the open dialog first." : formAvail()),
             ]
           : []),
+        item("file.accessibility", "Check accessibility…", () => {
+          setActiveId(doc.doc_id);
+          setDialog({ kind: "accessibility" });
+        }, dialog ? "Close the open dialog first." : true),
         item("file.compare", "Compare with…", () => {
           setActiveId(doc.doc_id);
           setDialog({ kind: "compare" });
@@ -1500,6 +1507,7 @@ export function App() {
       {dialog?.kind === "editProperties" && active && <EditPropertiesDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "unprotect" && active && <UnprotectDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "sanitize" && active && <SanitizeDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
+      {dialog?.kind === "accessibility" && active && <AccessibilityDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onGoToPage={goToPage} />}
       {dialog?.kind === "redactPatterns" && active && (
         <RedactPatternsDialog
           doc={active}

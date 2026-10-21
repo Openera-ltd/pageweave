@@ -17,6 +17,7 @@ export type CommandId =
   | "file.unprotect"
   | "file.sanitize"
   | "file.exportFormData"
+  | "file.accessibility"
   | "file.importFormData"
   | "edit.clearForm"
   | "file.reduceSize"
@@ -104,6 +105,7 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "file.unprotect", label: "Remove password…", category: "File", shortcuts: [] },
   { id: "file.sanitize", label: "Remove hidden information…", category: "File", shortcuts: [] },
   { id: "file.exportFormData", label: "Export form data…", category: "File", shortcuts: [] },
+  { id: "file.accessibility", label: "Check accessibility…", category: "File", shortcuts: [] },
   { id: "file.importFormData", label: "Import form data…", category: "File", shortcuts: [] },
   { id: "edit.clearForm", label: "Clear form fields", category: "Edit", shortcuts: [] },
   { id: "file.reduceSize", label: "Reduce file size…", category: "File", shortcuts: [] },
