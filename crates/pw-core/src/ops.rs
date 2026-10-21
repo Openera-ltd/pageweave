@@ -30,6 +30,24 @@ pub enum SplitMode {
     MaxSize { max_bytes: u64 },
 }
 
+/// Kinds of sensitive text PageWeave can find for redaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextPattern {
+    Email,
+    /// Phone numbers: 7–15 digits with optional +country code, brackets, spaces, dots or dashes.
+    Phone,
+    /// Payment card numbers: 13–19 digits that pass the Luhn check.
+    CardNumber,
+    /// IBANs that pass the ISO 13616 checksum.
+    Iban,
+    /// US Social Security numbers written as 123-45-6789 (impossible area/group/serial values left out).
+    UsSsn,
+}
+
+/// Longest custom search pattern (characters).
+pub const MAX_PATTERN_CHARS: usize = 500;
+
 /// Smallest size limit for splitting by size (bytes).
 pub const MIN_SPLIT_BYTES: u64 = 10 * 1024;
 
@@ -774,6 +792,18 @@ pub enum Operation {
         old: PathBuf,
         new: PathBuf,
     },
+    /// Find sensitive text — built-in kinds and/or a custom regular expression — with the position
+    /// of every match (read-only; used to mark text for redaction).
+    FindPatterns {
+        input: PathBuf,
+        #[serde(default)]
+        patterns: Vec<TextPattern>,
+        /// A regular expression (Rust `regex` syntax; matched in linear time).
+        #[serde(default)]
+        custom: Option<String>,
+        #[serde(default)]
+        pages: Option<String>,
+    },
     /// What redacting `areas` would remove (read-only; shown before applying).
     RedactionPreview {
         input: PathBuf,
@@ -821,6 +851,7 @@ pub const OPERATION_IDS: &[&str] = &[
     "stamp_text",
     "export_images",
     "redaction_preview",
+    "find_patterns",
     "ocr_pages",
     "protect",
     "unprotect",
@@ -872,6 +903,7 @@ impl Operation {
             Operation::StampText { .. } => "stamp_text",
             Operation::ExportImages { .. } => "export_images",
             Operation::RedactionPreview { .. } => "redaction_preview",
+            Operation::FindPatterns { .. } => "find_patterns",
             Operation::OcrPages { .. } => "ocr_pages",
             Operation::Protect { .. } => "protect",
             Operation::Unprotect { .. } => "unprotect",
@@ -908,6 +940,7 @@ impl Operation {
             Operation::Inspect { .. }
                 | Operation::FormFields { .. }
                 | Operation::ReadFormData { .. }
+                | Operation::FindPatterns { .. }
                 | Operation::ExtractText { .. }
                 | Operation::Search { .. }
                 | Operation::RedactionPreview { .. }
@@ -951,6 +984,7 @@ impl Operation {
             | Operation::StampText { input, .. }
             | Operation::ExportImages { input, .. }
             | Operation::RedactionPreview { input, .. }
+            | Operation::FindPatterns { input, .. }
             | Operation::OcrPages { input, .. }
             | Operation::Protect { input, .. }
             | Operation::Unprotect { input, .. }
@@ -992,6 +1026,7 @@ impl Operation {
             Operation::Inspect { .. }
             | Operation::FormFields { .. }
             | Operation::ReadFormData { .. }
+            | Operation::FindPatterns { .. }
             | Operation::ExtractText { .. }
             | Operation::Search { .. }
             | Operation::RedactionPreview { .. }
@@ -1088,6 +1123,15 @@ impl Operation {
             }
             Operation::Split { split: SplitMode::MaxSize { max_bytes }, .. } if *max_bytes < MIN_SPLIT_BYTES => {
                 return Err(PwError::invalid("split.max_size", "Choose a size limit of at least 10 KB."));
+            }
+            Operation::FindPatterns { patterns, custom, .. } => {
+                let custom = custom.as_deref().map(str::trim).filter(|c| !c.is_empty());
+                if patterns.is_empty() && custom.is_none() {
+                    return Err(PwError::invalid("pattern.none", "Choose what to look for."));
+                }
+                if custom.is_some_and(|c| c.chars().count() > MAX_PATTERN_CHARS) {
+                    return Err(PwError::invalid("pattern.too_long", "The pattern is too long."));
+                }
             }
             Operation::Annotate { annotations, .. } => validate_annotations(annotations)?,
             Operation::FillForm { values, .. } => validate_form_values(values)?,

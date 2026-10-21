@@ -1,0 +1,65 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R 7 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Length 313 >>
+stream
+BT
+/F1 12 Tf
+18 TL
+72 720 Td
+(Customer record PWSENS) Tj
+T* (Email: ada.lovelace@example.org) Tj
+T* (Phone: +44 20 7946 0958) Tj
+T* (Card: 4111 1111 1111 1111) Tj
+T* (IBAN: GB82 WEST 1234 5698 7654 32) Tj
+T* (SSN: 123-45-6789) Tj
+T* (Not sensitive: order 2026-10-21, invoice 12345, card 4111 1111 1111 1112) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Length 91 >>
+stream
+BT
+/F1 12 Tf
+18 TL
+72 720 Td
+(Turned page PWSENS2) Tj
+T* (Contact: grace@example.com) Tj
+ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Rotate 90 /Resources << /Font << /F1 3 0 R >> >> /Contents 6 0 R >>
+endobj
+8 0 obj
+<< /Title (Sensitive info) /Author (PageWeave fixtures) /Producer (gen_fixtures.py) >>
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000127 00000 n 
+0000000224 00000 n 
+0000000588 00000 n 
+0000000714 00000 n 
+0000000855 00000 n 
+0000000992 00000 n 
+trailer
+<< /Size 9 /Root 1 0 R /Info 8 0 R /ID [<70616765776561766566697874757265> <70616765776561766566697874757265>] >>
+startxref
+1094
+%%EOF

@@ -127,6 +127,25 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(w);
             (vec![out(&c, None)], json!({ "fields": n, "format": format }))
         }
+        Operation::FindPatterns { input, patterns, custom, pages } => {
+            let report = crate::patterns::find_patterns(
+                input,
+                &opts,
+                patterns,
+                custom.as_deref(),
+                pages.as_deref(),
+                &cancelled,
+                &|d, t| {
+                    if let Some(c) = ctx {
+                        c.set_progress(d, t, "pages");
+                    }
+                },
+            )?;
+            if report.truncated {
+                warnings.push(format!("Showing the first {} matches.", report.hits.len()));
+            }
+            (vec![], serde_json::to_value(&report).unwrap_or_default())
+        }
         Operation::ReadFormData { input, data } => {
             let m = crate::formdata::read_form_data(input, opts.password, data)?;
             (vec![], serde_json::to_value(&m).unwrap_or_default())

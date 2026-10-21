@@ -3762,6 +3762,7 @@ dependencies = [
  "pdfium-render",
  "pw-core",
  "pw-ocr",
+ "regex",
  "ring",
  "serde",
  "serde_json",

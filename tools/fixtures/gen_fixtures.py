@@ -652,6 +652,13 @@ def main() -> int:
     files["uncompressed-report.pdf"] = build_uncompressed_report()
     files["compare-old.pdf"], files["compare-new.pdf"] = compare_pair()
     files["blank-pages.pdf"] = build_blank_pages_document()
+    sensitive = [
+        {"lines": ["Customer record PWSENS", "Email: ada.lovelace@example.org", "Phone: +44 20 7946 0958",
+                   "Card: 4111 1111 1111 1111", "IBAN: GB82 WEST 1234 5698 7654 32", "SSN: 123-45-6789",
+                   "Not sensitive: order 2026-10-21, invoice 12345, card 4111 1111 1111 1112"]},
+        {"lines": ["Turned page PWSENS2", "Contact: grace@example.com"], "rotate": 90},
+    ]
+    files["sensitive-info.pdf"] = build_document(sensitive, title="Sensitive info")
 
     good = files["five-pages.pdf"]
     files["corrupt-truncated.pdf"] = good[: len(good) // 2]
