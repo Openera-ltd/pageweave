@@ -901,3 +901,24 @@ fn split_by_size_and_by_bookmarks_from_the_cli() {
         .expect("run");
     assert_eq!(r.status.code(), Some(2), "bad size is invalid input");
 }
+
+#[test]
+fn patterns_lists_sensitive_text_with_positions() {
+    let r =
+        bin().args(["patterns", "--kinds", "email,card,ssn"]).arg(fixture("sensitive-info.pdf")).output().expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let out = String::from_utf8_lossy(&r.stdout);
+    assert!(out.contains("page 1  email        ada.lovelace@example.org"), "{out}");
+    assert!(out.contains("4111 1111 1111 1111") && !out.contains("1112"), "{out}");
+    assert!(out.contains("page 2  email") && out.contains("4 match(es)"), "{out}");
+    let r = bin()
+        .args(["--json", "patterns", "--custom", r"invoice \d+"])
+        .arg(fixture("sensitive-info.pdf"))
+        .output()
+        .expect("run");
+    let v = json(&r);
+    assert_eq!(v["result"]["data"]["hits"][0]["kind"], "custom");
+    assert!(v["result"]["data"]["hits"][0]["rects"][0]["left"].is_number());
+    let r = bin().args(["patterns"]).arg(fixture("sensitive-info.pdf")).output().expect("run");
+    assert_eq!(r.status.code(), Some(2), "nothing to look for is invalid input");
+}

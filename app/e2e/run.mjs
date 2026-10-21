@@ -2361,6 +2361,43 @@ await test("redaction: mark by search, selection and dragged area; review; apply
   }
 });
 
+await test("mark patterns for redaction: find sensitive text, untick one match, mark and apply; values gone, the unticked one kept", async () => {
+  const src = join(FIX, "sensitive-info.pdf");
+  const out = join(work, "sensitive-redacted.pdf");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Mark patterns");
+    await s.click('[role="option"][data-command="redact.markPatterns"]');
+    await s.waitFor('[data-testid="patterns-find"]');
+    await s.click('[role="dialog"] input[data-kind="phone"]'); // leave phone numbers out
+    await s.click('[data-testid="patterns-find"]');
+    await s.waitUntil(async () => (await s.text('[data-testid="patterns-summary"]')) === "5 matches on 2 pages", "matches found");
+    const rows = await s.exec("return [...document.querySelectorAll('[data-testid=patterns-hits] li')].map(l => l.textContent)");
+    assert(rows.some((r) => r.includes("E-mail") && r.includes("ada.lovelace@example.org")) && !rows.some((r) => r.includes("7946")), `rows: ${JSON.stringify(rows)}`);
+    const ssn = rows.findIndex((r) => r.includes("123-45-6789"));
+    await s.click(`[data-testid="patterns-hits"] li:nth-child(${ssn + 1}) input`);
+    await s.waitUntil(async () => (await s.text('[data-testid="patterns-mark"]')) === "Mark 4 for redaction", "one match unticked");
+    await axeCheck(s, "redact-patterns-dialog");
+    writeFileSync(join(ART, "redact-patterns.png"), await s.screenshot());
+    await s.click('[data-testid="patterns-mark"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Marked 4 for redaction")), "marked notice");
+    await s.waitUntil(async () => (await annotCount(s, "redact")) >= 3, "marks drawn on page 1");
+    await s.click('[data-testid="redaction-marks"]');
+    await s.waitFor("#redact-output");
+    await s.type("#redact-output", out);
+    await s.click('[data-testid="redact-apply"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved sensitive-redacted.pdf")), "saved notice", 30000);
+  });
+  assert(existsSync(out), "redacted copy exists");
+  if (CLI) {
+    const pages = JSON.parse(execFileSync(CLI, ["--json", "text", out], { encoding: "utf8" })).result.data.pages.map((p) => p.text).join("\n");
+    for (const gone of ["lovelace@", "4111 1111 1111 1111", "WEST", "grace@"]) assert(!pages.includes(gone), `${gone} removed: ${pages}`);
+    for (const kept of ["123-45-6789", "+44 20 7946 0958", "4111 1111 1111 1112"]) assert(pages.includes(kept), `${kept} kept: ${pages}`);
+  }
+});
+
 /* ------------------------------------------------------------------ */
 const summary = {
   app: APP,

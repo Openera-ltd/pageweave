@@ -241,6 +241,7 @@ export type Operation =
   | { op: "annotate"; input: string; annotations: AnnotationSpec[]; output: string }
   | { op: "export_form_data"; input: string; format: "xfdf" | "json"; values: FieldValue[]; output: string }
   | { op: "read_form_data"; input: string; data: string }
+  | { op: "find_patterns"; input: string; patterns: Array<"email" | "phone" | "card_number" | "iban" | "us_ssn">; custom: string | null; pages: string | null }
   | { op: "import_form_data"; input: string; data: string; output: string }
   | { op: "apply_edits"; input: string; form_values: FieldValue[]; annotations: AnnotationSpec[]; object_edits?: Array<{ page: number; edits: PageEdit[] }>; output: string }
   | {

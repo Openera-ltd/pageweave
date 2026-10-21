@@ -62,6 +62,7 @@ import { SignatureMarkDialog } from "./components/SignatureMarkDialog";
 import { TrustSignerDialog, TrustedCertificatesDialog } from "./components/TrustDialogs";
 import { UnprotectDialog } from "./components/UnprotectDialog";
 import { ExportFormDataDialog, ImportFormDataDialog } from "./components/FormDataDialogs";
+import { RedactPatternsDialog } from "./components/RedactPatternsDialog";
 import type { ImportPlan } from "./formData";
 import { EditPropertiesDialog } from "./components/EditPropertiesDialog";
 import { SaveAttachmentDialog } from "./components/SaveAttachmentDialog";
@@ -90,6 +91,7 @@ type DialogState =
   | { kind: "protect" }
   | { kind: "sanitize" }
   | { kind: "exportFormData" }
+  | { kind: "redactPatterns" }
   | { kind: "importFormData" }
   | { kind: "compare" }
   | { kind: "print" }
@@ -776,6 +778,7 @@ export function App() {
       available: all(needDoc, noDialog, () => (markMode ? true : roomAvail())),
     },
     "redact.markPage": { run: () => markPage(view.page), available: all(needDoc, noDialog, roomAvail) },
+    "redact.markPatterns": { run: () => setDialog({ kind: "redactPatterns" }), available: all(needDoc, noDialog, roomAvail) },
     "redact.markMatches": {
       run: markMatches,
       available: all(needDoc, noDialog, roomAvail, () => (searchOpen && hits.length ? true : "Find text first; every match is then marked.")),
@@ -1025,6 +1028,7 @@ export function App() {
         "separator",
         item("redact.markPage", `Mark page ${n} for redaction`, () => markPage(page), room),
         item("redact.markArea", markMode ? "Stop marking areas" : "Mark areas for redaction"),
+        item("redact.markPatterns"),
         item("redact.apply"),
         "separator",
         item("view.zoomIn"),
@@ -1496,6 +1500,17 @@ export function App() {
       {dialog?.kind === "editProperties" && active && <EditPropertiesDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "unprotect" && active && <UnprotectDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "sanitize" && active && <SanitizeDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
+      {dialog?.kind === "redactPatterns" && active && (
+        <RedactPatternsDialog
+          doc={active}
+          jobs={jobs}
+          onClose={() => setDialog(null)}
+          onMark={(found) => {
+            addMarks(found.map((h) => [h.page, h.rects]));
+            notify({ kind: "success", title: `Marked ${found.length} for redaction`, detail: "Review the marks, then Apply redactions.", persistent: false });
+          }}
+        />
+      )}
       {dialog?.kind === "exportFormData" && active && forms[active.doc_id] && (
         <ExportFormDataDialog doc={active} form={forms[active.doc_id]!} edits={editsOf(active.doc_id)} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />
       )}

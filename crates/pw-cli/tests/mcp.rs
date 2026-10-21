@@ -161,6 +161,7 @@ fn read_only_server_lists_and_runs_read_tools_and_refuses_writing() {
             "compare-old.pdf",
             "compare-new.pdf",
             "signed-rsa.pdf",
+            "sensitive-info.pdf",
         ],
     );
     let mut c = Client::start(&[root.path()], false);
@@ -175,7 +176,8 @@ fn read_only_server_lists_and_runs_read_tools_and_refuses_writing() {
             "search_text",
             "list_form_fields",
             "compare_documents",
-            "check_signatures"
+            "check_signatures",
+            "find_sensitive_text"
         ],
         "write tools are not even listed"
     );
@@ -197,6 +199,15 @@ fn read_only_server_lists_and_runs_read_tools_and_refuses_writing() {
     assert!(hits["data"]["count"].as_u64().unwrap_or(0) >= 3, "{hits}");
     let fields = c.ok("list_form_fields", json!({ "path": "form-fields.pdf" }));
     assert_eq!(fields["data"]["fields"][0]["name"], "full_name");
+    let found = c.ok("find_sensitive_text", json!({ "path": "sensitive-info.pdf", "kinds": ["email", "iban"] }));
+    let kinds: Vec<&str> =
+        found["data"]["hits"].as_array().expect("hits").iter().map(|h| h["kind"].as_str().unwrap_or("")).collect();
+    assert_eq!(kinds, ["email", "iban", "email"], "{found}");
+    assert_eq!(
+        c.err("find_sensitive_text", json!({ "path": "sensitive-info.pdf", "kinds": ["passwords"] })),
+        "mcp.arguments"
+    );
+    assert_eq!(c.err("find_sensitive_text", json!({ "path": "sensitive-info.pdf" })), "pattern.none");
     let cmp = c.ok("compare_documents", json!({ "old": "compare-old.pdf", "new": "compare-new.pdf" }));
     assert!(cmp["data"].is_object(), "{cmp}");
     let sig = c.ok("check_signatures", json!({ "path": "signed-rsa.pdf" }));
@@ -264,7 +275,7 @@ fn write_tools_create_verified_new_files_and_leave_sources_alone() {
     let before = std::fs::read(root.path().join("five-pages.pdf")).expect("read");
     let mut c = Client::start(&[root.path()], true);
     let names = tool_names(&mut c);
-    assert_eq!(names.len(), 16, "{names:?}");
+    assert_eq!(names.len(), 17, "{names:?}");
 
     let r = c.ok("extract_pages", json!({ "path": "five-pages.pdf", "pages": "4, 2", "output": "ex.pdf" }));
     assert_eq!(r["outputs"][0]["pages"], 2);

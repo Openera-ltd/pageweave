@@ -37,6 +37,7 @@ export type CommandId =
   | "redact.markSelection"
   | "redact.markArea"
   | "redact.markPage"
+  | "redact.markPatterns"
   | "redact.markMatches"
   | "redact.apply"
   | "file.saveCopy"
@@ -124,6 +125,7 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "redact.markSelection", label: "Mark selected text for redaction", category: "Redact", shortcuts: ["Ctrl+Shift+X"] },
   { id: "redact.markArea", label: "Mark areas for redaction", category: "Redact", shortcuts: [] },
   { id: "redact.markPage", label: "Mark current page for redaction", category: "Redact", shortcuts: [] },
+  { id: "redact.markPatterns", label: "Mark patterns for redaction…", category: "Redact", shortcuts: [] },
   { id: "redact.markMatches", label: "Mark all search matches for redaction", category: "Redact", shortcuts: [], allowInInput: true },
   { id: "redact.apply", label: "Apply redactions…", category: "Redact", shortcuts: [] },
   { id: "file.saveCopy", label: "Save a copy with changes…", category: "File", shortcuts: ["Ctrl+S"], allowInInput: true },

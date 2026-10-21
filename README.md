@@ -41,7 +41,7 @@ Known limitations (selection):
 - Editing text: each line is edited on its own (no paragraph reflow); letters missing from an embedded subset font switch the line to a standard font (the app warns); text in scripts the font cannot draw is refused; turned or slanted text cannot be edited yet; pictures have no resize handles.
 - Annotations: fixed colours, no editing/moving/deleting of individual or existing annotations yet (undo covers unsaved ones); not saved back into the original file by design.
 - Forms: no form authoring, field validation scripts, calculation order, signatures or XFA filling (XFA is detected and reported). Native input undo only for field edits; Clear form empties text fields and checkboxes but cannot empty choice lists or radio groups, and there is no reset to default values yet. Form data: FDF files are not read yet (refused with a message); a list box takes one value per import; rich-text values and clearing a radio choice are reported as not used.
-- Redaction: bookmarks, document properties, attachments and fillable fields are not carried over to the redacted copy; a page whose content cannot be removed precisely (grouped content or unreadable text crossing an area) becomes an image of the page (the app says which); drawings only partly under an area (e.g. backgrounds) are covered but kept; no pattern search (e.g. all e-mail addresses) or sanitization yet; scanned text cannot be found without OCR.
+- Redaction: bookmarks, document properties, attachments and fillable fields are not carried over to the redacted copy; a page whose content cannot be removed precisely (grouped content or unreadable text crossing an area) becomes an image of the page (the app says which); drawings only partly under an area (e.g. backgrounds) are covered but kept; pattern search finds e-mail addresses, phone numbers, card numbers (Luhn-checked), IBANs (checksum-checked), US SSNs and custom regular expressions in the text layer only — scanned text must be recognized first, and every match should be reviewed (look-alikes and unusual formats are possible).
 - OCR: accuracy measured on synthetic English/Latin pages only; the text layer carries Latin characters; no handwriting, layout or table structure; Windows speed not yet measured.
 - No conversion to or from Office formats yet.
 - XFA forms are detected but cannot be displayed or filled.
@@ -101,6 +101,7 @@ pageweave compare report-v1.pdf report-v2.pdf          # page, text, format and 
 pageweave split --by-bookmarks 1 --out-dir chapters/ book.pdf   # or --max-size 10MB
 pageweave form-export -o answers.xfdf form.pdf             # or answers.json / --format json
 pageweave form-import --preview form.pdf answers.xfdf   # which fields it fills; -o filled.pdf to fill
+pageweave patterns --kinds email,phone,card,iban,ssn report.pdf   # sensitive text with positions
 pageweave sanitize --inspect report.pdf
 pageweave sanitize --remove-web-links -o report-clean.pdf report.pdf
 ```
@@ -123,7 +124,7 @@ the network — and only touches files inside the folders you name:
 ```
 
 - Read tools: `list_capabilities`, `inspect_document`, `extract_text`, `search_text`, `list_form_fields`,
-  `compare_documents`, `check_signatures`.
+  `compare_documents`, `check_signatures`, `find_sensitive_text`.
 - With `--allow-write` also: `extract_pages`, `delete_pages`, `rotate_pages`, `merge_documents`,
   `split_document`, `fill_form`, `recognize_text` (OCR, with progress and cancel), `reduce_file_size`,
   `export_text`. These only create **new** files; existing files are never replaced or changed.

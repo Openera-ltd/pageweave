@@ -38,6 +38,7 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `redact.markSelection` | Mark selected text for redaction | Ctrl+Shift+X | Exercised by tests |
 | `redact.markArea` | Mark areas for redaction | — | Exercised by tests |
 | `redact.markPage` | Mark current page for redaction | — | Exercised by tests |
+| `redact.markPatterns` | Mark patterns for redaction… | — | Exercised by tests |
 | `redact.markMatches` | Mark all search matches for redaction | — | Exercised by tests |
 | `redact.apply` | Apply redactions… | — | Exercised by tests |
 | `file.saveCopy` | Save a copy with changes… | Ctrl+S | Exercised by tests |
@@ -81,4 +82,4 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `app.commandPalette` | Command palette | Ctrl+K, Ctrl+Shift+P | Exercised by tests |
 | `app.openLogs` | Show log folder | — | Exercised by tests |
 
-Coverage: 74 of 74 commands exercised by unit or real-app E2E tests.
+Coverage: 75 of 75 commands exercised by unit or real-app E2E tests.

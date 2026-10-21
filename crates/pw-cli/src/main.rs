@@ -39,6 +39,15 @@ enum Conflict {
 }
 
 #[derive(Clone, Copy, ValueEnum)]
+enum PatternKind {
+    Email,
+    Phone,
+    Card,
+    Iban,
+    Ssn,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
 enum DataFormat {
     Xfdf,
     Json,
@@ -50,6 +59,19 @@ enum Command {
     Inspect { file: PathBuf },
     /// List form fields (names, kinds, values, options) as JSON.
     Fields { file: PathBuf },
+    /// Find sensitive text — e-mail addresses, phone numbers, card numbers, IBANs, US SSNs and/or a
+    /// custom regular expression — with the position of each match (to redact with `redact`).
+    Patterns {
+        file: PathBuf,
+        /// Kinds to look for, comma-separated.
+        #[arg(long, value_enum, value_delimiter = ',')]
+        kinds: Vec<PatternKind>,
+        /// A regular expression to look for as well.
+        #[arg(long)]
+        custom: Option<String>,
+        #[arg(long)]
+        pages: Option<String>,
+    },
     /// Save the form's field values as a form data file: XFDF (default), or JSON with --format json
     /// or an output name ending in .json.
     FormExport {
@@ -495,6 +517,20 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
         }
         Command::Inspect { file } => Operation::Inspect { input: file.clone() },
         Command::Fields { file } => Operation::FormFields { input: file.clone() },
+        Command::Patterns { file, kinds, custom, pages } => {
+            use pw_core::ops::TextPattern as T;
+            let patterns = kinds
+                .iter()
+                .map(|k| match k {
+                    PatternKind::Email => T::Email,
+                    PatternKind::Phone => T::Phone,
+                    PatternKind::Card => T::CardNumber,
+                    PatternKind::Iban => T::Iban,
+                    PatternKind::Ssn => T::UsSsn,
+                })
+                .collect();
+            Operation::FindPatterns { input: file.clone(), patterns, custom: custom.clone(), pages: pages.clone() }
+        }
         Command::FormExport { file, output, format } => {
             use pw_core::formdata::FormDataFormat as F;
             let by_name = output.extension().is_some_and(|e| e.eq_ignore_ascii_case("json"));
@@ -1014,6 +1050,18 @@ fn print_human(r: &OperationResult) {
                     a["annotations"]
                 );
             }
+        }
+        "find_patterns" => {
+            let hits = r.data["hits"].as_array().cloned().unwrap_or_default();
+            for h in &hits {
+                println!(
+                    "page {}  {:<11}  {}",
+                    h["page"].as_u64().unwrap_or(0) + 1,
+                    h["kind"].as_str().unwrap_or(""),
+                    h["text"].as_str().unwrap_or("")
+                );
+            }
+            println!("{} match(es)", hits.len());
         }
         "search" => {
             for h in r.data["hits"].as_array().into_iter().flatten() {

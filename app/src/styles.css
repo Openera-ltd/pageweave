@@ -1993,3 +1993,7 @@ kbd,
   outline-offset: 2px;
   border-radius: var(--radius-1);
 }
+.pattern-kind {
+  flex: 0 0 64px;
+  font-weight: 600;
+}

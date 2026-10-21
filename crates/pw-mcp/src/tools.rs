@@ -105,6 +105,24 @@ pub const TOOLS: &[Tool] = &[
         schema: || obj(json!({ "path": path_prop("PDF file") }), &["path"]),
     },
     Tool {
+        name: "find_sensitive_text",
+        title: "Find sensitive text",
+        description: "Find e-mail addresses, phone numbers, payment card numbers (Luhn-checked), IBANs (checksum-checked), US Social Security numbers and/or a custom regular expression, with the page and position of each match. Matches are candidates for review, not a guarantee that nothing else is sensitive.",
+        effect: Effect::ReadOnly,
+        long: true,
+        schema: || {
+            obj(
+                json!({
+                    "path": path_prop("PDF file"),
+                    "kinds": { "type": "array", "items": { "type": "string", "enum": ["email", "phone", "card_number", "iban", "us_ssn"] }, "uniqueItems": true },
+                    "custom": { "type": "string", "maxLength": 500, "description": "Regular expression (Rust regex syntax)" },
+                    "pages": { "type": "string", "description": PAGES }
+                }),
+                &["path"],
+            )
+        },
+    },
+    Tool {
         name: "extract_pages",
         title: "Extract pages",
         description: "Save chosen pages, in the given order, as a new PDF. The source is not changed.",
@@ -282,6 +300,18 @@ struct SearchArg {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct PatternsArg {
+    path: String,
+    #[serde(default)]
+    kinds: Vec<pw_core::ops::TextPattern>,
+    #[serde(default)]
+    custom: Option<String>,
+    #[serde(default)]
+    pages: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CompareArg {
     old: String,
     new: String,
@@ -375,6 +405,15 @@ pub fn operation(tool: &Tool, a: &Value, roots: &Roots) -> PwResult<Operation> {
                 query: x.query,
                 match_case: x.match_case,
                 whole_word: x.whole_word,
+            }
+        }
+        "find_sensitive_text" => {
+            let x: PatternsArg = args(a)?;
+            Operation::FindPatterns {
+                input: roots.input(&x.path)?,
+                patterns: x.kinds,
+                custom: x.custom,
+                pages: x.pages,
             }
         }
         "compare_documents" => {
