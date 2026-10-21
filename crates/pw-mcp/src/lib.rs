@@ -352,8 +352,9 @@ impl Server {
                 None => tool_error(&PwError::internal("mcp.lost", "The operation was lost.")),
             };
             send(&out, &json!({ "jsonrpc": "2.0", "id": id, "result": result }));
-            // Results can be large (extracted text); keep the registry bounded in long sessions.
-            jobs.prune_finished();
+            // Results can be large (extracted text): drop this job's entry. Only this one — other
+            // calls' jobs may have finished but not yet been collected by their own waiters.
+            jobs.remove(job);
         }))
     }
 }

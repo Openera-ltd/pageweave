@@ -315,6 +315,17 @@ impl JobManager {
         jobs.retain(|_, e| !e.snapshot.state.is_terminal());
         before - jobs.len()
     }
+
+    /// Remove one finished job and return its final snapshot; a job still queued or running stays.
+    /// Lets each caller clean up after itself without racing others (unlike [`Self::prune_finished`]).
+    pub fn remove(&self, id: JobId) -> Option<JobSnapshot> {
+        let mut jobs = self.shared.jobs.lock().unwrap_or_else(|p| p.into_inner());
+        if jobs.get(&id).is_some_and(|e| e.snapshot.state.is_terminal()) {
+            jobs.remove(&id).map(|e| e.snapshot)
+        } else {
+            None
+        }
+    }
 }
 
 impl Drop for JobManager {
@@ -448,6 +459,25 @@ mod tests {
         let s = jm.wait(id, T).expect("job");
         assert_eq!(s.state, JobState::Cancelled);
         assert!(!jm.cancel(id), "cancelling a finished job reports false");
+    }
+
+    #[test]
+    fn remove_takes_only_that_finished_job() {
+        let jm = JobManager::new(1);
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let running = jm.submit("running", move |_| {
+            release_rx.recv_timeout(T).ok();
+            Ok(serde_json::Value::Null)
+        });
+        let done = jm.submit("done", |_| Ok(serde_json::json!(1)));
+        let other = jm.submit("other", |_| Ok(serde_json::json!(2)));
+        assert!(jm.remove(running).is_none(), "a running job is not removed");
+        release_tx.send(()).ok();
+        assert_eq!(jm.wait(done, T).expect("done").state, JobState::Succeeded);
+        jm.wait(other, T);
+        assert_eq!(jm.remove(done).and_then(|s| s.result), Some(serde_json::json!(1)));
+        assert!(jm.get(done).is_none());
+        assert!(jm.get(other).is_some(), "other finished jobs stay until their owner removes them");
     }
 
     #[test]

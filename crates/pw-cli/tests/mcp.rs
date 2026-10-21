@@ -19,6 +19,8 @@ struct Client {
     next: u64,
     /// Notifications seen while waiting for responses.
     notes: Vec<Value>,
+    /// Responses that arrived while waiting for another id (concurrent calls finish in any order).
+    early: Vec<Value>,
 }
 
 impl Client {
@@ -45,7 +47,7 @@ impl Client {
             }
         });
         let stdin = child.stdin.take();
-        let mut c = Client { child, stdin, rx, next: 1, notes: vec![] };
+        let mut c = Client { child, stdin, rx, next: 1, notes: vec![], early: vec![] };
         let r = c.request("initialize", json!({ "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "test", "version": "1" } }));
         assert_eq!(r["result"]["protocolVersion"], "2025-06-18");
         assert_eq!(r["result"]["serverInfo"]["name"], "pageweave");
@@ -72,6 +74,9 @@ impl Client {
     }
 
     fn wait(&mut self, id: u64) -> Value {
+        if let Some(i) = self.early.iter().position(|v| v.get("id") == Some(&json!(id))) {
+            return self.early.remove(i);
+        }
         loop {
             let v = self.rx.recv_timeout(Duration::from_secs(120)).expect("response in time");
             if v.get("id") == Some(&json!(id)) {
@@ -79,6 +84,8 @@ impl Client {
             }
             if v.get("method").is_some() {
                 self.notes.push(v);
+            } else if v.get("id").is_some_and(|i| i.is_u64()) {
+                self.early.push(v);
             } else {
                 panic!("unexpected message {v}");
             }
@@ -329,4 +336,29 @@ fn recognize_text_reports_progress_and_stops_when_cancelled() {
     assert_eq!(r["result"]["isError"], true, "{r}");
     assert_eq!(r["result"]["structuredContent"]["error"]["category"], "cancelled");
     assert!(!root.path().join("big-ocr.pdf").exists(), "nothing committed after cancel");
+}
+
+#[test]
+fn many_quick_calls_in_flight_all_get_their_results() {
+    // Regression: finished calls used to prune every finished job, so a quick job that completed
+    // before its own waiter looked was lost ("The operation was lost.").
+    let root = tempfile::tempdir().expect("tmp");
+    copy_fixtures(root.path(), &["five-pages.pdf", "form-fields.pdf"]);
+    let mut c = Client::start(&[root.path()], false);
+    for _round in 0..5 {
+        let ids: Vec<u64> = (0..8)
+            .map(|i| {
+                let (name, path) = if i % 2 == 0 {
+                    ("list_form_fields", "form-fields.pdf")
+                } else {
+                    ("inspect_document", "five-pages.pdf")
+                };
+                c.send("tools/call", json!({ "name": name, "arguments": { "path": path } }))
+            })
+            .collect();
+        for id in ids {
+            let r = c.wait(id);
+            assert_eq!(r["result"]["isError"], false, "{r}");
+        }
+    }
 }
