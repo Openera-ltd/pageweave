@@ -280,3 +280,9 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - Tests: `crates/pw-cli/tests/worker.rs` (password via the secrets line + result; hostile file → `engine.crashed`, then the next job works; progress then cancel; mutated files through write operations, 2 cases per fixture by default — 40 cases ran locally in 129 s with 2 crashes contained, 0 hangs); `stage_owner_tests` for the staged-file prefix; new E2E scenario (redaction of the hostile file fails with the reason, the window and other documents keep working).
 - Ran: fmt, clippy clean; `cargo test --workspace` all passed; vitest 125; audit 78/78; license check ok; Linux real-app E2E full suite 76/76.
 - Still in-process: viewer rendering and direct read commands of the app (documented in D-015 and README).
+
+## 2026-10-21 — Session 2, checkpoint 11: reset form to default values
+- `form_fields` now reports each field's `/DV` (`default_value`), read with lopdf (`pw_pdf::formdefaults`: full names from the field tree, inherited defaults, cycle/depth/count limits, bounded decompression, encrypted files with the given password; unreadable → no defaults, never an error).
+- App Edit ▸ Reset form to default values (palette): unsaved edits with Undo; fields without a default are emptied where possible, choices/radio groups without a usable default keep their value and the notice says how many. Saved like any other form edit (verified copy).
+- New fixture `form-defaults.pdf` (same form as `form-fields.pdf` with /DV on four fields; generator reproducible).
+- Ran: fmt, clippy clean; pw-pdf lib + forms tests (new: defaults read, inherited radio default, reset fill keeps /DV, cyclic tree); vitest (new resetEdits test); new E2E scenario passes (reset, Undo, nothing left to reset, saved copy read back by the CLI, source unchanged).

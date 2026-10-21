@@ -21,6 +21,7 @@ export type CommandId =
   | "file.accessibility"
   | "file.importFormData"
   | "edit.clearForm"
+  | "edit.resetForm"
   | "file.reduceSize"
   | "file.compare"
   | "file.print"
@@ -111,6 +112,7 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "file.accessibility", label: "Check accessibility…", category: "File", shortcuts: [] },
   { id: "file.importFormData", label: "Import form data…", category: "File", shortcuts: [] },
   { id: "edit.clearForm", label: "Clear form fields", category: "Edit", shortcuts: [] },
+  { id: "edit.resetForm", label: "Reset form to default values", category: "Edit", shortcuts: [] },
   { id: "file.reduceSize", label: "Reduce file size…", category: "File", shortcuts: [] },
   { id: "file.compare", label: "Compare with…", category: "File", shortcuts: [] },
   { id: "file.print", label: "Print…", category: "File", shortcuts: ["Ctrl+P"] },

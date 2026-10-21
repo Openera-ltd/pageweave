@@ -22,6 +22,7 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `file.accessibility` | Check accessibility… | — | Exercised by tests |
 | `file.importFormData` | Import form data… | — | Exercised by tests |
 | `edit.clearForm` | Clear form fields | — | Exercised by tests |
+| `edit.resetForm` | Reset form to default values | — | Exercised by tests |
 | `file.reduceSize` | Reduce file size… | — | Exercised by tests |
 | `file.compare` | Compare with… | — | Exercised by tests |
 | `file.print` | Print… | Ctrl+P | Exercised by tests |
@@ -85,4 +86,4 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `app.commandPalette` | Command palette | Ctrl+K, Ctrl+Shift+P | Exercised by tests |
 | `app.openLogs` | Show log folder | — | Exercised by tests |
 
-Coverage: 78 of 78 commands exercised by unit or real-app E2E tests.
+Coverage: 79 of 79 commands exercised by unit or real-app E2E tests.

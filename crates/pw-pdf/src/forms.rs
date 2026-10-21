@@ -69,6 +69,9 @@ pub struct FormField {
     pub multiline: bool,
     /// Combo box that also accepts typed text.
     pub editable: bool,
+    /// The value "Reset form" restores (`/DV`), when the document sets one.
+    #[serde(default)]
+    pub default_value: Option<String>,
     pub widgets: Vec<FormWidget>,
 }
 
@@ -458,6 +461,7 @@ impl<'a> FormDoc<'a> {
                     required: flags & FLAG_REQUIRED != 0,
                     multiline: kind == FieldKind::Text && flags & FLAG_MULTILINE != 0,
                     editable: kind == FieldKind::Combo && flags & FLAG_EDIT != 0,
+                    default_value: None,
                     widgets: Vec::new(),
                 }
             });
@@ -547,8 +551,16 @@ pub fn form_fields(path: &Path, password: Option<&str>) -> PwResult<FormInfo> {
     let (_exclusive, lib) = engine_exclusive()?;
     let api = api(lib)?;
     let fd = FormDoc::open(api, path, password)?;
-    let (fields, truncated) = fd.fields()?;
-    Ok(FormInfo { fields, has_xfa: fd.has_xfa(), truncated })
+    let (mut fields, truncated) = fd.fields()?;
+    let has_xfa = fd.has_xfa();
+    drop(fd);
+    if !fields.is_empty() {
+        let mut defaults = crate::formdefaults::field_defaults(path, password);
+        for f in &mut fields {
+            f.default_value = defaults.remove(&f.name);
+        }
+    }
+    Ok(FormInfo { fields, has_xfa, truncated })
 }
 
 /// Fill the form in memory (exclusive engine access, released before returning) and return the

@@ -337,6 +337,7 @@ mod tests {
             required: false,
             multiline: false,
             editable: false,
+            default_value: None,
             widgets: vec![widget(None, false)],
         }
     }

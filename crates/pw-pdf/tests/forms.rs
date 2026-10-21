@@ -335,3 +335,41 @@ fn unsafe_is_confined_to_the_forms_module() {
     }
     assert!(offenders.is_empty(), "unsafe opt-in outside forms.rs: {offenders:?}");
 }
+
+#[test]
+fn default_values_are_read_and_a_reset_restores_them() {
+    let none = form_fields(&fixture("form-fields.pdf"), None).expect("fields");
+    assert!(none.fields.iter().all(|f| f.default_value.is_none()), "fixture without /DV has no defaults");
+
+    let info = form_fields(&fixture("form-defaults.pdf"), None).expect("fields");
+    let dv = |n: &str| info.fields.iter().find(|f| f.name == n).expect(n).default_value.clone();
+    assert_eq!(dv("full_name").as_deref(), Some("Jane Doe"));
+    assert_eq!(dv("subscribe").as_deref(), Some("On"));
+    assert_eq!(dv("plan").as_deref(), Some("pro"), "radio default is on the parent field");
+    assert_eq!(dv("country").as_deref(), Some("Japan"));
+    assert_eq!(dv("comments"), None);
+
+    // A reset is an ordinary fill with the defaults; the result reads back and keeps /DV.
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("reset.pdf");
+    let mut req = OperationRequest::new(Operation::FillForm {
+        input: fixture("form-defaults.pdf"),
+        values: vec![
+            text("full_name", "Jane Doe"),
+            FieldValue { name: "subscribe".into(), value: FormValue::Checked(true) },
+            text("plan", "pro"),
+            text("country", "Japan"),
+            text("comments", ""),
+        ],
+        output: out.clone(),
+    });
+    req.collision = CollisionPolicy::Fail;
+    execute(&req, None).expect("reset");
+    let lf = lopdf_fields(&out);
+    assert_eq!(lf["full_name"].0, "Jane Doe");
+    assert_eq!(lf["subscribe"].0, "On");
+    assert_eq!(lf["plan"].0, "pro");
+    assert_eq!(lf["country"].0, "Japan");
+    let again = form_fields(&out, None).expect("reopen");
+    assert_eq!(again.fields.iter().find(|f| f.name == "plan").and_then(|f| f.default_value.as_deref()), Some("pro"));
+}

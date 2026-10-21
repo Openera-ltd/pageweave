@@ -215,6 +215,8 @@ export interface FormField {
   required: boolean;
   multiline: boolean;
   editable: boolean;
+  /** Value "Reset form" restores, when the document sets one. */
+  default_value?: string | null;
   widgets: FormWidget[];
 }
 

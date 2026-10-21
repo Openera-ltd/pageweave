@@ -1090,6 +1090,58 @@ await test("clear form fields: text and checkboxes emptied as unsaved edits, cho
   });
 });
 
+await test("reset form: fields return to the document's default values as unsaved edits; Undo; saved copy verified", async () => {
+  const src = join(FIX, "form-defaults.pdf");
+  const before = sha(src);
+  const dir = mkdtempSync(join(work, "reset-"));
+  const out = join(dir, "reset.pdf");
+  const field = (name) => `[data-formlayer="0"] [data-field="${name}"]`;
+  const state = (s) =>
+    s.exec(`const q = (n) => document.querySelector('[data-formlayer="0"] [data-field="' + n + '"]');
+      const plan = [...document.querySelectorAll('[data-formlayer="0"] [data-field="plan"]')].find((r) => r.checked)?.value ?? "";
+      return [q('full_name').value, q('subscribe').checked, plan, q('country').value, q('comments').value]`);
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.waitFor(field("full_name"));
+    await s.type(field("full_name"), "Ada");
+    await s.type(field("comments"), "note");
+    await s.waitUntil(async () => (await unsavedText(s)) === "2 unsaved changes", "two edits");
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Reset form");
+    await s.click('[role="option"][data-command="edit.resetForm"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Reset 5 fields to default values")), "reset notice");
+    const reset = JSON.stringify(["Jane Doe", true, "pro", "Japan", ""]);
+    await s.waitUntil(async () => JSON.stringify(await state(s)) === reset, "controls show the defaults");
+    await s.waitUntil(async () => (await unsavedText(s)) === "4 unsaved changes", "four fields differ from the file");
+    await s.click('.notice button[data-action="Undo"]');
+    await s.waitUntil(async () => JSON.stringify(await state(s)) === JSON.stringify(["Ada", false, "", "Canada", "note"]), "Undo restores the typed values");
+    // Again, then once more: nothing left to reset.
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Reset form");
+    await s.click('[role="option"][data-command="edit.resetForm"]');
+    await s.waitUntil(async () => JSON.stringify(await state(s)) === reset, "reset again");
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Reset form");
+    await s.click('[role="option"][data-command="edit.resetForm"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("already shows its default values")), "nothing to reset");
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "s"]);
+    await s.waitFor("#output");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved reset.pdf")), "saved notice");
+  });
+  assert(sha(src) === before, "source PDF unchanged");
+  if (CLI) {
+    const f = JSON.parse(execFileSync(CLI, ["--json", "fields", out], { encoding: "utf8" })).result.data.fields;
+    const v = Object.fromEntries(f.map((x) => [x.name, x.kind === "radio" ? x.widgets.find((w) => w.checked)?.export_value : x.kind === "checkbox" ? x.widgets[0].checked : x.value]));
+    assert(v.full_name === "Jane Doe" && v.subscribe === true && v.plan === "pro" && v.country === "Japan" && (v.comments ?? "") === "", `CLI reads the reset values: ${JSON.stringify(v)}`);
+  }
+});
+
 await test("split: by bookmarks (parts named after them) and by size (every part under the limit)", async () => {
   const dir = mkdtempSync(join(work, "split-"));
   const openSplit = async (s) => {

@@ -104,9 +104,11 @@ def build_document(pages: list[dict], title: str | None = None, outline: bool = 
     return w.render(catalog, info)
 
 
-def build_form_document() -> bytes:
+def build_form_document(defaults: bool = False) -> bytes:
     """One page with an AcroForm: text, multiline text, checkbox (on-state named /On, not /Yes),
-    a two-button radio group and a combo box, each with appearance streams."""
+    a two-button radio group and a combo box, each with appearance streams. With `defaults`, the
+    same form with default values (/DV) for every field except the comments, for Reset form."""
+    dv = (lambda v: f" /DV {v}") if defaults else (lambda v: "")
     w = PdfWriter()
     catalog, pages_obj, page = w.reserve(), w.reserve(), w.reserve()
     font = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
@@ -127,13 +129,13 @@ def build_form_document() -> bytes:
 
     # Text field
     name_ap = xobj(250, 20, box(250, 20))
-    name = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Tx /T (full_name) /TU (Full name) /Rect [150 666 400 686] "
+    name = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Tx /T (full_name) /TU (Full name) /Rect [150 666 400 686]{dv('(Jane Doe)')} "
                  f"/F 4 /P {page} 0 R /DA (/Helv 12 Tf 0 g) /V () /AP << /N {name_ap} 0 R >> /MK << /BC [0.4 0.4 0.4] >> >>")
     annots.append(name); fields.append(name)
 
     # Checkbox, on-state "On"
     cb_on, cb_off = xobj(14, 14, box(14, 14) + " " + cross), xobj(14, 14, box(14, 14))
-    cb = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Btn /T (subscribe) /TU (Subscribe) /Rect [150 628 164 642] "
+    cb = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Btn /T (subscribe) /TU (Subscribe) /Rect [150 628 164 642]{dv('/On')} "
                f"/F 4 /P {page} 0 R /V /Off /AS /Off /AP << /N << /On {cb_on} 0 R /Off {cb_off} 0 R >> >> /MK << /CA (8) >> >>")
     annots.append(cb); fields.append(cb)
 
@@ -146,13 +148,13 @@ def build_form_document() -> bytes:
         kid = w.add(f"<< /Type /Annot /Subtype /Widget /Parent {plan} 0 R /Rect [{x} 588 {x + 14} 602] /F 4 /P {page} 0 R "
                     f"/AS /Off /AP << /N << /{opt} {on} 0 R /Off {off} 0 R >> >> /MK << /CA (l) >> >>")
         kids.append(kid); annots.append(kid)
-    w.set(plan, f"<< /FT /Btn /Ff 49152 /T (plan) /TU (Plan) /V /Off /Kids [{' '.join(f'{k} 0 R' for k in kids)}] >>")
+    w.set(plan, f"<< /FT /Btn /Ff 49152 /T (plan) /TU (Plan) /V /Off{dv('/pro')} /Kids [{' '.join(f'{k} 0 R' for k in kids)}] >>")
     fields.append(plan)
 
     # Combo box
     combo_ap = xobj(150, 20, box(150, 20) + " /Tx BMC BT /Helv 12 Tf 0 g 4 5 Td (Canada) Tj ET EMC")
     combo = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Ch /Ff 131072 /T (country) /TU (Country) /Rect [150 546 300 566] "
-                  f"/F 4 /P {page} 0 R /Opt [(Canada) (Germany) (Japan)] /V (Canada) /DA (/Helv 12 Tf 0 g) "
+                  f"/F 4 /P {page} 0 R /Opt [(Canada) (Germany) (Japan)] /V (Canada){dv('(Japan)')} /DA (/Helv 12 Tf 0 g) "
                   f"/AP << /N {combo_ap} 0 R >> >>")
     annots.append(combo); fields.append(combo)
 
@@ -644,6 +646,7 @@ def main() -> int:
     files["search-terms.pdf"] = build_document(search, title="Search terms")
 
     files["form-fields.pdf"] = build_form_document()
+    files["form-defaults.pdf"] = build_form_document(defaults=True)
     files["form-nested.pdf"] = build_nested_form_document()
     files["redaction.pdf"] = build_redaction_document()
     files["redaction-hard.pdf"] = build_redaction_hard_document()
