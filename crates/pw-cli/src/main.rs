@@ -133,11 +133,17 @@ enum Command {
     /// Split into several PDFs, every N pages or by ranges.
     Split {
         file: PathBuf,
-        #[arg(long, conflicts_with = "ranges")]
+        #[arg(long, conflicts_with_all = ["ranges", "by_bookmarks", "max_size"])]
         every: Option<u32>,
         /// Repeat for each part, e.g. --ranges 1-3 --ranges 4-
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["by_bookmarks", "max_size"])]
         ranges: Vec<String>,
+        /// A part per bookmark of this outline level (1 = top level), named after the bookmark.
+        #[arg(long, value_name = "LEVEL", conflicts_with = "max_size")]
+        by_bookmarks: Option<u32>,
+        /// Parts of at most this size, e.g. 500KB, 10MB (1 MB = 1024 KB).
+        #[arg(long, value_name = "SIZE")]
+        max_size: Option<String>,
         #[arg(long)]
         out_dir: PathBuf,
     },
@@ -434,6 +440,21 @@ enum Command {
     Capabilities,
 }
 
+/// "10MB", "500 KB", "2.5mb", "123456" (bytes) → bytes; 1 KB = 1024 bytes.
+fn parse_size(s: &str) -> Result<u64, PwError> {
+    let bad = || PwError::invalid("split.size_syntax", format!("“{s}” is not a size; use e.g. 500KB or 10MB."));
+    let t = s.trim().to_ascii_lowercase();
+    let (num, mult) = [("gb", 1u64 << 30), ("mb", 1 << 20), ("kb", 1 << 10), ("b", 1)]
+        .iter()
+        .find_map(|(suffix, m)| t.strip_suffix(suffix).map(|n| (n.trim().to_string(), *m)))
+        .unwrap_or((t.clone(), 1));
+    let v: f64 = num.parse().map_err(|_| bad())?;
+    if !v.is_finite() || v <= 0.0 || v * mult as f64 > u64::MAX as f64 / 2.0 {
+        return Err(bad());
+    }
+    Ok((v * mult as f64).round() as u64)
+}
+
 fn capabilities() -> serde_json::Value {
     json!({
         "schema_version": pw_core::ops::SCHEMA_VERSION,
@@ -504,11 +525,18 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
             degrees: *degrees,
             output: output.clone(),
         },
-        Command::Split { file, every, ranges, out_dir } => {
-            let split = match (every, ranges.is_empty()) {
-                (Some(n), _) => SplitMode::EveryN { n: *n },
-                (None, false) => SplitMode::Ranges { ranges: ranges.clone() },
-                (None, true) => return Err(PwError::invalid("split.mode", "Use --every N or --ranges.")),
+        Command::Split { file, every, ranges, by_bookmarks, max_size, out_dir } => {
+            let split = match (every, ranges.is_empty(), by_bookmarks, max_size) {
+                (Some(n), ..) => SplitMode::EveryN { n: *n },
+                (None, false, ..) => SplitMode::Ranges { ranges: ranges.clone() },
+                (None, true, Some(level), _) => SplitMode::Bookmarks { level: *level },
+                (None, true, None, Some(size)) => SplitMode::MaxSize { max_bytes: parse_size(size)? },
+                (None, true, None, None) => {
+                    return Err(PwError::invalid(
+                        "split.mode",
+                        "Use --every N, --ranges, --by-bookmarks LEVEL or --max-size SIZE.",
+                    ))
+                }
             };
             Operation::Split { input: file.clone(), split, output_dir: out_dir.clone() }
         }
@@ -1061,6 +1089,23 @@ fn run() -> ExitCode {
                 eprintln!("{}", e.action);
             }
             ExitCode::from(e.category.exit_code().clamp(2, 255) as u8)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_size;
+
+    #[test]
+    fn sizes_parse_with_binary_units() {
+        assert_eq!(parse_size("10MB").ok(), Some(10 << 20));
+        assert_eq!(parse_size(" 500 kb ").ok(), Some(500 << 10));
+        assert_eq!(parse_size("2.5mb").ok(), Some((2.5 * (1u64 << 20) as f64) as u64));
+        assert_eq!(parse_size("123456").ok(), Some(123_456));
+        assert_eq!(parse_size("1GB").ok(), Some(1 << 30));
+        for bad in ["", "MB", "-1MB", "0", "ten", "1e400"] {
+            assert!(parse_size(bad).is_err(), "{bad}");
         }
     }
 }

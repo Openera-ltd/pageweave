@@ -230,7 +230,7 @@ pub fn open_document(path: &Path, opts: &OpenOptions) -> PwResult<DocumentInfo> 
     })
 }
 
-fn collect_bookmarks(first: &PdfBookmark, depth: u32, out: &mut Vec<BookmarkInfo>, truncated: &mut bool) {
+pub(crate) fn collect_bookmarks(first: &PdfBookmark, depth: u32, out: &mut Vec<BookmarkInfo>, truncated: &mut bool) {
     // Outline trees can be cyclic in hostile files; bound total count and depth.
     if depth > 64 {
         *truncated = true;

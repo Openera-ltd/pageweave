@@ -22,7 +22,16 @@ pub enum SplitMode {
     EveryN { n: u32 },
     /// One output per range expression, e.g. `["1-3", "4-", "last"]`.
     Ranges { ranges: Vec<String> },
+    /// A new part at each bookmark of outline `level` (1 = top level). Pages before the first such
+    /// bookmark go into the first part. Parts are named after their bookmark.
+    Bookmarks { level: u32 },
+    /// Parts of at most `max_bytes` each, measured on the saved part (a page that is larger on its
+    /// own becomes a part by itself, with a warning).
+    MaxSize { max_bytes: u64 },
 }
+
+/// Smallest size limit for splitting by size (bytes).
+pub const MIN_SPLIT_BYTES: u64 = 10 * 1024;
 
 pub const MAX_ANNOTATIONS_PER_REQUEST: usize = 10_000;
 pub const MAX_NOTE_CHARS: usize = 10_000;
@@ -1073,6 +1082,12 @@ impl Operation {
             }
             Operation::Split { split: SplitMode::Ranges { ranges }, .. } if ranges.is_empty() => {
                 return Err(PwError::invalid("split.no_ranges", "Enter at least one page range."));
+            }
+            Operation::Split { split: SplitMode::Bookmarks { level }, .. } if !(1..=64).contains(level) => {
+                return Err(PwError::invalid("split.level", "Choose a bookmark level from 1 to 64."));
+            }
+            Operation::Split { split: SplitMode::MaxSize { max_bytes }, .. } if *max_bytes < MIN_SPLIT_BYTES => {
+                return Err(PwError::invalid("split.max_size", "Choose a size limit of at least 10 KB."));
             }
             Operation::Annotate { annotations, .. } => validate_annotations(annotations)?,
             Operation::FillForm { values, .. } => validate_form_values(values)?,

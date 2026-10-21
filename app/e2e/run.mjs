@@ -1068,6 +1068,73 @@ await test("form data: export XFDF with unsaved values; import JSON with preview
   }
 });
 
+await test("clear form fields: text and checkboxes emptied as unsaved edits, choices kept and said so; Undo", async () => {
+  const field = (name) => `[data-formlayer="0"] [data-field="${name}"]`;
+  await withApp([join(FIX, "form-nested.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.waitFor(field("applicant.name"));
+    await s.type(field("applicant.name"), "Ada");
+    await s.click(field("agree"));
+    await s.click(`${field("colour")} option[value="Green"]`);
+    await s.waitUntil(async () => (await unsavedText(s)) === "3 unsaved changes", "three edits");
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Clear form");
+    await s.click('[role="option"][data-command="edit.clearForm"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Cleared 2 fields") && t.includes("1 choice field keeps its option")), "cleared notice");
+    const state = () => s.exec(`const q = (n) => document.querySelector('[data-formlayer="0"] [data-field="' + n + '"]'); return [q('applicant.name').value, q('agree').checked, q('colour').value, q('ref_no').value]`);
+    assert(JSON.stringify(await state()) === JSON.stringify(["", false, "Green", "R-1001"]), `after clear: ${JSON.stringify(await state())}`);
+    await s.waitUntil(async () => (await unsavedText(s)) === "1 unsaved change", "only the kept choice remains an edit");
+    await s.click('.notice button[data-action="Undo"]');
+    await s.waitUntil(async () => JSON.stringify(await state()) === JSON.stringify(["Ada", true, "Green", "R-1001"]), "Undo restores");
+  });
+});
+
+await test("split: by bookmarks (parts named after them) and by size (every part under the limit)", async () => {
+  const dir = mkdtempSync(join(work, "split-"));
+  const openSplit = async (s) => {
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Split document");
+    await s.click('[role="option"][data-command="pages.split"]');
+    await s.waitFor("#output");
+  };
+  const radio = (s, label) => s.exec(`[...document.querySelectorAll('[role=dialog] [role=radio]')].find(b => b.textContent.trim() === ${JSON.stringify(label)}).click()`);
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await openSplit(s);
+    await radio(s, "By bookmarks");
+    await s.waitUntil(async () => (await s.text('[data-testid="split-bookmarks-note"]')) === "Creates 5 files, named after the bookmarks.", "bookmark preview");
+    await s.type("#output", dir);
+    await axeCheck(s, "split-bookmarks");
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved 5 files")), "saved notice");
+  });
+  for (let i = 1; i <= 5; i++) assert(existsSync(join(dir, `five-pages_0${i}_Chapter ${i}.pdf`)), `part ${i} named after its bookmark`);
+  if (CLI) assert(pdfPages(join(dir, "five-pages_03_Chapter 3.pdf")) === 1, "one page per chapter");
+
+  const dir2 = mkdtempSync(join(work, "split-size-"));
+  await withApp([join(FIX, "photo-heavy.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await openSplit(s);
+    await radio(s, "By size");
+    await s.type("#split-size", "5");
+    await s.exec("const u = document.querySelector('[aria-label=\"Size unit\"]'); u.value = 'KB'; u.dispatchEvent(new Event('change', { bubbles: true }))");
+    await s.waitUntil(async () => (await s.attr('[data-testid="tool-start"]', "title")) === "Choose a size of at least 10 KB.", "tiny limit refused");
+    await s.type("#split-size", "300");
+    await s.type("#output", dir2);
+    await s.waitUntil(() => s.exec("return !document.querySelector('[data-testid=tool-start]').hasAttribute('aria-disabled')"), "limit accepted");
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => /Saved \d+ files/.test(t)), "saved notice");
+  });
+  const parts = readdirSync(dir2).filter((f) => f.endsWith(".pdf"));
+  assert(parts.length >= 2, `several parts (${parts.length})`);
+  for (const f of parts) {
+    const size = statSync(join(dir2, f)).size;
+    assert(size <= 300 * 1024 || pdfPages(join(dir2, f)) === 1, `${f} is ${size} bytes`);
+  }
+});
+
 await test("organize pages: keyboard reorder, rotate, duplicate; saved file verified independently", async () => {
   const out = join(work, "organized.pdf");
   await withApp([join(FIX, "five-pages.pdf")], async (s) => {

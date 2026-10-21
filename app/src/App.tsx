@@ -36,7 +36,7 @@ import {
   type PendingAnnotation,
   type PendingKind,
 } from "./annotations";
-import { isFillable, missingRequired, setEdit, toFieldValues, fieldLabel, type FormEdits } from "./forms";
+import { clearedEdits, isFillable, missingRequired, setEdit, toFieldValues, fieldLabel, type FormEdits } from "./forms";
 import { COMMAND_BY_ID, COMMANDS, commandForShortcut, effectiveBindings, type CommandHandlers, type CommandId } from "./commands";
 import { clampZoom, fitWidthZoom, nextZoom, pageOrigin, screenRectToPdf, ZOOM_PRESETS, CSS_PX_PER_PT, displaySizePt } from "./geometry";
 import { basename, siblingOutput } from "./paths";
@@ -718,6 +718,25 @@ export function App() {
     });
   };
 
+  /** Empty the form's text fields and checkboxes as unsaved edits, with Undo. */
+  const clearForm = (docId: number) => {
+    const fields = forms[docId]?.fields ?? [];
+    const before = formEdits[docId];
+    const r = clearedEdits(before ?? {}, fields);
+    if (r.changed === 0) {
+      notify({ kind: "info", title: "The form is already empty", detail: r.kept ? `${r.kept} choice field${r.kept === 1 ? "" : "s"} can’t be emptied here.` : undefined, persistent: false });
+      return;
+    }
+    setFormEdits((all) => ({ ...all, [docId]: r.edits }));
+    notify({
+      kind: "success",
+      title: `Cleared ${r.changed} field${r.changed === 1 ? "" : "s"}`,
+      detail: r.kept ? `${r.kept} choice field${r.kept === 1 ? " keeps its" : "s keep their"} option (choices can’t be emptied here).` : "Save a copy to keep the empty form (Ctrl+S).",
+      actions: [{ label: "Undo", run: () => setFormEdits(({ [docId]: _new, ...rest }) => (before ? { ...rest, [docId]: before } : rest)) }],
+      persistent: false,
+    });
+  };
+
   const selectionAvail = (): true | string => (pageSelection() ? true : "Select text on a page first.");
   const roomAvail = (): true | string => (activePending.length < MAX_PENDING ? true : "Save a copy first; too many unsaved annotations.");
 
@@ -786,6 +805,7 @@ export function App() {
     "file.sanitize": { run: () => setDialog({ kind: "sanitize" }), available: all(needDoc, noDialog) },
     "file.exportFormData": { run: () => setDialog({ kind: "exportFormData" }), available: all(needDoc, noDialog, formAvail) },
     "file.importFormData": { run: () => setDialog({ kind: "importFormData" }), available: all(needDoc, noDialog, formAvail) },
+    "edit.clearForm": { run: () => active && clearForm(active.doc_id), available: all(needDoc, noDialog, formAvail) },
     "file.reduceSize": { run: () => openTool("optimize"), available: all(needDoc, noDialog) },
     "file.compare": { run: () => setDialog({ kind: "compare" }), available: all(needDoc, noDialog) },
     "file.print": { run: () => setDialog({ kind: "print" }), available: all(needDoc, noDialog) },

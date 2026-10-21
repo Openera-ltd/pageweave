@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, FolderOpen, Plus, Trash2 } from "lucide-react";
 import { useApi } from "../api";
 import { basename, dirname, join, siblingOutput, stem } from "../paths";
-import { toPwError, type AnnotationSpec, type CollisionPolicy, type FieldValue, type PageEdit, type StampPosition, type JobSnapshot, type WatermarkLayer, type OpenedDoc, type Operation, type PwError } from "../types";
+import { toPwError, type AnnotationSpec, type BookmarkInfo, type CollisionPolicy, type FieldValue, type PageEdit, type StampPosition, type JobSnapshot, type WatermarkLayer, type OpenedDoc, type Operation, type PwError } from "../types";
 import { Dialog, useDebounced } from "./ui";
 
 export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop" | "text" | "optimize" | "deskew" | "extractImages" | "orient";
@@ -166,7 +166,10 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   const [output, setOutput] = useState(
     toFolder ? dirname(doc.path) : tool === "text" ? join(dirname(doc.path), `${stem(doc.path)}.txt`) : siblingOutput(doc.path, suffix),
   );
-  const [splitMode, setSplitMode] = useState<"every_n" | "ranges">("every_n");
+  const [splitMode, setSplitMode] = useState<"every_n" | "ranges" | "bookmarks" | "max_size">("every_n");
+  const [bmLevel, setBmLevel] = useState(1);
+  const [maxSize, setMaxSize] = useState("10");
+  const [sizeUnit, setSizeUnit] = useState<"KB" | "MB">("MB");
   const [everyN, setEveryN] = useState("1");
   const [ranges, setRanges] = useState("");
   const [files, setFiles] = useState<string[]>([doc.path]);
@@ -209,6 +212,9 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
 
   const everyNValue = Number(everyN);
   const everyNValid = Number.isInteger(everyNValue) && everyNValue >= 1 && everyNValue <= doc.info.page_count;
+  const bmParts = useMemo(() => bookmarkParts(doc.info.bookmarks ?? [], doc.info.page_count, bmLevel), [doc.info.bookmarks, doc.info.page_count, bmLevel]);
+  const bmLevels = useMemo(() => bookmarkLevels(doc.info.bookmarks ?? [], doc.info.page_count), [doc.info.bookmarks, doc.info.page_count]);
+  const maxBytes = Math.round(Number(maxSize) * (sizeUnit === "MB" ? 1024 * 1024 : 1024));
   const rangeLines = useMemo(() => ranges.split(/\r?\n/).map((s) => s.trim()).filter(Boolean), [ranges]);
 
   const blocker: string | null = (() => {
@@ -216,6 +222,8 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
     if (tool === "delete" && range.state === "ok" && range.count >= doc.info.page_count) return "A PDF must keep at least one page.";
     if (tool === "split" && splitMode === "every_n" && !everyNValid) return `Enter a number from 1 to ${doc.info.page_count}.`;
     if (tool === "split" && splitMode === "ranges" && rangeLines.length === 0) return "Enter one page range per line.";
+    if (tool === "split" && splitMode === "bookmarks" && bmParts.length === 0) return bmLevels.length ? `There are no level ${bmLevel} bookmarks.` : "This document has no bookmarks that point to a page.";
+    if (tool === "split" && splitMode === "max_size" && !(Number.isFinite(maxBytes) && maxBytes >= MIN_SPLIT_BYTES)) return "Choose a size of at least 10 KB.";
     if (tool === "merge" && files.length < 2) return "Add at least one more file.";
     if (tool === "save" && nAnnots + nFields + nObjects === 0) return "There are no changes to save.";
     if (tool === "stamp") {
@@ -252,7 +260,14 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         return {
           op: "split",
           input: doc.path,
-          split: splitMode === "every_n" ? { mode: "every_n", n: everyNValue } : { mode: "ranges", ranges: rangeLines },
+          split:
+            splitMode === "every_n"
+              ? { mode: "every_n", n: everyNValue }
+              : splitMode === "ranges"
+                ? { mode: "ranges", ranges: rangeLines }
+                : splitMode === "bookmarks"
+                  ? { mode: "bookmarks", level: bmLevel }
+                  : { mode: "max_size", max_bytes: maxBytes },
           output_dir: output,
         };
       case "merge":
@@ -635,9 +650,41 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
               <button type="button" role="radio" aria-checked={splitMode === "ranges"} onClick={() => setSplitMode("ranges")}>
                 By ranges
               </button>
+              <button type="button" role="radio" aria-checked={splitMode === "bookmarks"} onClick={() => setSplitMode("bookmarks")}>
+                By bookmarks
+              </button>
+              <button type="button" role="radio" aria-checked={splitMode === "max_size"} onClick={() => setSplitMode("max_size")}>
+                By size
+              </button>
             </div>
           </div>
-          {splitMode === "every_n" ? (
+          {splitMode === "bookmarks" ? (
+            <div className="field">
+              <label htmlFor="split-level">Bookmark level</label>
+              <select id="split-level" className="select" value={bmLevel} disabled={bmLevels.length === 0} onChange={(e) => setBmLevel(Number(e.target.value))}>
+                {(bmLevels.length ? bmLevels : [1]).map((l) => (
+                  <option key={l} value={l}>
+                    {l === 1 ? "Top level" : `Level ${l}`}
+                  </option>
+                ))}
+              </select>
+              <span className="hint" data-testid="split-bookmarks-note">
+                {bmParts.length ? `Creates ${bmParts.length} file${bmParts.length === 1 ? "" : "s"}, named after the bookmarks.` : "No bookmarks at this level point to a page."}
+              </span>
+            </div>
+          ) : splitMode === "max_size" ? (
+            <div className="field">
+              <label htmlFor="split-size">Largest file size</label>
+              <div className="row">
+                <input id="split-size" className="input" type="number" min={1} step="any" value={maxSize} aria-invalid={!(maxBytes >= MIN_SPLIT_BYTES)} onChange={(e) => setMaxSize(e.target.value)} style={{ width: 110 }} />
+                <select className="select" aria-label="Size unit" value={sizeUnit} onChange={(e) => setSizeUnit(e.target.value as "KB" | "MB")}>
+                  <option value="MB">MB</option>
+                  <option value="KB">KB</option>
+                </select>
+              </div>
+              <span className="hint">A page larger than this on its own becomes a file by itself.</span>
+            </div>
+          ) : splitMode === "every_n" ? (
             <div className="field">
               <label htmlFor="every">Pages per file</label>
               <input id="every" className="input" type="number" min={1} max={doc.info.page_count} value={everyN} aria-invalid={!everyNValid} onChange={(e) => setEveryN(e.target.value)} />
@@ -696,7 +743,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
             <FolderOpen /> Browse…
           </button>
         </div>
-        {tool === "split" && <span className="hint">Files are named “{doc.name.replace(/\.pdf$/i, "")}_part01.pdf”, …</span>}
+        {tool === "split" && splitMode !== "bookmarks" && <span className="hint">Files are named “{doc.name.replace(/\.pdf$/i, "")}_part01.pdf”, …</span>}
         {tool === "extractImages" && <span className="hint">JPEG images are saved exactly as stored; others as PNG. Repeated images are saved once.</span>}
         {tool === "text" && <span className="hint">UTF-8 text, one section per page. Scanned pages need text recognition first.</span>}
         {tool === "images" && <span className="hint">PNG files named “{doc.name.replace(/\.pdf$/i, "")}_p001.png”, …</span>}
@@ -737,4 +784,22 @@ function swap<T>(a: T[], i: number, j: number): T[] {
   const b = a.slice();
   [b[i], b[j]] = [b[j]!, b[i]!];
   return b;
+}
+
+/** Smallest size limit (pw-core MIN_SPLIT_BYTES). */
+export const MIN_SPLIT_BYTES = 10 * 1024;
+
+/** Outline levels (1-based) that have at least one bookmark pointing to a page. */
+export function bookmarkLevels(bookmarks: BookmarkInfo[], pageCount: number): number[] {
+  const levels = new Set(bookmarks.filter((b) => b.page !== null && b.page < pageCount).map((b) => b.depth + 1));
+  return [...levels].sort((a, b) => a - b);
+}
+
+/** The parts splitting by bookmarks at `level` makes, as the engine does: one per distinct start page. */
+export function bookmarkParts(bookmarks: BookmarkInfo[], pageCount: number, level: number): Array<{ title: string; first: number }> {
+  const starts = bookmarks
+    .filter((b) => b.depth + 1 === level && b.page !== null && b.page < pageCount)
+    .map((b) => ({ title: b.title, first: b.page! }))
+    .sort((a, b) => a.first - b.first);
+  return starts.filter((b, i) => i === 0 || b.first !== starts[i - 1]!.first);
 }

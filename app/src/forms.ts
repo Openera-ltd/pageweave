@@ -49,3 +49,31 @@ export function missingRequired(edits: FormEdits, fields: FormField[]): FormFiel
 export function fieldLabel(f: FormField): string {
   return f.label ?? f.name.replace(/[._]+/g, " ").trim();
 }
+
+/**
+ * Edits that empty the form: text fields to "", checkboxes unticked. Choice lists and radio groups
+ * are kept — the engine can only set them to one of their options — and counted in `kept`.
+ */
+export function clearedEdits(edits: FormEdits, fields: FormField[]): { edits: FormEdits; changed: number; kept: number } {
+  let next = edits;
+  let changed = 0;
+  let kept = 0;
+  for (const f of fields) {
+    if (!isFillable(f) || f.read_only) continue;
+    if (f.kind === "text" || f.kind === "checkbox") {
+      const empty: FormValue = f.kind === "text" ? "" : false;
+      if (currentValue(next, f) !== empty) {
+        next = setEdit(next, f, empty);
+        changed++;
+      }
+    } else if (f.kind === "combo" && f.editable) {
+      if (currentValue(next, f) !== "") {
+        next = setEdit(next, f, "");
+        changed++;
+      }
+    } else if (currentValue(next, f) !== "") {
+      kept++;
+    }
+  }
+  return { edits: next, changed, kept };
+}

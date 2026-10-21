@@ -175,7 +175,11 @@ export interface Settings {
 
 export type CollisionPolicy = "fail" | "rename" | "replace";
 
-export type SplitMode = { mode: "every_n"; n: number } | { mode: "ranges"; ranges: string[] };
+export type SplitMode =
+  | { mode: "every_n"; n: number }
+  | { mode: "ranges"; ranges: string[] }
+  | { mode: "bookmarks"; level: number }
+  | { mode: "max_size"; max_bytes: number };
 
 export type AnnotationKind = "highlight" | "underline" | "strike_out" | "note";
 

@@ -865,3 +865,39 @@ fn form_export_and_import_round_trip_through_files() {
         .expect("run");
     assert_eq!(r.status.code(), Some(2), "{}", String::from_utf8_lossy(&r.stderr));
 }
+
+#[test]
+fn split_by_size_and_by_bookmarks_from_the_cli() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let r = bin()
+        .args(["--json", "split", "--max-size", "300KB", "--out-dir"])
+        .arg(dir.path())
+        .arg(fixture("photo-heavy.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let v = json(&r);
+    let outs = v["result"]["outputs"].as_array().expect("outputs");
+    assert!(outs.len() >= 2);
+    for o in outs {
+        let path = o["path"].as_str().expect("path");
+        let size = std::fs::metadata(path).expect("meta").len();
+        assert!(size <= 300 * 1024 || o["pages"] == 1, "{path}: {size}");
+    }
+    let bm = tempfile::tempdir().expect("tmp");
+    let r = bin()
+        .args(["split", "--by-bookmarks", "1", "--out-dir"])
+        .arg(bm.path())
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert!(bm.path().join("five-pages_03_Chapter 3.pdf").exists());
+    let r = bin()
+        .args(["split", "--max-size", "lots", "--out-dir"])
+        .arg(bm.path())
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert_eq!(r.status.code(), Some(2), "bad size is invalid input");
+}
