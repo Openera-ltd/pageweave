@@ -140,7 +140,10 @@ fn mutated_fixtures_never_panic_or_hang() {
                 let r = catch_unwind(AssertUnwindSafe(|| execute(&req, None)));
                 let took = t.elapsed();
                 runs += 1;
-                let what = format!("{} case {case} {id}", fx.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+                let what = format!(
+                    "{} case {case} {id}",
+                    fx.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+                );
                 if took > slowest.0 {
                     slowest = (took, what.clone());
                 }

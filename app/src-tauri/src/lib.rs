@@ -155,6 +155,38 @@ async fn list_attachments(state: State<'_, AppState>, doc_id: DocId) -> CmdResul
     .await
 }
 
+/// Run one job in a worker copy of this executable (decision D-015), so a crash inside the PDF
+/// engine fails this job instead of closing the app. Progress and cancellation pass through; a
+/// crashed worker's staged files are removed at once.
+fn run_job(
+    request: &OperationRequest,
+    ctx: &pw_core::job::JobContext,
+) -> pw_core::PwResult<pw_core::ops::OperationResult> {
+    let exe = std::env::current_exe().map_err(|e| pw_core::PwError::from_io(&e, "application file"))?;
+    let (pid, result) = pw_pdf::worker::run_in_worker(&exe, request, &|| ctx.is_cancelled(), &mut |e| match e {
+        pw_pdf::worker::WorkerEvent::Progress(pw_core::job::Progress::Determinate { done, total, unit }) => {
+            ctx.set_progress(done, total, &unit)
+        }
+        pw_pdf::worker::WorkerEvent::Progress(pw_core::job::Progress::Indeterminate) => ctx.set_indeterminate(),
+        pw_pdf::worker::WorkerEvent::Phase(p) => ctx.set_phase(&p),
+    });
+    if let (Some(pid), Err(_)) = (pid, &result) {
+        if let Some(dir) = request.operation.output_dir() {
+            // Only this worker's files: other jobs may be writing next to them.
+            let prefix = pw_core::output::worker_staged_prefix(std::process::id(), pid);
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for e in entries.flatten() {
+                    if e.file_name().to_string_lossy().starts_with(&prefix) {
+                        let p = e.path();
+                        let _ = if p.is_dir() { std::fs::remove_dir_all(&p) } else { std::fs::remove_file(&p) };
+                    }
+                }
+            }
+        }
+    }
+    result
+}
+
 /// Installed resources checked against their pinned checksums (read-only; reads ~60 MB once).
 #[tauri::command]
 async fn resource_status() -> CmdResult<pw_pdf::resources::ResourceReport> {
@@ -375,7 +407,7 @@ fn start_operation(
             },
             _ => None,
         };
-        let result = pw_pdf::execute(&request, Some(ctx));
+        let result = run_job(&request, ctx);
         logger.log(
             pw_core::log::Level::Info,
             "job",

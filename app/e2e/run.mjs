@@ -2578,6 +2578,30 @@ await test("settings ▸ resources: PDF engine and text recognition verified aga
   });
 });
 
+await test("engine crash on a damaged file fails the job with a reason; the app stays open and keeps working", async () => {
+  const src = join(FIX, "..", "hostile", "redact-generate-content-crash.pdf");
+  const out = join(work, "crash-redacted.pdf");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Mark current page");
+    await s.click('[role="option"][data-command="redact.markPage"]');
+    await s.waitUntil(async () => (await annotCount(s, "redact")) === 1, "page marked");
+    await s.click('[data-testid="redaction-marks"]');
+    await s.waitFor("#redact-output");
+    await s.type("#redact-output", out);
+    await s.click('[data-testid="redact-apply"]');
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[role=dialog] [role=alert]')?.textContent ?? ''")).includes("stopped unexpectedly"), "crash reported in the dialog", 60000);
+    assert(!existsSync(out), "nothing saved");
+    // Still alive: close the dialog and use the app.
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[role=dialog]')")), "dialog closed");
+    await s.keys(["Control", "d"]);
+    await s.waitUntil(async () => await s.exec("return !!document.querySelector('[role=dialog]')"), "app still responds");
+  });
+});
+
 /* ------------------------------------------------------------------ */
 const summary = {
   app: APP,

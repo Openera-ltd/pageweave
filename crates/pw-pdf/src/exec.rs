@@ -531,8 +531,7 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             // Staged intermediate files sit next to the output (crash recovery removes leftovers
             // with this prefix); the original stays protected at every stage.
             let dir = output.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(std::path::Path::new("."));
-            let stage_path =
-                |name: &str| dir.join(format!("{}{name}.pdf", pw_core::output::staged_prefix(std::process::id())));
+            let stage_path = |name: &str| dir.join(format!("{}{name}.pdf", pw_core::output::own_staged_prefix()));
             let mut stages: Vec<std::path::PathBuf> = Vec::new();
             let commit_bytes = |bytes: &[u8]| {
                 pw_core::output::write_atomic_bytes(output, policy, std::slice::from_ref(input), bytes, |staged| {

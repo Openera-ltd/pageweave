@@ -48,6 +48,7 @@ Known limitations (selection):
 - XFA forms are detected but cannot be displayed or filled.
 - No measured performance budgets or hardware support claims yet (`docs/HARDWARE_SUPPORT.md`).
 - Screen-reader behaviour has not yet been verified with Narrator/NVDA.
+- Crash containment: document jobs (save, convert, redact, OCR, …) run in a separate worker process, so an engine crash on a damaged file fails only that job; page display and quick reads in the viewer still run inside the app.
 - Accessibility check: automated structure checks plus a list of what to review by hand; it does not edit or add tags and is not a PDF/UA or WCAG conformance verdict.
 
 ## Architecture

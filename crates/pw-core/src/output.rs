@@ -99,6 +99,23 @@ pub fn staged_prefix(pid: u32) -> String {
     format!(".pw-staged-{pid}-")
 }
 
+/// Set by a parent process on its job worker (D-015): the worker tags its staged files with the
+/// parent's pid, so crash recovery of the parent finds them, followed by its own pid.
+pub const STAGE_OWNER_ENV: &str = "PAGEWEAVE_STAGE_OWNER";
+
+/// Staged files of worker `worker` started by `owner`.
+pub fn worker_staged_prefix(owner: u32, worker: u32) -> String {
+    format!("{}w{worker}-", staged_prefix(owner))
+}
+
+/// The prefix this process gives its staged files.
+pub fn own_staged_prefix() -> String {
+    match std::env::var(STAGE_OWNER_ENV).ok().and_then(|v| v.parse::<u32>().ok()) {
+        Some(owner) => worker_staged_prefix(owner, std::process::id()),
+        None => staged_prefix(std::process::id()),
+    }
+}
+
 /// Outcome of a committed write.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommittedOutput {
@@ -123,7 +140,7 @@ pub fn write_atomic(
     let mut builder = tempfile::Builder::new();
     // The owning process id is part of the name so restart recovery can tell which leftovers belong
     // to a process that is gone (see `journal`).
-    let prefix = staged_prefix(std::process::id());
+    let prefix = own_staged_prefix();
     builder.prefix(&prefix).suffix(".tmp");
     // Temp files default to 0600; a saved document should get normal permissions (0666 & !umask).
     #[cfg(unix)]
@@ -349,5 +366,18 @@ mod tests {
         let e = write_atomic_bytes(&ro.join("x.pdf"), CollisionPolicy::Fail, &[], b"x", no_validate)
             .expect_err("read only");
         assert_eq!(e.category, ErrorCategory::Permission);
+    }
+}
+
+#[cfg(test)]
+mod stage_owner_tests {
+    use super::*;
+
+    #[test]
+    fn worker_prefixes_are_found_by_the_owners_recovery() {
+        let w = worker_staged_prefix(123, 456);
+        assert_eq!(w, ".pw-staged-123-w456-");
+        assert!(w.starts_with(&staged_prefix(123)), "recovery of pid 123 matches its worker's files");
+        assert!(!w.starts_with(&staged_prefix(12)), "another pid does not");
     }
 }

@@ -1242,6 +1242,18 @@ fn print_human(r: &OperationResult) {
 const CLI_STACK_BYTES: usize = 16 * 1024 * 1024;
 
 fn main() -> ExitCode {
+    // Worker mode (D-015): one operation over stdin/stdout for a parent process.
+    if std::env::args_os().nth(1).is_some_and(|a| a == pw_pdf::worker::WORKER_FLAG) {
+        return match std::thread::Builder::new().name("pageweave-worker".into()).stack_size(CLI_STACK_BYTES).spawn(
+            || {
+                pw_pdf::worker::run_worker();
+                ExitCode::SUCCESS
+            },
+        ) {
+            Ok(h) => h.join().unwrap_or(ExitCode::from(70)),
+            Err(_) => ExitCode::from(71),
+        };
+    }
     match std::thread::Builder::new().name("pageweave-cli".into()).stack_size(CLI_STACK_BYTES).spawn(run) {
         Ok(h) => h.join().unwrap_or(ExitCode::from(70)),
         Err(_) => ExitCode::from(71),

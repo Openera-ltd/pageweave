@@ -273,3 +273,10 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - `pw_pdf::resources::resource_status` (PDF engine found by the engine's own search, OCR files via `pw_ocr::check_files`) → Ready / Missing / Damaged per capability; CLI `resources`; Settings ▸ Resources (no file or model names in the UI, asserted by E2E); Windows packaged-CLI smoke now checks `resources` and its exit 10 with a model removed.
 - Ran: fmt, clippy clean; Rust 344 passed; vitest 125; license check ok; new E2E scenario passes.
 - Not built: download / resume / repair inside the app. Decision needed (owner): PRD 18 asks for in-app downloads, while the README states the app makes no network requests; installers currently ship all resources and repair means reinstalling.
+
+## 2026-10-21 — Session 2, checkpoint 10: robustness and crash containment (D-015)
+- `crates/pw-pdf/tests/robustness.rs`: deterministic mutations (truncation, bit flips, splices, number/keyword tampering, zeroed blocks) of every small fixture through every read-only operation; no panic, no case over 20 s. `PW_FUZZ_CASES` / `PW_FUZZ_SEED` widen the run.
+- The write-operation run found a PDFium CHECK abort (SIGTRAP) in redaction on a damaged page dictionary → kept as `fixtures/hostile/redact-generate-content-crash.pdf`. Not catchable in-process, so jobs now run in a worker process (D-015, `pw_pdf::worker`); a crash fails one job with `engine.crashed` and the app stays open.
+- Tests: `crates/pw-cli/tests/worker.rs` (password via the secrets line + result; hostile file → `engine.crashed`, then the next job works; progress then cancel; mutated files through write operations, 2 cases per fixture by default — 40 cases ran locally in 129 s with 2 crashes contained, 0 hangs); `stage_owner_tests` for the staged-file prefix; new E2E scenario (redaction of the hostile file fails with the reason, the window and other documents keep working).
+- Ran: fmt, clippy clean; `cargo test --workspace` all passed; vitest 125; audit 78/78; license check ok; Linux real-app E2E full suite 76/76.
+- Still in-process: viewer rendering and direct read commands of the app (documented in D-015 and README).

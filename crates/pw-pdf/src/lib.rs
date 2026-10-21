@@ -39,6 +39,7 @@ mod sanitize;
 mod sign;
 mod signatures;
 mod unprotect;
+pub mod worker;
 
 pub use accessibility::{check_accessibility, AccessibilityCheck, AccessibilityReport, CheckStatus};
 pub use annots::{list_annotations, AnnotationList, ExistingAnnotation};
