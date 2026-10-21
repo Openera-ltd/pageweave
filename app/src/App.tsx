@@ -63,6 +63,7 @@ import { TrustSignerDialog, TrustedCertificatesDialog } from "./components/Trust
 import { UnprotectDialog } from "./components/UnprotectDialog";
 import { ExportFormDataDialog, ImportFormDataDialog } from "./components/FormDataDialogs";
 import { RedactPatternsDialog } from "./components/RedactPatternsDialog";
+import { toChanges, type AnnotChanges } from "./annotationChanges";
 import { AccessibilityDialog } from "./components/AccessibilityDialog";
 import { PageLabelsDialog } from "./components/PageLabelsDialog";
 import type { ImportPlan } from "./formData";
@@ -118,6 +119,7 @@ type AfterSave = { kind: "close"; docId: number } | { kind: "quit" } | null;
 
 const NO_PENDING: PendingAnnotation[] = [];
 const NO_EDITS: FormEdits = {};
+const NO_ANNOT_CHANGES: AnnotChanges = {};
 
 const OPERATION_TITLES: Partial<Record<Operation["op"], string>> = {
   extract_pages: "Extract pages",
@@ -192,6 +194,8 @@ export function App() {
   const [editMode, setEditMode] = useState(false);
   const [addTextArmed, setAddTextArmed] = useState(false);
   const [objHist, setObjHist] = useState<Record<number, ObjHistory>>({});
+  /** Pending deletes / text changes of annotations already in each file. */
+  const [annotChanges, setAnnotChanges] = useState<Record<number, AnnotChanges>>({});
   const annGroup = useRef(1);
   /** Form fields per document (null: none, or still loading) and the user's unsaved field edits. */
   const [forms, setForms] = useState<Record<number, FormInfo | null>>({});
@@ -229,7 +233,8 @@ export function App() {
   const editsOf = (id: number) => formEdits[id] ?? NO_EDITS;
   const objEditsOf = (id: number) => objHist[id]?.items ?? NO_OBJ_EDITS.items;
   /** Unsaved changes of a document: pending annotations and redaction marks, changed form fields and content edits. */
-  const changesOf = (id: number) => pendingOf(id).length + Object.keys(editsOf(id)).length + objEditsOf(id).length;
+  const annotChangesOf = (id: number) => annotChanges[id] ?? NO_ANNOT_CHANGES;
+  const changesOf = (id: number) => pendingOf(id).length + Object.keys(editsOf(id)).length + objEditsOf(id).length + Object.keys(annotChangesOf(id)).length;
   const marksOf = (id: number) => pendingOf(id).filter(isRedactMark).length;
   /** Changes a saved copy can hold (redaction marks are applied, not saved). */
   const savableOf = (id: number) => changesOf(id) - marksOf(id);
@@ -376,6 +381,7 @@ export function App() {
       setAnnots(({ [id]: _dropped, ...rest }) => rest);
       setForms(({ [id]: _f, ...rest }) => rest);
       setFormEdits(({ [id]: _e, ...rest }) => rest);
+      setAnnotChanges(({ [id]: _c, ...rest }) => rest);
       if (id === activeId) {
         setSearchOpen(false);
         setHits([]);
@@ -385,13 +391,15 @@ export function App() {
     [api, activeId],
   );
 
-  /** Close a tab, asking first when it has unsaved annotations. */
+  /** Close a tab, asking first when it has any unsaved change (annotations, marks, fields, content or comment edits). */
   const closeTab = useCallback(
     (id: number) => {
-      if ((annots[id]?.items.length ?? 0) + Object.keys(formEdits[id] ?? {}).length > 0) setDialog({ kind: "unsaved", reason: "tab", docId: id });
+      const n =
+        (annots[id]?.items.length ?? 0) + Object.keys(formEdits[id] ?? {}).length + (objHist[id]?.items.length ?? 0) + Object.keys(annotChanges[id] ?? {}).length;
+      if (n > 0) setDialog({ kind: "unsaved", reason: "tab", docId: id });
       else closeTabNow(id);
     },
-    [annots, formEdits, closeTabNow],
+    [annots, formEdits, objHist, annotChanges, closeTabNow],
   );
 
   // Read a document's form fields the first time it is shown (only documents that have a form).
@@ -671,9 +679,11 @@ export function App() {
     const before = annots[docId];
     const beforeEdits = formEdits[docId];
     const beforeObjects = objHist[docId];
+    const beforeAnnotChanges = annotChanges[docId];
     setAnnots(({ [docId]: _gone, ...rest }) => rest);
     setFormEdits(({ [docId]: _gone, ...rest }) => rest);
     setObjHist(({ [docId]: _gone, ...rest }) => rest);
+    setAnnotChanges(({ [docId]: _gone, ...rest }) => rest);
     notify({
       kind: "info",
       title: `Discarded ${n} change${n === 1 ? "" : "s"}`,
@@ -684,6 +694,7 @@ export function App() {
             if (before) setAnnots((a) => ({ ...a, [docId]: before }));
             if (beforeEdits) setFormEdits((e) => ({ ...e, [docId]: beforeEdits }));
             if (beforeObjects) setObjHist((o) => ({ ...o, [docId]: beforeObjects }));
+            if (beforeAnnotChanges) setAnnotChanges((c) => ({ ...c, [docId]: beforeAnnotChanges }));
           },
         },
       ],
@@ -1194,6 +1205,7 @@ export function App() {
     setAnnots(({ [docId]: _saved, ...rest }) => rest);
     setFormEdits(({ [docId]: _saved, ...rest }) => rest);
     setObjHist(({ [docId]: _saved, ...rest }) => rest);
+    setAnnotChanges(({ [docId]: _saved, ...rest }) => rest);
     const next = afterSave.current;
     afterSave.current = null;
     if (next?.kind === "close") return closeTabNow(next.docId);
@@ -1363,6 +1375,8 @@ export function App() {
               signaturesError={sigs?.docId === active.doc_id ? (sigs.error ?? null) : null}
               onTrustSigner={(index) => setDialog((d) => d ?? { kind: "trustSigner", index })}
               onManageTrust={() => setDialog((d) => d ?? { kind: "trustedCertificates" })}
+              annotChanges={annotChangesOf(active.doc_id)}
+              onAnnotChanges={(c) => setAnnotChanges((all) => ({ ...all, [active.doc_id]: c }))}
             />
           )}
           <div ref={viewerHost} style={{ display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0, minWidth: 0 }}>
@@ -1457,6 +1471,7 @@ export function App() {
           annotations={dialog.tool === "save" ? annotationSpecs(activePending) : undefined}
           formValues={dialog.tool === "save" ? toFieldValues(editsOf(active.doc_id), forms[active.doc_id]?.fields ?? []) : undefined}
           objectEdits={dialog.tool === "save" ? toPageEdits(objEditsOf(active.doc_id)) : undefined}
+          annotationChanges={dialog.tool === "save" ? toChanges(annotChangesOf(active.doc_id)) : undefined}
           jobs={jobs}
           onClose={() => {
             afterSave.current = null;

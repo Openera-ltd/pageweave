@@ -268,6 +268,7 @@ fn form_values_and_annotations_are_saved_together() {
             contents: None,
         }],
         object_edits: vec![],
+        annotation_changes: vec![],
         output: out.clone(),
     });
     req.collision = CollisionPolicy::Fail;
@@ -294,6 +295,7 @@ fn form_values_and_annotations_are_saved_together() {
             contents: None,
         }],
         object_edits: vec![],
+        annotation_changes: vec![],
         output: only.clone(),
     });
     req.collision = CollisionPolicy::Fail;
@@ -303,6 +305,7 @@ fn form_values_and_annotations_are_saved_together() {
         form_values: vec![],
         annotations: vec![],
         object_edits: vec![],
+        annotation_changes: vec![],
         output: dir.path().join("x.pdf"),
     });
     assert_eq!(execute(&empty, None).expect_err("empty").code, "edits.empty");

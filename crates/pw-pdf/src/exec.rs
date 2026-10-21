@@ -521,63 +521,83 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(w);
             (vec![out(&c, Some(n))], json!({ "page_count": n, "areas": areas.len() }))
         }
-        Operation::ApplyEdits { input, form_values, annotations, object_edits, output } => {
-            let (c, w) = if object_edits.iter().all(|p| p.edits.is_empty()) {
-                crate::forms::apply_edits(input, opts.password, form_values, annotations, output, policy)?
-            } else {
-                let edited = crate::objects::apply_object_edits(input, &opts, object_edits)?;
-                let mut w = edited.warnings.clone();
-                if form_values.is_empty() && annotations.is_empty() {
-                    let c = pw_core::output::write_atomic_bytes(
-                        output,
-                        policy,
-                        std::slice::from_ref(input),
-                        &edited.bytes,
-                        |staged| {
-                            let back =
-                                std::fs::read(staged).map_err(|e| pw_core::PwError::from_io(&e, "output file"))?;
-                            if back == edited.bytes {
-                                Ok(())
-                            } else {
-                                Err(pw_core::PwError::new(
-                                    pw_core::ErrorCategory::ValidationFailed,
-                                    "output.verify",
-                                    "The written file differs.",
-                                ))
-                            }
-                        },
-                    )?;
-                    (c, w)
-                } else {
-                    // The verified object edits feed the form/annotation stage through a staged file
-                    // (crash recovery removes leftovers with this prefix).
-                    let dir =
-                        output.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(std::path::Path::new("."));
-                    let stage = dir.join(format!("{}objects.pdf", pw_core::output::staged_prefix(std::process::id())));
-                    std::fs::write(&stage, &edited.bytes)
-                        .map_err(|e| pw_core::PwError::from_io(&e, "temporary file"))?;
-                    // The original stays protected too: the output may never replace it.
-                    let protected = [input.clone(), stage.clone()];
-                    let r = crate::forms::apply_edits_protecting(
-                        &stage,
-                        opts.password,
-                        form_values,
-                        annotations,
-                        output,
-                        policy,
-                        &protected,
-                    );
-                    let _ = std::fs::remove_file(&stage);
-                    let (c, w2) = r?;
-                    w.extend(w2);
-                    (c, w)
-                }
+        Operation::ListAnnotations { input } => {
+            let list = crate::annots::list_annotations(input, &opts)?;
+            (vec![], serde_json::to_value(&list).unwrap_or_default())
+        }
+        Operation::ApplyEdits { input, form_values, annotations, object_edits, annotation_changes, output } => {
+            let has_objects = object_edits.iter().any(|p| !p.edits.is_empty());
+            let has_later = !form_values.is_empty() || !annotations.is_empty();
+            // Staged intermediate files sit next to the output (crash recovery removes leftovers
+            // with this prefix); the original stays protected at every stage.
+            let dir = output.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(std::path::Path::new("."));
+            let stage_path =
+                |name: &str| dir.join(format!("{}{name}.pdf", pw_core::output::staged_prefix(std::process::id())));
+            let mut stages: Vec<std::path::PathBuf> = Vec::new();
+            let commit_bytes = |bytes: &[u8]| {
+                pw_core::output::write_atomic_bytes(output, policy, std::slice::from_ref(input), bytes, |staged| {
+                    let back = std::fs::read(staged).map_err(|e| pw_core::PwError::from_io(&e, "output file"))?;
+                    if back == bytes {
+                        Ok(())
+                    } else {
+                        Err(pw_core::PwError::new(
+                            pw_core::ErrorCategory::ValidationFailed,
+                            "output.verify",
+                            "The written file differs.",
+                        ))
+                    }
+                })
             };
+            let result = (|| -> PwResult<(pw_core::output::CommittedOutput, Vec<String>)> {
+                let mut w = Vec::new();
+                let mut src = input.clone();
+                if !annotation_changes.is_empty() {
+                    let (bytes, w1) =
+                        crate::annots::apply_annotation_changes(&src, &opts, annotation_changes, &cancelled)?;
+                    w.extend(w1);
+                    if !has_objects && !has_later {
+                        return Ok((commit_bytes(&bytes)?, w));
+                    }
+                    let st = stage_path("annots");
+                    std::fs::write(&st, &bytes).map_err(|e| pw_core::PwError::from_io(&e, "temporary file"))?;
+                    stages.push(st.clone());
+                    src = st;
+                }
+                if has_objects {
+                    let edited = crate::objects::apply_object_edits(&src, &opts, object_edits)?;
+                    w.extend(edited.warnings.clone());
+                    if !has_later {
+                        return Ok((commit_bytes(&edited.bytes)?, w));
+                    }
+                    let st = stage_path("objects");
+                    std::fs::write(&st, &edited.bytes).map_err(|e| pw_core::PwError::from_io(&e, "temporary file"))?;
+                    stages.push(st.clone());
+                    src = st;
+                }
+                let protected: Vec<std::path::PathBuf> =
+                    std::iter::once(input.clone()).chain(stages.iter().cloned()).collect();
+                let (c, w2) = crate::forms::apply_edits_protecting(
+                    &src,
+                    opts.password,
+                    form_values,
+                    annotations,
+                    output,
+                    policy,
+                    &protected,
+                )?;
+                w.extend(w2);
+                Ok((c, w))
+            })();
+            for st in &stages {
+                let _ = std::fs::remove_file(st);
+            }
+            let (c, w) = result?;
             warnings.extend(w);
             let n_obj: usize = object_edits.iter().map(|p| p.edits.len()).sum();
             (
                 vec![out(&c, None)],
-                json!({ "fields": form_values.len(), "annotations": annotations.len(), "object_edits": n_obj }),
+                json!({ "fields": form_values.len(), "annotations": annotations.len(), "object_edits": n_obj,
+                        "annotation_changes": annotation_changes.len() }),
             )
         }
         Operation::Split { input, split, output_dir } => {

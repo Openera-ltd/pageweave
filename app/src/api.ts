@@ -10,6 +10,7 @@ import { createContext, useContext } from "react";
 import type {
   AppInfo,
   AttachmentInfo,
+  ExistingAnnotation,
   AreaPreview,
   JobSnapshot,
   RedactArea,
@@ -71,6 +72,8 @@ export interface Api {
   removeTrustedCertificate(fingerprint: string): Promise<boolean>;
   /** Files embedded in the document (read-only). */
   listAttachments(docId: number): Promise<AttachmentInfo[]>;
+  /** Comments and markup already in the document (read-only). */
+  listAnnotations(docId: number): Promise<{ annotations: ExistingAnnotation[]; truncated: boolean }>;
   /** JPEG and PNG images. */
   pickImageFiles(): Promise<string[]>;
   /** A signing certificate file (.pfx/.p12). */
@@ -134,6 +137,7 @@ export const tauriApi: Api = {
   redactionPreview: (docId, areas) => invoke("redaction_preview", { docId, areas }),
   sanitizeInspect: (docId) => invoke("sanitize_inspect", { docId }),
   listAttachments: (docId) => invoke("list_attachments", { docId }),
+  listAnnotations: (docId) => invoke("list_annotations", { docId }),
   trustedCertificates: () => invoke("trusted_certificates"),
   pageObjects: (docId, page) => invoke("page_objects", { docId, page }),
   previewPageEdits: (docId, page, edits, scalePermille) => invoke("preview_page_edits", { docId, page, edits, scalePermille }),

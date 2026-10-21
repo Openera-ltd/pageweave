@@ -48,3 +48,43 @@ describe("Attachments panel", () => {
     await waitFor(() => expect(screen.getByRole("alert").textContent).toBe("The file is damaged."));
   });
 });
+
+describe("Comments panel", () => {
+  const note = { page: 0, index: 0, subtype: "Text", rect: { left: 0, bottom: 0, right: 1, top: 1 }, text: "Fix this", author: "Ada", modified: null, color: "#ffd400", text_editable: true };
+  const box = { ...note, index: 3, subtype: "FreeText", text: "Box", author: null, text_editable: false };
+  function setupComments(changes = {}) {
+    const onChanges = vi.fn();
+    const onSelect = vi.fn();
+    const api = { listAnnotations: vi.fn(async () => ({ annotations: [note, box], truncated: false })), pageUrl: () => "" } as unknown as Api;
+    const r = render(
+      <ApiContext.Provider value={api}>
+        <Sidebar doc={doc} view="comments" onView={() => undefined} currentPage={0} onSelectPage={onSelect} onPageContextMenu={() => undefined} onSaveAttachment={() => undefined} onAttachFiles={() => undefined} onEditBookmarks={() => undefined} annotChanges={changes} onAnnotChanges={onChanges} />
+      </ApiContext.Provider>,
+    );
+    return { onChanges, onSelect, r };
+  }
+
+  it("lists comments; delete and edit record pending changes; text boxes can't be edited", async () => {
+    const { onChanges, onSelect } = setupComments();
+    await screen.findByText("Fix this");
+    expect(screen.getByText("Note")).toBeTruthy();
+    expect(screen.getByText("Text box")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Delete Note on page 1" }));
+    expect(onChanges).toHaveBeenLastCalledWith({ "0:0": { page: 0, index: 0, subtype: "Text", delete: true, text: null } });
+    fireEvent.click(screen.getByRole("button", { name: "Edit comment of Note on page 1" }));
+    fireEvent.change(screen.getByLabelText("Comment for Note on page 1"), { target: { value: "Fixed" } });
+    fireEvent.click(screen.getByTestId("comment-apply"));
+    expect(onChanges).toHaveBeenLastCalledWith({ "0:0": { page: 0, index: 0, subtype: "Text", delete: false, text: "Fixed" } });
+    const editBox = screen.getByRole("button", { name: "Edit comment of Text box on page 1" });
+    expect(editBox.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(screen.getByText("Fix this"));
+    expect(onSelect).toHaveBeenCalledWith(0);
+  });
+
+  it("shows pending deletes and lets them be undone", async () => {
+    const { onChanges } = setupComments({ "0:0": { page: 0, index: 0, subtype: "Text", delete: true, text: null } });
+    await screen.findByText("Removed when you save a copy");
+    fireEvent.click(screen.getByRole("button", { name: "Undo change to Note on page 1" }));
+    expect(onChanges).toHaveBeenLastCalledWith({});
+  });
+});

@@ -232,6 +232,28 @@ export interface FieldValue {
   value: FormValue;
 }
 
+/** A comment or markup already in the file (engine `list_annotations`). */
+export interface ExistingAnnotation {
+  page: number;
+  index: number;
+  subtype: string;
+  rect: { left: number; bottom: number; right: number; top: number };
+  text: string | null;
+  author: string | null;
+  modified: string | null;
+  color: string | null;
+  text_editable: boolean;
+}
+
+/** A pending change to an annotation already in the file (pw-core `AnnotationChange`). */
+export interface AnnotationChange {
+  page: number;
+  index: number;
+  subtype: string;
+  delete: boolean;
+  text: string | null;
+}
+
 export type Operation =
   | { op: "extract_pages"; input: string; pages: string; output: string }
   | { op: "delete_pages"; input: string; pages: string; output: string }
@@ -245,7 +267,7 @@ export type Operation =
   | { op: "set_page_labels"; input: string; ranges: Array<{ start: number; style: string; prefix: string; first: number }>; output: string }
   | { op: "find_patterns"; input: string; patterns: Array<"email" | "phone" | "card_number" | "iban" | "us_ssn">; custom: string | null; pages: string | null }
   | { op: "import_form_data"; input: string; data: string; output: string }
-  | { op: "apply_edits"; input: string; form_values: FieldValue[]; annotations: AnnotationSpec[]; object_edits?: Array<{ page: number; edits: PageEdit[] }>; output: string }
+  | { op: "apply_edits"; input: string; form_values: FieldValue[]; annotations: AnnotationSpec[]; object_edits?: Array<{ page: number; edits: PageEdit[] }>; annotation_changes?: AnnotationChange[]; output: string }
   | {
       op: "stamp_text";
       input: string;

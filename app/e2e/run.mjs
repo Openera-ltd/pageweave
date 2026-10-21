@@ -2452,6 +2452,50 @@ await test("page labels: roman front matter then prefixed numbers; preview; save
   }
 });
 
+await test("comments panel: delete a note and change a highlight's comment; closing asks; saved copy verified", async () => {
+  const src = join(FIX, "hidden-info.pdf");
+  const before = sha(src);
+  const out = join(work, "comments-edited.pdf");
+  const items = (s) => s.exec("return [...document.querySelectorAll('.comments li')].map(li => li.textContent)");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click("#sb-tab-comments");
+    await s.waitUntil(async () => (await items(s)).length === 4, "four comments listed");
+    assert((await items(s))[0].includes("Note") && (await items(s))[0].includes("Reviewer note PWCOMMENT"), `first: ${(await items(s))[0]}`);
+    await s.click('[aria-label="Delete Note on page 1"]');
+    await s.waitUntil(async () => (await items(s))[0].includes("Removed when you save a copy"), "pending delete shown");
+    await s.click('[aria-label="Edit comment of Highlight on page 1"]');
+    await s.type('[aria-label="Comment for Highlight on page 1"]', "Checked by QA");
+    await s.click('[data-testid="comment-apply"]');
+    await s.waitUntil(async () => (await items(s))[1].includes("Checked by QA") && (await items(s))[1].includes("Changed"), "pending text shown");
+    await s.waitUntil(async () => (await unsavedText(s)) === "2 unsaved changes", "two unsaved changes");
+    await axeCheck(s, "comments-panel");
+    writeFileSync(join(ART, "comments-panel.png"), await s.screenshot());
+    // Closing the tab asks first.
+    await s.keys(["Control", "w"]);
+    await s.waitFor('[data-testid="unsaved-cancel"]');
+    await s.click('[data-testid="unsaved-cancel"]');
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "s"]);
+    await s.waitFor("#output");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved comments-edited.pdf")), "saved notice");
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('.tab-label[aria-current=page] .name')?.textContent")) === "comments-edited.pdf", "copy opened");
+    await s.click("#sb-tab-comments");
+    await s.waitUntil(async () => {
+      const it = await items(s);
+      return it.length === 3 && it[0].includes("Checked by QA") && !it.join(" ").includes("PWCOMMENT");
+    }, "copy lists the changed comments");
+    assert((await unsavedText(s)) === "", "nothing unsaved after saving");
+  });
+  assert(sha(src) === before, "source unchanged");
+  if (CLI) {
+    const list = execFileSync(CLI, ["annotations", out], { encoding: "utf8" });
+    assert(!list.includes("PWCOMMENT") && list.includes("Checked by QA") && list.includes("3 annotation(s)"), `CLI listing:\n${list}`);
+  }
+});
+
 /* ------------------------------------------------------------------ */
 const summary = {
   app: APP,

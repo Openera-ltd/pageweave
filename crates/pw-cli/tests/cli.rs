@@ -966,3 +966,36 @@ fn labels_set_and_remove() {
         .expect("run");
     assert_eq!(r.status.code(), Some(2), "page 0 is invalid input");
 }
+
+#[test]
+fn annotations_list_delete_and_retext() {
+    let r = bin().args(["annotations"]).arg(fixture("hidden-info.pdf")).output().expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let out = String::from_utf8_lossy(&r.stdout);
+    assert!(
+        out.contains("page 1  #0   Text") && out.contains("Reviewer note PWCOMMENT") && out.contains("4 annotation(s)"),
+        "{out}"
+    );
+    let dir = tempfile::tempdir().expect("tmp");
+    let copy = dir.path().join("c.pdf");
+    let r = bin()
+        .args(["annotations", "--delete", "1:0:Text", "--set-text", "1:2:Highlight=Seen", "-o"])
+        .arg(&copy)
+        .arg(fixture("hidden-info.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let r = bin().args(["annotations"]).arg(&copy).output().expect("run");
+    let out = String::from_utf8_lossy(&r.stdout);
+    assert!(
+        !out.contains("PWCOMMENT") && out.contains("Highlight       Seen") && out.contains("3 annotation(s)"),
+        "{out}"
+    );
+    let r = bin()
+        .args(["annotations", "--delete", "1:0", "-o"])
+        .arg(dir.path().join("x.pdf"))
+        .arg(fixture("hidden-info.pdf"))
+        .output()
+        .expect("run");
+    assert_eq!(r.status.code(), Some(2), "missing type is invalid input");
+}

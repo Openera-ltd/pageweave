@@ -9,6 +9,7 @@
 //! PDFium functions directly (pdfium-render does not expose its form-fill handle) under the same lock.
 
 mod accessibility;
+mod annots;
 mod attachments;
 mod blank;
 mod compare;
@@ -39,6 +40,7 @@ mod signatures;
 mod unprotect;
 
 pub use accessibility::{check_accessibility, AccessibilityCheck, AccessibilityReport, CheckStatus};
+pub use annots::{list_annotations, AnnotationList, ExistingAnnotation};
 pub use attachments::{add_attachments, clean_name, extract_attachment, list_attachments, AttachmentInfo};
 pub use blank::{find_blank_pages, PageInk};
 pub use compare::{compare, ChangeKind, CompareReport, PairStatus, MAX_COMPARE_PAGES};

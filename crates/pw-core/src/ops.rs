@@ -30,6 +30,24 @@ pub enum SplitMode {
     MaxSize { max_bytes: u64 },
 }
 
+/// A change to an annotation already in the file, found by page and position in the page's
+/// annotation list (as `list_annotations` reports it). `subtype` must still match, so a stale
+/// listing can't change the wrong annotation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AnnotationChange {
+    pub page: u32,
+    pub index: u32,
+    pub subtype: String,
+    /// Remove the annotation (and its pop-up).
+    #[serde(default)]
+    pub delete: bool,
+    /// New comment text (not for text boxes, whose text is drawn on the page).
+    #[serde(default)]
+    pub text: Option<String>,
+}
+
+pub const MAX_ANNOTATION_CHANGES: usize = 10_000;
+
 /// Numbering style of a page label range (PDF 32000-1 §12.4.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -874,7 +892,15 @@ pub enum Operation {
         /// Changes to existing text and pictures (applied first).
         #[serde(default)]
         object_edits: Vec<PageEdits>,
+        /// Deletions of and text changes to annotations already in the file (applied before
+        /// everything else).
+        #[serde(default)]
+        annotation_changes: Vec<AnnotationChange>,
         output: PathBuf,
+    },
+    /// The annotations (comments, highlights, notes, shapes …) already in the file (read-only).
+    ListAnnotations {
+        input: PathBuf,
     },
 }
 
@@ -896,6 +922,7 @@ pub const OPERATION_IDS: &[&str] = &[
     "read_form_data",
     "import_form_data",
     "apply_edits",
+    "list_annotations",
     "organize_pages",
     "stamp_text",
     "export_images",
@@ -950,6 +977,7 @@ impl Operation {
             Operation::ReadFormData { .. } => "read_form_data",
             Operation::ImportFormData { .. } => "import_form_data",
             Operation::ApplyEdits { .. } => "apply_edits",
+            Operation::ListAnnotations { .. } => "list_annotations",
             Operation::OrganizePages { .. } => "organize_pages",
             Operation::StampText { .. } => "stamp_text",
             Operation::ExportImages { .. } => "export_images",
@@ -995,6 +1023,7 @@ impl Operation {
                 | Operation::ReadFormData { .. }
                 | Operation::FindPatterns { .. }
                 | Operation::CheckAccessibility { .. }
+                | Operation::ListAnnotations { .. }
                 | Operation::ExtractText { .. }
                 | Operation::Search { .. }
                 | Operation::RedactionPreview { .. }
@@ -1040,6 +1069,7 @@ impl Operation {
             | Operation::RedactionPreview { input, .. }
             | Operation::FindPatterns { input, .. }
             | Operation::CheckAccessibility { input }
+            | Operation::ListAnnotations { input }
             | Operation::OcrPages { input, .. }
             | Operation::Protect { input, .. }
             | Operation::Unprotect { input, .. }
@@ -1084,6 +1114,7 @@ impl Operation {
             | Operation::ReadFormData { .. }
             | Operation::FindPatterns { .. }
             | Operation::CheckAccessibility { .. }
+            | Operation::ListAnnotations { .. }
             | Operation::ExtractText { .. }
             | Operation::Search { .. }
             | Operation::RedactionPreview { .. }
@@ -1468,9 +1499,34 @@ impl Operation {
                     return Err(PwError::invalid("ocr.dpi", "Choose a recognition resolution from 100 to 400 dpi."));
                 }
             }
-            Operation::ApplyEdits { form_values, annotations, object_edits, .. } => {
-                if form_values.is_empty() && annotations.is_empty() && object_edits.iter().all(|p| p.edits.is_empty()) {
+            Operation::ApplyEdits { form_values, annotations, object_edits, annotation_changes, .. } => {
+                if form_values.is_empty()
+                    && annotations.is_empty()
+                    && annotation_changes.is_empty()
+                    && object_edits.iter().all(|p| p.edits.is_empty())
+                {
                     return Err(PwError::invalid("edits.empty", "There are no changes to save."));
+                }
+                if annotation_changes.len() > MAX_ANNOTATION_CHANGES {
+                    return Err(PwError::invalid("annotation.too_many", "Too many annotation changes in one request."));
+                }
+                let mut seen = std::collections::HashSet::new();
+                for c in annotation_changes {
+                    if !c.delete && c.text.is_none() {
+                        return Err(PwError::invalid(
+                            "annotation.no_change",
+                            "An annotation change has nothing to change.",
+                        ));
+                    }
+                    if c.text.as_ref().is_some_and(|t| t.chars().count() > MAX_NOTE_CHARS) {
+                        return Err(PwError::invalid("annotation.too_long", "A comment is too long."));
+                    }
+                    if !seen.insert((c.page, c.index)) {
+                        return Err(PwError::invalid(
+                            "annotation.duplicate",
+                            "An annotation is changed twice in one request.",
+                        ));
+                    }
                 }
                 if object_edits.iter().any(|p| !p.edits.is_empty()) {
                     validate_page_edits(object_edits)?;
@@ -1803,6 +1859,7 @@ mod tests {
                 form_values,
                 annotations,
                 object_edits: vec![],
+                annotation_changes: vec![],
                 output: "o".into(),
             })
             .validate()

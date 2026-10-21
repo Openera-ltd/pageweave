@@ -39,7 +39,7 @@ Known limitations (selection):
 - Combining PDFs does not carry over bookmarks or document metadata (the app says so).
 - Outputs made by extract/delete/split/combine from a password-protected PDF are **not** protected (the app warns); rotate keeps the protection.
 - Editing text: each line is edited on its own (no paragraph reflow); letters missing from an embedded subset font switch the line to a standard font (the app warns); text in scripts the font cannot draw is refused; turned or slanted text cannot be edited yet; pictures have no resize handles.
-- Annotations: fixed colours, no editing/moving/deleting of individual or existing annotations yet (undo covers unsaved ones); not saved back into the original file by design.
+- Annotations: fixed colours for new ones; existing comments and markup can be deleted or have their comment text changed (Comments panel), not moved, resized or recoloured yet; text boxes' own text can't be edited; a deleted annotation stays visible on the page until the saved copy is opened; changes are never saved back into the original file by design.
 - Forms: no form authoring, field validation scripts, calculation order, signatures or XFA filling (XFA is detected and reported). Native input undo only for field edits; Clear form empties text fields and checkboxes but cannot empty choice lists or radio groups, and there is no reset to default values yet. Form data: FDF files are not read yet (refused with a message); a list box takes one value per import; rich-text values and clearing a radio choice are reported as not used.
 - Redaction: bookmarks, document properties, attachments and fillable fields are not carried over to the redacted copy; a page whose content cannot be removed precisely (grouped content or unreadable text crossing an area) becomes an image of the page (the app says which); drawings only partly under an area (e.g. backgrounds) are covered but kept; pattern search finds e-mail addresses, phone numbers, card numbers (Luhn-checked), IBANs (checksum-checked), US SSNs and custom regular expressions in the text layer only — scanned text must be recognized first, and every match should be reviewed (look-alikes and unusual formats are possible).
 - OCR: accuracy measured on synthetic English/Latin pages only; the text layer carries Latin characters; no handwriting, layout or table structure; Windows speed not yet measured.
@@ -102,6 +102,7 @@ pageweave compare report-v1.pdf report-v2.pdf          # page, text, format and 
 pageweave split --by-bookmarks 1 --out-dir chapters/ book.pdf   # or --max-size 10MB
 pageweave form-export -o answers.xfdf form.pdf             # or answers.json / --format json
 pageweave form-import --preview form.pdf answers.xfdf   # which fields it fills; -o filled.pdf to fill
+pageweave annotations report.pdf                       # list comments; --delete 1:0:Text / --set-text 1:2:Highlight=OK -o copy.pdf
 pageweave labels --range 1:roman-lower --range 5:decimal -o book-labelled.pdf book.pdf
 pageweave accessibility report.pdf                     # automated checks + what to review by hand
 pageweave patterns --kinds email,phone,card,iban,ssn report.pdf   # sensitive text with positions

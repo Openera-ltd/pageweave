@@ -59,6 +59,18 @@ enum Command {
     Inspect { file: PathBuf },
     /// List form fields (names, kinds, values, options) as JSON.
     Fields { file: PathBuf },
+    /// List the comments and markup already in a file, or change them in a new file (-o):
+    /// --delete PAGE:INDEX:TYPE removes one (with its pop-up); --set-text PAGE:INDEX:TYPE=TEXT
+    /// changes its comment. PAGE is 1-based; INDEX and TYPE are as the listing prints them.
+    Annotations {
+        file: PathBuf,
+        #[arg(long, value_name = "PAGE:INDEX:TYPE")]
+        delete: Vec<String>,
+        #[arg(long, value_name = "PAGE:INDEX:TYPE=TEXT")]
+        set_text: Vec<String>,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
     /// Set page labels (the numbers readers show) in a new file: --range PAGE:STYLE[:FIRST[:PREFIX]]
     /// per range, e.g. --range 1:roman-lower --range 5:decimal --range 17:decimal:1:A-; styles:
     /// decimal, roman-upper, roman-lower, letters-upper, letters-lower, none. --remove clears them.
@@ -490,6 +502,16 @@ enum Command {
     },
 }
 
+/// "1:0:Text" → (0-based page, index, subtype).
+fn parse_annot_ref(s: &str) -> Result<(u32, u32, String), PwError> {
+    let bad = || PwError::invalid("annotations.syntax", format!("“{s}”: use PAGE:INDEX:TYPE, e.g. 1:0:Text."));
+    let mut p = s.splitn(3, ':');
+    let page: u32 = p.next().and_then(|x| x.trim().parse().ok()).filter(|x| *x >= 1).ok_or_else(bad)?;
+    let index: u32 = p.next().and_then(|x| x.trim().parse().ok()).ok_or_else(bad)?;
+    let subtype = p.next().map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).ok_or_else(bad)?;
+    Ok((page - 1, index, subtype))
+}
+
 /// "5:roman-lower", "17:decimal:1:A-" → a label range (pages 1-based on the command line).
 fn parse_label_range(s: &str) -> Result<pw_core::ops::PageLabelRange, PwError> {
     use pw_core::ops::LabelStyle as L;
@@ -560,6 +582,41 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
         }
         Command::Inspect { file } => Operation::Inspect { input: file.clone() },
         Command::Fields { file } => Operation::FormFields { input: file.clone() },
+        Command::Annotations { file, delete, set_text, output } => {
+            if delete.is_empty() && set_text.is_empty() {
+                Operation::ListAnnotations { input: file.clone() }
+            } else {
+                let out = output
+                    .clone()
+                    .ok_or_else(|| PwError::invalid("annotations.output", "Give -o for the changed copy."))?;
+                let mut changes = Vec::new();
+                for d in delete {
+                    let (page, index, subtype) = parse_annot_ref(d)?;
+                    changes.push(pw_core::ops::AnnotationChange { page, index, subtype, delete: true, text: None });
+                }
+                for t in set_text {
+                    let (r, text) = t.split_once('=').ok_or_else(|| {
+                        PwError::invalid("annotations.syntax", format!("“{t}”: use PAGE:INDEX:TYPE=TEXT."))
+                    })?;
+                    let (page, index, subtype) = parse_annot_ref(r)?;
+                    changes.push(pw_core::ops::AnnotationChange {
+                        page,
+                        index,
+                        subtype,
+                        delete: false,
+                        text: Some(text.to_string()),
+                    });
+                }
+                Operation::ApplyEdits {
+                    input: file.clone(),
+                    form_values: vec![],
+                    annotations: vec![],
+                    object_edits: vec![],
+                    annotation_changes: changes,
+                    output: out,
+                }
+            }
+        }
         Command::Labels { file, ranges, remove: _, output } => Operation::SetPageLabels {
             input: file.clone(),
             ranges: ranges.iter().map(|r| parse_label_range(r)).collect::<Result<_, _>>()?,
@@ -1099,6 +1156,20 @@ fn print_human(r: &OperationResult) {
                     a["annotations"]
                 );
             }
+        }
+        "list_annotations" => {
+            let list = r.data["annotations"].as_array().cloned().unwrap_or_default();
+            for a in &list {
+                let who = a["author"].as_str().map(|w| format!(" — {w}")).unwrap_or_default();
+                println!(
+                    "page {}  #{:<3} {:<15} {}{who}",
+                    a["page"].as_u64().unwrap_or(0) + 1,
+                    a["index"].as_u64().unwrap_or(0),
+                    a["subtype"].as_str().unwrap_or(""),
+                    a["text"].as_str().unwrap_or("")
+                );
+            }
+            println!("{} annotation(s)", list.len());
         }
         "check_accessibility" => {
             for c in r.data["checks"].as_array().into_iter().flatten() {

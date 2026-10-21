@@ -155,6 +155,14 @@ async fn list_attachments(state: State<'_, AppState>, doc_id: DocId) -> CmdResul
     .await
 }
 
+/// Comments and markup already in the open document (read-only).
+#[tauri::command]
+async fn list_annotations(state: State<'_, AppState>, doc_id: DocId) -> CmdResult<pw_pdf::AnnotationList> {
+    let doc = state.doc(doc_id)?;
+    blocking(move || pw_pdf::list_annotations(&doc.path, &pw_pdf::OpenOptions { password: doc.password.as_deref() }))
+        .await
+}
+
 /// The open document's digital signatures, checked against the trusted certificates (read-only).
 /// Runs on a worker thread.
 #[tauri::command]
@@ -552,6 +560,7 @@ pub fn run() {
             redaction_preview,
             sanitize_inspect,
             list_attachments,
+            list_annotations,
             verify_signatures,
             trusted_certificates,
             page_objects,

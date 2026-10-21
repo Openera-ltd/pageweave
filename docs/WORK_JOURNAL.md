@@ -255,3 +255,10 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - Ran: fmt, clippy clean; Rust 335 passed; vitest 117; audit 77/77; new E2E scenario passes.
 - CLI `labels --range PAGE:STYLE[:FIRST[:PREFIX]]` / `--remove`; app Pages ▸ Page labels… (editable ranges, live preview, invalid ranges explained, Remove labels when present); thumbnails already showed labels. First screenshot showed unbalanced columns → fixed widths.
 - **Pre-existing safety bug fixed:** saving text/picture edits together with form values or new annotations ran the last stage on a staged copy and protected only that copy, so typing the original's own path and choosing Replace overwrote the source (contrary to "originals are never changed"). The final write now protects the original too; regression test `combined_edits_never_replace_the_source_even_with_replace` failed before the fix.
+
+## 2026-10-21 — Session 2, checkpoint 7: existing comments (list, delete, change text)
+- `list_annotations` (read-only) and `apply_edits.annotation_changes` (stage 1 of the save, lopdf rewrite): delete (with its pop-up) or change the comment text of annotations already in the file, addressed by page + position + subtype (a stale listing is refused). Verified before use: lopdf re-read of touched pages (subtypes in order, new texts), PDFium annotation counts, render equality of page content.
+- Save path restructured into stages (annotation changes → content edits → form values/new annotations), each staged next to the output and removed afterwards; the original protected at every stage.
+- **Pre-existing bug fixed:** closing a tab asked first only for unsaved annotations and form edits; unsaved text/picture edits were closed without asking. Now every kind of unsaved change asks (E2E covers comment changes).
+- CLI `annotations` (list, `--delete PAGE:INDEX:TYPE`, `--set-text PAGE:INDEX:TYPE=TEXT`); app Sidebar ▸ Comments.
+- Ran: fmt, clippy clean; Rust 340 passed; vitest 121; audit 77/77; Linux real-app E2E full suite 73/73.

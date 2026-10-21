@@ -198,6 +198,7 @@ fn object_edits_save_together_with_annotations() {
             page: 0,
             edits: vec![text_edit(&run(&l, "Invoice").objects, "Invoice 2026 total sum")],
         }],
+        annotation_changes: vec![],
         output: out.clone(),
     });
     let r = execute(&req, None).expect("apply");
@@ -254,6 +255,7 @@ fn a_save_with_only_object_edits_is_valid_and_applies() {
             page: 0,
             edits: vec![PageEdit::DeleteObjects { objects: vec![l.images[0].object] }],
         }],
+        annotation_changes: vec![],
         output: out.clone(),
     });
     req.validate().expect("valid");
@@ -264,6 +266,7 @@ fn a_save_with_only_object_edits_is_valid_and_applies() {
         form_values: vec![],
         annotations: vec![],
         object_edits: vec![PageEdits { page: 0, edits: vec![] }],
+        annotation_changes: vec![],
         output: out,
     });
     assert_eq!(empty.validate().expect_err("empty").code, "edits.empty");
@@ -293,6 +296,7 @@ fn combined_edits_never_replace_the_source_even_with_replace() {
             page: 0,
             edits: vec![text_edit(&run(&l, "Invoice").objects, "Invoice 2026 total sum")],
         }],
+        annotation_changes: vec![],
         output: src.clone(),
     });
     req.collision = pw_core::output::CollisionPolicy::Replace;
