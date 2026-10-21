@@ -114,6 +114,42 @@ fn sha256_file(p: &Path) -> PwResult<String> {
     Ok(Sha256::digest(&bytes).iter().map(|b| format!("{b:02x}")).collect())
 }
 
+/// One installed resource file checked against the pinned lock.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FileCheck {
+    pub name: String,
+    /// `None` when the file is missing; otherwise whether its SHA-256 matches the lock.
+    pub matches: Option<bool>,
+    pub bytes: u64,
+}
+
+/// Check every file text recognition needs in `dir` (models, dictionary and the runtime library)
+/// against the pinned SHA-256 values. Reads each file once; loads nothing.
+pub fn check_files(dir: &Path) -> PwResult<Vec<FileCheck>> {
+    let plat = if cfg!(windows) { "win-x64" } else { "linux-x64" };
+    let lock: serde_json::Value = serde_json::from_str(LOCK)
+        .map_err(|_| PwError::internal("ocr.lock", "The OCR resource lock is unreadable."))?;
+    let runtime_sha = lock["onnxruntime"]["artifacts"][plat]["library_sha256"].as_str().map(str::to_string);
+    let mut want: Vec<(String, Option<String>)> =
+        pinned()?.into_iter().map(|(sha, name)| (name.to_string(), Some(sha))).collect();
+    want.push((RUNTIME_FILE.to_string(), runtime_sha));
+    let mut out = Vec::with_capacity(want.len());
+    for (name, sha) in want {
+        let p = dir.join(&name);
+        let Ok(meta) = std::fs::metadata(&p) else {
+            out.push(FileCheck { name, matches: None, bytes: 0 });
+            continue;
+        };
+        let matches = match sha {
+            Some(sha) => sha256_file(&p)? == sha,
+            // No pinned hash for this platform: present is all that can be said.
+            None => true,
+        };
+        out.push(FileCheck { name, matches: Some(matches), bytes: meta.len() });
+    }
+    Ok(out)
+}
+
 /// Locate the OCR resource directory: `ocr/` next to the executable (or under `resources/`). The
 /// `PAGEWEAVE_OCR_DIR` override and the development install (third_party/ocr/<platform>) are honoured
 /// only in debug builds, so a packaged app never loads the runtime library from an

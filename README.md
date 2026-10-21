@@ -105,6 +105,7 @@ pageweave form-export -o answers.xfdf form.pdf             # or answers.json / -
 pageweave form-import --preview form.pdf answers.xfdf   # which fields it fills; -o filled.pdf to fill
 pageweave annotations report.pdf                       # list comments; --delete 1:0:Text / --set-text 1:2:Highlight=OK -o copy.pdf
 pageweave labels --range 1:roman-lower --range 5:decimal -o book-labelled.pdf book.pdf
+pageweave resources                                    # installed engine and OCR files verified against pinned checksums
 pageweave accessibility report.pdf                     # automated checks + what to review by hand
 pageweave patterns --kinds email,phone,card,iban,ssn report.pdf   # sensitive text with positions
 pageweave sanitize --inspect report.pdf

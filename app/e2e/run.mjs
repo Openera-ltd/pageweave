@@ -2563,6 +2563,21 @@ await test("batch: reduce size of the open files into a folder, again with exist
   assert(leftovers.length === 0, `no partial files left: ${leftovers}`);
 });
 
+await test("settings ▸ resources: PDF engine and text recognition verified against their checksums; check again", async () => {
+  await withApp([], async (s) => {
+    await s.keys(["Control", ","]);
+    await s.waitFor("#tab-resources");
+    await s.click("#tab-resources");
+    const states = () => s.exec("return [...document.querySelectorAll('[data-testid=resources-list] li')].map(l => l.dataset.resource + ':' + l.dataset.state)");
+    await s.waitUntil(async () => JSON.stringify(await states()) === JSON.stringify(["pdf_engine:ready", "text_recognition:ready"]), "both ready", 30000);
+    const text = await s.text('[data-testid="resources-list"]');
+    assert(!/\.onnx|\.dll|\.so|onnxruntime|pdfium/i.test(text), `no technical file or model names in the UI: ${text}`);
+    await s.click('[data-testid="resources-check"]');
+    await s.waitUntil(async () => (await s.text('[data-testid="resources-check"]')) === "Check again", "check finished", 30000);
+    await axeCheck(s, "settings-resources");
+  });
+});
+
 /* ------------------------------------------------------------------ */
 const summary = {
   app: APP,

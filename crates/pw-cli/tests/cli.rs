@@ -999,3 +999,17 @@ fn annotations_list_delete_and_retext() {
         .expect("run");
     assert_eq!(r.status.code(), Some(2), "missing type is invalid input");
 }
+
+#[test]
+fn resources_reports_each_capability() {
+    let r = bin().args(["--json", "resources"]).output().expect("run");
+    let v = json(&r);
+    let caps = v["result"]["capabilities"].as_array().expect("caps");
+    assert_eq!(caps[0]["id"], "pdf_engine");
+    assert_eq!(caps[0]["state"], "ready", "{v}");
+    assert_eq!(caps[1]["id"], "text_recognition");
+    let ready = v["result"]["all_ready"] == true;
+    assert_eq!(r.status.success(), ready, "exit code follows readiness");
+    let human = bin().arg("resources").output().expect("run");
+    assert!(String::from_utf8_lossy(&human.stdout).contains("READY    PDF engine: Installed and verified."));
+}

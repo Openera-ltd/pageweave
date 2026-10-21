@@ -129,6 +129,10 @@ def main() -> int:
         if not (staging / art["library"]).is_file():
             print(f"error: archive missing {art['library']}", file=sys.stderr)
             return 5
+        lib_sha = sha256_file(staging / art["library"])
+        if "library_sha256" in art and lib_sha != art["library_sha256"]:
+            print(f"error: extracted library checksum mismatch (expected {art['library_sha256']}, got {lib_sha})", file=sys.stderr)
+            return 4
         (staging / ".verified-sha256").write_text(art["sha256"])
         try:
             old = None

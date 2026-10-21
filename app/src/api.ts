@@ -11,6 +11,7 @@ import type {
   AppInfo,
   AttachmentInfo,
   ExistingAnnotation,
+  ResourceReport,
   AreaPreview,
   JobSnapshot,
   RedactArea,
@@ -72,6 +73,8 @@ export interface Api {
   removeTrustedCertificate(fingerprint: string): Promise<boolean>;
   /** Files embedded in the document (read-only). */
   listAttachments(docId: number): Promise<AttachmentInfo[]>;
+  /** Installed resources checked against their pinned checksums. */
+  resourceStatus(): Promise<ResourceReport>;
   /** Comments and markup already in the document (read-only). */
   listAnnotations(docId: number): Promise<{ annotations: ExistingAnnotation[]; truncated: boolean }>;
   /** JPEG and PNG images. */
@@ -138,6 +141,7 @@ export const tauriApi: Api = {
   sanitizeInspect: (docId) => invoke("sanitize_inspect", { docId }),
   listAttachments: (docId) => invoke("list_attachments", { docId }),
   listAnnotations: (docId) => invoke("list_annotations", { docId }),
+  resourceStatus: () => invoke("resource_status"),
   trustedCertificates: () => invoke("trusted_certificates"),
   pageObjects: (docId, page) => invoke("page_objects", { docId, page }),
   previewPageEdits: (docId, page, edits, scalePermille) => invoke("preview_page_edits", { docId, page, edits, scalePermille }),

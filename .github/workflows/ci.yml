@@ -178,6 +178,9 @@ jobs:
           cp fixtures/pdf/five-pages.pdf "$WORK/in put.pdf"
           cd "$WORK"
           ./app/pageweave.exe --json capabilities
+          # Installed resources match their pinned checksums in the package layout.
+          ./app/pageweave.exe --json resources | tee resources.json
+          python -I -c "import json; d=json.load(open('resources.json', encoding='utf-8')); assert d['ok'] and d['result']['all_ready'], d"
           ./app/pageweave.exe --json inspect "in put.pdf" | tee inspect.json
           python -I -c "import json; d=json.load(open('inspect.json', encoding='utf-8')); assert d['ok'] and d['result']['data']['page_count']==5, d"
           ./app/pageweave.exe extract --pages "2,4" -o "out put.pdf" "in put.pdf"
@@ -191,6 +194,8 @@ jobs:
           mv app/ocr/rec.onnx app/rec.onnx.bak
           set +e; ./app/pageweave.exe ocr --pages 1 -o "x.pdf" "scan ned.pdf"; code=$?; set -e
           test "$code" = 10 || { echo "expected missing-resource exit 10 for OCR, got $code"; exit 1; }
+          set +e; ./app/pageweave.exe resources; code=$?; set -e
+          test "$code" = 10 || { echo "expected resources to report the missing model (exit 10), got $code"; exit 1; }
           mv app/rec.onnx.bak app/ocr/rec.onnx
           rm app/pdfium.dll
           set +e; ./app/pageweave.exe --json inspect "in put.pdf"; code=$?; set -e

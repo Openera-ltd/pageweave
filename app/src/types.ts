@@ -232,6 +232,20 @@ export interface FieldValue {
   value: FormValue;
 }
 
+/** Installed resources (engine `resources::resource_status`). File names are diagnostics only. */
+export interface ResourceReport {
+  all_ready: boolean;
+  capabilities: Array<{
+    id: string;
+    title: string;
+    state: "ready" | "missing" | "damaged";
+    detail: string;
+    bytes: number;
+    location: string | null;
+    files: Array<{ name: string; state: "ready" | "missing" | "damaged"; bytes: number }>;
+  }>;
+}
+
 /** A comment or markup already in the file (engine `list_annotations`). */
 export interface ExistingAnnotation {
   page: number;

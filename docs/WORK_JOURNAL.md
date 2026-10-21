@@ -267,3 +267,9 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - App File ▸ Process several files… (also on the start screen): one action over many PDFs, each file one existing typed job (host queue, bounded workers); names unique within the batch, collision "rename" so existing results are kept; per-file state and reason; Stop the rest cancels queued and running jobs; Close disabled while running.
 - Ran: fmt, clippy clean; vitest 125; audit 78/78; new E2E scenario passes (Rust unchanged).
 - First E2E assumption was wrong (the five-page fixture can be made smaller too) — the app was right; the scenario now checks a repeat run keeps both results, and a component test covers the failure display.
+
+## 2026-10-21 — Session 2, checkpoint 9: resource audit (PRD 18, offline part)
+- Locks now pin the extracted engine libraries (PDFium, ONNX Runtime) per platform as well as the archives; fetch scripts verify them (reinstall checked on Linux; Windows hashes computed from the pinned archives fetched with the same scripts).
+- `pw_pdf::resources::resource_status` (PDF engine found by the engine's own search, OCR files via `pw_ocr::check_files`) → Ready / Missing / Damaged per capability; CLI `resources`; Settings ▸ Resources (no file or model names in the UI, asserted by E2E); Windows packaged-CLI smoke now checks `resources` and its exit 10 with a model removed.
+- Ran: fmt, clippy clean; Rust 344 passed; vitest 125; license check ok; new E2E scenario passes.
+- Not built: download / resume / repair inside the app. Decision needed (owner): PRD 18 asks for in-app downloads, while the README states the app makes no network requests; installers currently ship all resources and repair means reinstalling.

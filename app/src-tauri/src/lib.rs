@@ -155,6 +155,12 @@ async fn list_attachments(state: State<'_, AppState>, doc_id: DocId) -> CmdResul
     .await
 }
 
+/// Installed resources checked against their pinned checksums (read-only; reads ~60 MB once).
+#[tauri::command]
+async fn resource_status() -> CmdResult<pw_pdf::resources::ResourceReport> {
+    blocking(pw_pdf::resources::resource_status).await
+}
+
 /// Comments and markup already in the open document (read-only).
 #[tauri::command]
 async fn list_annotations(state: State<'_, AppState>, doc_id: DocId) -> CmdResult<pw_pdf::AnnotationList> {
@@ -561,6 +567,7 @@ pub fn run() {
             sanitize_inspect,
             list_attachments,
             list_annotations,
+            resource_status,
             verify_signatures,
             trusted_certificates,
             page_objects,

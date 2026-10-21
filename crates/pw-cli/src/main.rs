@@ -487,6 +487,9 @@ enum Command {
     Run { request: PathBuf },
     /// List the operations this build supports.
     Capabilities,
+    /// Check the installed resources (PDF engine, text recognition) against their pinned checksums.
+    /// Exits 0 when everything is ready and 10 when something is missing or damaged.
+    Resources,
     /// Serve PageWeave's tools to an AI agent over MCP (stdio). Files only inside the --root
     /// folders; tools that create files only with --allow-write; existing files are never replaced.
     Mcp {
@@ -567,7 +570,7 @@ fn capabilities() -> serde_json::Value {
 
 fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
     let op = match &cli.command {
-        Command::Capabilities | Command::Mcp { .. } => return Ok(None),
+        Command::Capabilities | Command::Mcp { .. } | Command::Resources => return Ok(None),
         Command::Run { request } => {
             let text = if request.as_os_str() == "-" {
                 let mut s = String::new();
@@ -1265,6 +1268,40 @@ fn run() -> ExitCode {
         let cfg = pw_mcp::Config { roots, allow_write: *allow_write, workers: *workers as usize };
         pw_mcp::serve(cfg, std::io::stdin().lock(), std::io::stdout());
         return ExitCode::SUCCESS;
+    }
+    if let Command::Resources = &cli.command {
+        return match pw_pdf::resources::resource_status() {
+            Ok(r) => {
+                if cli.json {
+                    println!("{}", json!({"ok": true, "result": r}));
+                } else {
+                    for c in &r.capabilities {
+                        let state = match c.state {
+                            pw_pdf::resources::ResourceState::Ready => "READY",
+                            pw_pdf::resources::ResourceState::Missing => "MISSING",
+                            pw_pdf::resources::ResourceState::Damaged => "DAMAGED",
+                        };
+                        println!("{state:<8} {}: {} ({} bytes)", c.title, c.detail, c.bytes);
+                    }
+                }
+                use pw_pdf::resources::ResourceState as S;
+                let worst = r.capabilities.iter().map(|c| c.state).fold(S::Ready, |a, b| match (a, b) {
+                    (S::Damaged, _) | (_, S::Damaged) => S::Damaged,
+                    (S::Missing, _) | (_, S::Missing) => S::Missing,
+                    _ => S::Ready,
+                });
+                let cat = match worst {
+                    S::Ready => return ExitCode::SUCCESS,
+                    S::Missing => pw_core::ErrorCategory::MissingResource,
+                    S::Damaged => pw_core::ErrorCategory::CorruptResource,
+                };
+                ExitCode::from(cat.exit_code().clamp(2, 255) as u8)
+            }
+            Err(e) => {
+                eprintln!("error: {}", e.message);
+                ExitCode::from(e.category.exit_code().clamp(2, 255) as u8)
+            }
+        };
     }
     let outcome = (|| -> Result<serde_json::Value, PwError> {
         let Some(mut req) = build_request(&cli)? else {

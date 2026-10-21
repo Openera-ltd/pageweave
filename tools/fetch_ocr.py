@@ -134,6 +134,10 @@ def main() -> int:
             print(f"error: unsafe or corrupt runtime archive: {e}", file=sys.stderr)
             return 5
         archive.unlink()
+        lib_sha = sha256_file(staging / art["library"])
+        if "library_sha256" in art and lib_sha != art["library_sha256"]:
+            print(f"error: extracted runtime checksum mismatch (expected {art['library_sha256']}, got {lib_sha})", file=sys.stderr)
+            return 4
         for name, f in models["files"].items():
             target = staging / name
             try:

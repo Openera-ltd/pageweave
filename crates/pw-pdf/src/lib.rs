@@ -34,6 +34,7 @@ mod patterns;
 mod properties;
 mod protect;
 mod redact;
+pub mod resources;
 mod sanitize;
 mod sign;
 mod signatures;
