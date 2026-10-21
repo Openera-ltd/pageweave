@@ -38,12 +38,37 @@ enum Conflict {
     Replace,
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+enum DataFormat {
+    Xfdf,
+    Json,
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Show page count, sizes, metadata, bookmarks and security status.
     Inspect { file: PathBuf },
     /// List form fields (names, kinds, values, options) as JSON.
     Fields { file: PathBuf },
+    /// Save the form's field values as a form data file: XFDF (default), or JSON with --format json
+    /// or an output name ending in .json.
+    FormExport {
+        file: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        #[arg(long, value_enum)]
+        format: Option<DataFormat>,
+    },
+    /// Fill the form from an XFDF or JSON form data file into a new file (-o), or show how the file
+    /// matches the form without filling anything (--preview).
+    FormImport {
+        file: PathBuf,
+        data: PathBuf,
+        #[arg(short, long, required_unless_present = "preview")]
+        output: Option<PathBuf>,
+        #[arg(long, conflicts_with = "output")]
+        preview: bool,
+    },
     /// Print the text of all or selected pages, or save it as a UTF-8 text file with -o.
     Text {
         file: PathBuf,
@@ -436,6 +461,21 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
         }
         Command::Inspect { file } => Operation::Inspect { input: file.clone() },
         Command::Fields { file } => Operation::FormFields { input: file.clone() },
+        Command::FormExport { file, output, format } => {
+            use pw_core::formdata::FormDataFormat as F;
+            let by_name = output.extension().is_some_and(|e| e.eq_ignore_ascii_case("json"));
+            let format = match format {
+                Some(DataFormat::Json) => F::Json,
+                Some(DataFormat::Xfdf) => F::Xfdf,
+                None if by_name => F::Json,
+                None => F::Xfdf,
+            };
+            Operation::ExportFormData { input: file.clone(), format, values: vec![], output: output.clone() }
+        }
+        Command::FormImport { file, data, output: Some(out), preview: false } => {
+            Operation::ImportFormData { input: file.clone(), data: data.clone(), output: out.clone() }
+        }
+        Command::FormImport { file, data, .. } => Operation::ReadFormData { input: file.clone(), data: data.clone() },
         Command::Text { file, pages, output: None } => {
             Operation::ExtractText { input: file.clone(), pages: pages.clone() }
         }

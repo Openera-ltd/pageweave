@@ -516,6 +516,27 @@ pub enum Operation {
         values: Vec<FieldValue>,
         output: PathBuf,
     },
+    /// Save the form's field values as an XFDF or JSON form data file. `values` are unsaved changes
+    /// to write instead of what the document holds (the app's pending edits).
+    ExportFormData {
+        input: PathBuf,
+        format: crate::formdata::FormDataFormat,
+        #[serde(default)]
+        values: Vec<FieldValue>,
+        output: PathBuf,
+    },
+    /// How the values in a form data file match the document's fields (read-only; shown before
+    /// anything is filled).
+    ReadFormData {
+        input: PathBuf,
+        data: PathBuf,
+    },
+    /// Fill the form from a form data file into a new verified file.
+    ImportFormData {
+        input: PathBuf,
+        data: PathBuf,
+        output: PathBuf,
+    },
     /// Build a new file from pages in a chosen order: reorder, duplicate, drop, rotate, and insert
     /// pages from other files in one step.
     OrganizePages {
@@ -783,6 +804,9 @@ pub const OPERATION_IDS: &[&str] = &[
     "split",
     "annotate",
     "fill_form",
+    "export_form_data",
+    "read_form_data",
+    "import_form_data",
     "apply_edits",
     "organize_pages",
     "stamp_text",
@@ -831,6 +855,9 @@ impl Operation {
             Operation::Split { .. } => "split",
             Operation::Annotate { .. } => "annotate",
             Operation::FillForm { .. } => "fill_form",
+            Operation::ExportFormData { .. } => "export_form_data",
+            Operation::ReadFormData { .. } => "read_form_data",
+            Operation::ImportFormData { .. } => "import_form_data",
             Operation::ApplyEdits { .. } => "apply_edits",
             Operation::OrganizePages { .. } => "organize_pages",
             Operation::StampText { .. } => "stamp_text",
@@ -871,6 +898,7 @@ impl Operation {
             self,
             Operation::Inspect { .. }
                 | Operation::FormFields { .. }
+                | Operation::ReadFormData { .. }
                 | Operation::ExtractText { .. }
                 | Operation::Search { .. }
                 | Operation::RedactionPreview { .. }
@@ -888,6 +916,10 @@ impl Operation {
         match self {
             Operation::Merge { inputs, .. } | Operation::ImagesToPdf { inputs, .. } => inputs.clone(),
             Operation::Compare { old, new } => vec![old.clone(), new.clone()],
+            // The data file is an input too: never overwritten by the output.
+            Operation::ReadFormData { input, data } | Operation::ImportFormData { input, data, .. } => {
+                vec![input.clone(), data.clone()]
+            }
             // Files being attached are inputs too: never overwritten by the output.
             Operation::AddAttachments { input, files, .. } => {
                 std::iter::once(input.clone()).chain(files.iter().cloned()).collect()
@@ -906,6 +938,7 @@ impl Operation {
             | Operation::Split { input, .. }
             | Operation::Annotate { input, .. }
             | Operation::FillForm { input, .. }
+            | Operation::ExportFormData { input, .. }
             | Operation::StampText { input, .. }
             | Operation::ExportImages { input, .. }
             | Operation::RedactionPreview { input, .. }
@@ -949,6 +982,7 @@ impl Operation {
         match self {
             Operation::Inspect { .. }
             | Operation::FormFields { .. }
+            | Operation::ReadFormData { .. }
             | Operation::ExtractText { .. }
             | Operation::Search { .. }
             | Operation::RedactionPreview { .. }
@@ -968,6 +1002,8 @@ impl Operation {
             | Operation::RotatePages { output, .. }
             | Operation::Annotate { output, .. }
             | Operation::FillForm { output, .. }
+            | Operation::ExportFormData { output, .. }
+            | Operation::ImportFormData { output, .. }
             | Operation::ApplyEdits { output, .. }
             | Operation::OrganizePages { output, .. }
             | Operation::Redact { output, .. }
@@ -1040,6 +1076,8 @@ impl Operation {
             }
             Operation::Annotate { annotations, .. } => validate_annotations(annotations)?,
             Operation::FillForm { values, .. } => validate_form_values(values)?,
+            // Unsaved values are optional here; when present they follow the same rules.
+            Operation::ExportFormData { values, .. } if !values.is_empty() => validate_form_values(values)?,
             Operation::ExportImages { dpi, .. } => {
                 if !(36..=600).contains(dpi) {
                     return Err(PwError::invalid("export.dpi", "Choose a resolution from 36 to 600 dpi."));

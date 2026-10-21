@@ -15,6 +15,21 @@ fn out(c: &pw_core::output::CommittedOutput, pages: Option<u32>) -> OutputInfo {
     OutputInfo { path: c.path.clone(), bytes: c.bytes, pages }
 }
 
+/// Plain-language notes about entries of a form data file that were not used.
+fn import_notes(m: &crate::formdata::FormDataMatch) -> Vec<String> {
+    let mut notes = Vec::new();
+    if !m.unknown.is_empty() {
+        notes.push(format!("{} name(s) in the file are not fields of this form.", m.unknown.len()));
+    }
+    for s in m.skipped.iter().take(5) {
+        notes.push(format!("“{}” was not filled: {}", s.name, s.reason));
+    }
+    if m.skipped.len() > 5 {
+        notes.push(format!("{} more value(s) were not filled.", m.skipped.len() - 5));
+    }
+    notes
+}
+
 /// Execute a request. `ctx` provides cancellation and progress when run as a job.
 pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<OperationResult> {
     req.validate()?;
@@ -106,6 +121,26 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             let (c, w) = crate::forms::fill_form(input, opts.password, values, output, policy)?;
             warnings.extend(w);
             (vec![out(&c, None)], json!({ "fields": values.len() }))
+        }
+        Operation::ExportFormData { input, format, values, output } => {
+            let (c, n, w) = crate::formdata::export_form_data(input, opts.password, *format, values, output, policy)?;
+            warnings.extend(w);
+            (vec![out(&c, None)], json!({ "fields": n, "format": format }))
+        }
+        Operation::ReadFormData { input, data } => {
+            let m = crate::formdata::read_form_data(input, opts.password, data)?;
+            (vec![], serde_json::to_value(&m).unwrap_or_default())
+        }
+        Operation::ImportFormData { input, data, output } => {
+            let (c, m, w) = crate::formdata::import_form_data(input, opts.password, data, output, policy)?;
+            warnings.extend(w);
+            warnings.extend(import_notes(&m));
+            let filled = m.changes().len();
+            (
+                vec![out(&c, None)],
+                json!({ "filled": filled, "unchanged": m.matched.len() - filled, "skipped": m.skipped,
+                        "unknown": m.unknown }),
+            )
         }
         Operation::OrganizePages { input, extra_inputs, pages, output } => {
             let (c, n, w) = edit::organize_pages(input, &opts, extra_inputs, pages, output, policy, &cancelled)?;

@@ -447,6 +447,8 @@ function FormLayer({ docId, page, zoom, widgets, edits, onEdit }: { docId: numbe
           case "list":
             return (
               <select key={key} className="pw-field" style={style} {...common} size={Math.max(2, Math.min(field.options.length, Math.floor(box.height / (fontSize * 1.3)) || 2))} value={String(value)} onChange={(e) => onEdit(field, e.target.value)}>
+                {/* Without a matching option React would select the first one, showing a choice the document does not have. */}
+                {!field.options.includes(String(value)) && <option value={String(value)} hidden />}
                 {field.options.map((o) => <option key={o} value={o}>{o}</option>)}
               </select>
             );

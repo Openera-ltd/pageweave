@@ -981,6 +981,93 @@ await test("forms: fill text, checkbox, radio, choice and multiline; Ctrl+S save
   }
 });
 
+await test("form data: export XFDF with unsaved values; import JSON with preview, Undo, then save a verified copy", async () => {
+  const src = join(FIX, "form-nested.pdf");
+  const before = sha(src);
+  const dir = mkdtempSync(join(work, "formdata-"));
+  const xfdf = join(dir, "nested.xfdf");
+  const json = join(dir, "in.json");
+  const out = join(dir, "nested-filled.pdf");
+  writeFileSync(json, JSON.stringify({ "applicant.name": "Grace Hopper", "applicant.address.city": "Arlington", colour: "Blue", agree: "Yes", ref_no: "X", not_here: "y" }));
+  const field = (name) => `[data-formlayer="0"] [data-field="${name}"]`;
+  const palette = async (s, text, id) => {
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', text);
+    await s.click(`[role="option"][data-command="${id}"]`);
+  };
+  const values = (s) =>
+    s.exec(`const q = (n) => document.querySelector('[data-formlayer="0"] [data-field="' + n + '"]');
+      return [q('applicant.name').value, q('applicant.address.city').value, q('colour').value, q('agree').checked]`);
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.waitFor(field("applicant.name"));
+    await s.type(field("applicant.name"), "Ada Lovelace");
+    await s.waitUntil(async () => (await unsavedText(s)) === "1 unsaved change", "one unsaved change");
+
+    // Export: XFDF by default, unsaved value included.
+    await s.click('[data-testid="viewer"]');
+    await palette(s, "Export form data", "file.exportFormData");
+    await s.waitFor("#formdata-export-output");
+    assert((await s.exec("return document.querySelector('#formdata-export-output').value")).endsWith("form-nested-data.xfdf"), "default name");
+    assert((await s.text('[data-testid="formdata-export-note"]')) === "Includes 1 unsaved change.", "unsaved values noted");
+    await s.type("#formdata-export-output", xfdf);
+    await axeCheck(s, "export-form-data-dialog");
+    await s.click('[data-testid="formdata-export-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved nested.xfdf") && t.includes("5 field values")), "export notice");
+    const text = readFileSync(xfdf, "utf8");
+    assert(text.includes('<field name="applicant">') && text.includes("<value>Ada Lovelace</value>"), `nested XFDF with the unsaved value:\n${text}`);
+    assert(text.includes("<value>R-1001</value>") && !text.includes("submit"), "read-only value kept, push button left out");
+
+    // Import: preview, fill, Undo.
+    await palette(s, "Import form data", "file.importFormData");
+    await s.waitFor("#formdata-import-path");
+    assert((await s.attr('[data-testid="formdata-import-apply"]', "title")) === "Choose a form data file.", "fill disabled until a file is read");
+    await s.type("#formdata-import-path", json);
+    await s.click('[data-testid="formdata-import-read"]');
+    await s.waitUntil(async () => (await s.text('[data-testid="formdata-import-summary"]')) === "4 fields to fill · 2 not used", "preview summary");
+    await s.click('[data-testid="formdata-import-unused"] summary');
+    await s.waitUntil(() => s.exec("return document.querySelector('[data-testid=formdata-import-unused]').open"), "not-used list opens on click");
+    // WebKitWebDriver's element text leaves out <details> content; read the DOM text.
+    const unused = await s.exec("return document.querySelector('[data-testid=formdata-import-unused]').textContent");
+    const order = await s.exec("return [...document.querySelectorAll('[data-testid=formdata-import-changes] .formdata-name')].map(e => e.textContent)");
+    assert(JSON.stringify(order) === JSON.stringify(["Applicant name", "City", "Colour", "Agree"]), `changes listed in form order: ${JSON.stringify(order)}`);
+    assert(unused.includes("ref_no") && unused.includes("read-only") && unused.includes("not_here"), `not-used list: ${unused}`);
+    await axeCheck(s, "import-form-data-preview");
+    writeFileSync(join(ART, "import-form-data.png"), await s.screenshot());
+    await s.click('[data-testid="formdata-import-apply"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Filled 4 fields from in.json")), "filled notice");
+    const filled = JSON.stringify(["Grace Hopper", "Arlington", "Blue", true]);
+    await s.waitUntil(async () => JSON.stringify(await values(s)) === filled, "controls show the imported values");
+    await s.waitUntil(async () => (await unsavedText(s)) === "4 unsaved changes", "four unsaved changes");
+    await s.click('.notice button[data-action="Undo"]');
+    await s.waitUntil(async () => JSON.stringify(await values(s)) === JSON.stringify(["Ada Lovelace", "", "", false]), "Undo restores the earlier edits");
+    assert((await s.exec("return document.querySelector('[data-formlayer=\"0\"] [data-field=\"colour\"]').selectedOptions[0]?.hidden ?? true")) === true, "list box shows no choice after Undo (none in the document)");
+    await s.waitUntil(async () => (await unsavedText(s)) === "1 unsaved change", "back to one unsaved change");
+
+    // Import again (Enter reads, Enter does not fill a stale preview), then save a copy.
+    await palette(s, "Import form data", "file.importFormData");
+    await s.waitFor("#formdata-import-path");
+    await s.type("#formdata-import-path", json);
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => (await s.text('[data-testid="formdata-import-summary"]')).startsWith("4 fields to fill"), "preview again");
+    await s.click('[data-testid="formdata-import-apply"]');
+    await s.waitUntil(async () => JSON.stringify(await values(s)) === filled, "values imported again");
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "s"]);
+    await s.waitFor("#output");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved nested-filled.pdf")), "saved notice");
+  });
+  assert(sha(src) === before, "source PDF unchanged");
+  assert(existsSync(out), "filled copy exists");
+  if (CLI) {
+    const f = JSON.parse(execFileSync(CLI, ["--json", "fields", out], { encoding: "utf8" })).result.data.fields;
+    const v = Object.fromEntries(f.map((x) => [x.name, x.value]));
+    assert(v["applicant.name"] === "Grace Hopper" && v["applicant.address.city"] === "Arlington" && v.colour === "Blue" && v.agree === "Yes" && v.ref_no === "R-1001", `CLI reads the saved values: ${JSON.stringify(v)}`);
+  }
+});
+
 await test("organize pages: keyboard reorder, rotate, duplicate; saved file verified independently", async () => {
   const out = join(work, "organized.pdf");
   await withApp([join(FIX, "five-pages.pdf")], async (s) => {

@@ -1,0 +1,135 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [6 0 R 13 0 R 15 0 R 18 0 R 20 0 R] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv 4 0 R >> >> >> >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R /Annots [9 0 R 11 0 R 13 0 R 15 0 R 18 0 R 20 0 R] >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Length 203 >>
+stream
+BT
+/F1 12 Tf
+20 TL
+40 740 Td
+(Nested form fixture PWNESTFORM) Tj
+T* () Tj
+T* (Name) Tj
+T* () Tj
+T* (City) Tj
+T* () Tj
+T* (Reference) Tj
+T* () Tj
+T* (Colour) Tj
+T* () Tj
+T* () Tj
+T* () Tj
+T* (Agree) Tj
+ET
+endstream
+endobj
+6 0 obj
+<< /T (applicant) /Kids [9 0 R 7 0 R] >>
+endobj
+7 0 obj
+<< /T (address) /Parent 6 0 R /Kids [11 0 R] >>
+endobj
+8 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 250 20] /Resources << /Font << /Helv 4 0 R >> >> /Length 38 >>
+stream
+0.4 0.4 0.4 RG 1 w 0.5 0.5 249 19 re S
+endstream
+endobj
+9 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Tx /Parent 6 0 R /T (name) /TU (Applicant name) /Rect [150 706 400 726] /F 4 /P 3 0 R /DA (/Helv 12 Tf 0 g) /V () /AP << /N 8 0 R >> >>
+endobj
+10 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 250 20] /Resources << /Font << /Helv 4 0 R >> >> /Length 38 >>
+stream
+0.4 0.4 0.4 RG 1 w 0.5 0.5 249 19 re S
+endstream
+endobj
+11 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Tx /Parent 7 0 R /T (city) /TU (City) /Rect [150 666 400 686] /F 4 /P 3 0 R /DA (/Helv 12 Tf 0 g) /V () /AP << /N 10 0 R >> >>
+endobj
+12 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 150 20] /Resources << /Font << /Helv 4 0 R >> >> /Length 91 >>
+stream
+0.4 0.4 0.4 RG 1 w 0.5 0.5 149 19 re S /Tx BMC BT /Helv 12 Tf 0 g 4 5 Td (R-1001) Tj ET EMC
+endstream
+endobj
+13 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Tx /Ff 1 /T (ref_no) /TU (Reference) /Rect [150 626 300 646] /F 4 /P 3 0 R /DA (/Helv 12 Tf 0 g) /V (R-1001) /AP << /N 12 0 R >> >>
+endobj
+14 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 150 60] /Resources << /Font << /Helv 4 0 R >> >> /Length 38 >>
+stream
+0.4 0.4 0.4 RG 1 w 0.5 0.5 149 59 re S
+endstream
+endobj
+15 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Ch /T (colour) /TU (Colour) /Rect [150 546 300 606] /F 4 /P 3 0 R /Opt [(Red) (Green) (Blue)] /DA (/Helv 12 Tf 0 g) /AP << /N 14 0 R >> >>
+endobj
+16 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 14 14] /Resources << /Font << /Helv 4 0 R >> >> /Length 84 >>
+stream
+0.4 0.4 0.4 RG 1 w 0.5 0.5 13 13 re S 0 0 0 RG 1.5 w 3 3 m 11 11 l S 3 11 m 11 3 l S
+endstream
+endobj
+17 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 14 14] /Resources << /Font << /Helv 4 0 R >> >> /Length 37 >>
+stream
+0.4 0.4 0.4 RG 1 w 0.5 0.5 13 13 re S
+endstream
+endobj
+18 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Btn /T (agree) /TU (Agree) /Rect [150 488 164 502] /F 4 /P 3 0 R /V /Off /AS /Off /AP << /N << /Yes 16 0 R /Off 17 0 R >> >> >>
+endobj
+19 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 80 20] /Resources << /Font << /Helv 4 0 R >> >> /Length 37 >>
+stream
+0.4 0.4 0.4 RG 1 w 0.5 0.5 79 19 re S
+endstream
+endobj
+20 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Btn /Ff 65536 /T (submit) /Rect [150 440 230 460] /F 4 /P 3 0 R /AP << /N 19 0 R >> >>
+endobj
+21 0 obj
+<< /Title (Nested form fixture) /Author (PageWeave fixtures) /Producer (gen_fixtures.py) >>
+endobj
+xref
+0 22
+0000000000 65535 f 
+0000000015 00000 n 
+0000000179 00000 n 
+0000000236 00000 n 
+0000000413 00000 n 
+0000000510 00000 n 
+0000000764 00000 n 
+0000000820 00000 n 
+0000000883 00000 n 
+0000001061 00000 n 
+0000001250 00000 n 
+0000001429 00000 n 
+0000001610 00000 n 
+0000001842 00000 n 
+0000002028 00000 n 
+0000002207 00000 n 
+0000002400 00000 n 
+0000002624 00000 n 
+0000002801 00000 n 
+0000002983 00000 n 
+0000003160 00000 n 
+0000003301 00000 n 
+trailer
+<< /Size 22 /Root 1 0 R /Info 21 0 R /ID [<70616765776561766566697874757265> <70616765776561766566697874757265>] >>
+startxref
+3409
+%%EOF

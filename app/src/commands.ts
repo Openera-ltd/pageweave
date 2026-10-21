@@ -16,6 +16,8 @@ export type CommandId =
   | "file.imagesToPdf"
   | "file.unprotect"
   | "file.sanitize"
+  | "file.exportFormData"
+  | "file.importFormData"
   | "file.reduceSize"
   | "file.compare"
   | "file.print"
@@ -99,6 +101,8 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "file.editProperties", label: "Edit document properties…", category: "File", shortcuts: [] },
   { id: "file.unprotect", label: "Remove password…", category: "File", shortcuts: [] },
   { id: "file.sanitize", label: "Remove hidden information…", category: "File", shortcuts: [] },
+  { id: "file.exportFormData", label: "Export form data…", category: "File", shortcuts: [] },
+  { id: "file.importFormData", label: "Import form data…", category: "File", shortcuts: [] },
   { id: "file.reduceSize", label: "Reduce file size…", category: "File", shortcuts: [] },
   { id: "file.compare", label: "Compare with…", category: "File", shortcuts: [] },
   { id: "file.print", label: "Print…", category: "File", shortcuts: ["Ctrl+P"] },

@@ -235,6 +235,9 @@ export type Operation =
   | { op: "merge"; inputs: string[]; output: string }
   | { op: "split"; input: string; split: SplitMode; output_dir: string }
   | { op: "annotate"; input: string; annotations: AnnotationSpec[]; output: string }
+  | { op: "export_form_data"; input: string; format: "xfdf" | "json"; values: FieldValue[]; output: string }
+  | { op: "read_form_data"; input: string; data: string }
+  | { op: "import_form_data"; input: string; data: string; output: string }
   | { op: "apply_edits"; input: string; form_values: FieldValue[]; annotations: AnnotationSpec[]; object_edits?: Array<{ page: number; edits: PageEdit[] }>; output: string }
   | {
       op: "stamp_text";

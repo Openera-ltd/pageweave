@@ -3708,6 +3708,7 @@ dependencies = [
 name = "pw-core"
 version = "0.1.0"
 dependencies = [
+ "quick-xml",
  "serde",
  "serde_json",
  "sha2 0.10.9",

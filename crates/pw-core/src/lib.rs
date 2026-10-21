@@ -1,6 +1,7 @@
 //! PageWeave core: the engine-independent foundation shared by the desktop app, CLI, local API and MCP.
 
 pub mod error;
+pub mod formdata;
 pub mod job;
 pub mod journal;
 pub mod log;

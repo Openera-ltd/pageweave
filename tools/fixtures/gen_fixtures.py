@@ -171,6 +171,66 @@ def build_form_document() -> bytes:
     return w.render(catalog, info)
 
 
+def build_nested_form_document() -> bytes:
+    """One page with a hierarchical AcroForm for form data import/export: applicant.name and
+    applicant.address.city (terminal fields under non-terminal parents), a read-only text field
+    holding R-1001, a list box (Red/Green/Blue), a checkbox whose on-state is /Yes and a push button."""
+    w = PdfWriter()
+    catalog, pages_obj, page = w.reserve(), w.reserve(), w.reserve()
+    font = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    labels = text_page_content(["Nested form fixture PWNESTFORM", "", "Name", "", "City", "", "Reference",
+                                "", "Colour", "", "", "", "Agree"], size=12, x=40, y=740, leading=20)
+    content = w.stream(labels)
+
+    def xobj(width: float, height: float, ops: str) -> int:
+        data = ops.encode("latin-1")
+        return w.add(b"<< /Type /XObject /Subtype /Form /BBox [0 0 %g %g] /Resources << /Font << /Helv %d 0 R >> >> /Length %d >>\nstream\n"
+                     % (width, height, font, len(data)) + data + b"\nendstream")
+
+    box = lambda width, height: f"0.4 0.4 0.4 RG 1 w 0.5 0.5 {width - 1} {height - 1} re S"
+    annots = []
+
+    applicant, address = w.reserve(), w.reserve()
+    name_ap = xobj(250, 20, box(250, 20))
+    name = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Tx /Parent {applicant} 0 R /T (name) /TU (Applicant name) "
+                 f"/Rect [150 706 400 726] /F 4 /P {page} 0 R /DA (/Helv 12 Tf 0 g) /V () /AP << /N {name_ap} 0 R >> >>")
+    city_ap = xobj(250, 20, box(250, 20))
+    city = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Tx /Parent {address} 0 R /T (city) /TU (City) "
+                 f"/Rect [150 666 400 686] /F 4 /P {page} 0 R /DA (/Helv 12 Tf 0 g) /V () /AP << /N {city_ap} 0 R >> >>")
+    w.set(address, f"<< /T (address) /Parent {applicant} 0 R /Kids [{city} 0 R] >>")
+    w.set(applicant, f"<< /T (applicant) /Kids [{name} 0 R {address} 0 R] >>")
+    annots += [name, city]
+
+    ref_ap = xobj(150, 20, box(150, 20) + " /Tx BMC BT /Helv 12 Tf 0 g 4 5 Td (R-1001) Tj ET EMC")
+    ref = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Tx /Ff 1 /T (ref_no) /TU (Reference) /Rect [150 626 300 646] "
+                f"/F 4 /P {page} 0 R /DA (/Helv 12 Tf 0 g) /V (R-1001) /AP << /N {ref_ap} 0 R >> >>")
+    annots.append(ref)
+
+    list_ap = xobj(150, 60, box(150, 60))
+    colours = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Ch /T (colour) /TU (Colour) /Rect [150 546 300 606] "
+                    f"/F 4 /P {page} 0 R /Opt [(Red) (Green) (Blue)] /DA (/Helv 12 Tf 0 g) /AP << /N {list_ap} 0 R >> >>")
+    annots.append(colours)
+
+    on, off = xobj(14, 14, box(14, 14) + " 0 0 0 RG 1.5 w 3 3 m 11 11 l S 3 11 m 11 3 l S"), xobj(14, 14, box(14, 14))
+    agree = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Btn /T (agree) /TU (Agree) /Rect [150 488 164 502] "
+                  f"/F 4 /P {page} 0 R /V /Off /AS /Off /AP << /N << /Yes {on} 0 R /Off {off} 0 R >> >> >>")
+    annots.append(agree)
+
+    button_ap = xobj(80, 20, box(80, 20))
+    button = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Btn /Ff 65536 /T (submit) /Rect [150 440 230 460] "
+                   f"/F 4 /P {page} 0 R /AP << /N {button_ap} 0 R >> >>")
+    annots.append(button)
+
+    w.set(page, f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 {font} 0 R >> >> "
+                f"/Contents {content} 0 R /Annots [{' '.join(f'{a} 0 R' for a in annots)}] >>")
+    w.set(pages_obj, f"<< /Type /Pages /Kids [{page} 0 R] /Count 1 >>")
+    fields = [applicant, ref, colours, agree, button]
+    acro = f"<< /Fields [{' '.join(f'{f} 0 R' for f in fields)}] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv {font} 0 R >> >> >>"
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R /AcroForm {acro} >>")
+    info = w.add("<< /Title (Nested form fixture) /Author (PageWeave fixtures) /Producer (gen_fixtures.py) >>")
+    return w.render(catalog, info)
+
+
 def build_redaction_document() -> bytes:
     """Four pages exercising redaction: text runs to cut, images inside / across / outside areas
     (one shared with another page), vector art, a note with a popup, links, a thumbnail, a form
@@ -584,6 +644,7 @@ def main() -> int:
     files["search-terms.pdf"] = build_document(search, title="Search terms")
 
     files["form-fields.pdf"] = build_form_document()
+    files["form-nested.pdf"] = build_nested_form_document()
     files["redaction.pdf"] = build_redaction_document()
     files["redaction-hard.pdf"] = build_redaction_hard_document()
     files["hidden-info.pdf"] = build_hidden_info_document()

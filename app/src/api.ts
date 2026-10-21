@@ -77,6 +77,10 @@ export interface Api {
   pickCertificateFile(): Promise<string | null>;
   /** Any files (no type filter), e.g. to attach. */
   pickAnyFiles(): Promise<string[]>;
+  /** A form data file to import (.xfdf, .xml, .json). */
+  pickFormDataFile(): Promise<string | null>;
+  /** A save location for a form data file. */
+  pickFormDataSavePath(defaultPath: string, format: "xfdf" | "json"): Promise<string | null>;
   /** A save location for a file of any type. */
   pickSaveAnyPath(defaultPath: string): Promise<string | null>;
   launchFiles(): Promise<string[]>;
@@ -151,6 +155,12 @@ export const tauriApi: Api = {
     return Array.isArray(r) ? r : [r];
   },
   pickSaveAnyPath: (defaultPath) => saveDialog({ defaultPath }),
+  pickFormDataFile: async () => {
+    const r = await openDialog({ multiple: false, directory: false, filters: [{ name: "Form data", extensions: ["xfdf", "xml", "json"] }] });
+    return typeof r === "string" ? r : null;
+  },
+  pickFormDataSavePath: (defaultPath, format) =>
+    saveDialog({ defaultPath, filters: [format === "json" ? { name: "JSON form data", extensions: ["json"] } : { name: "XFDF form data", extensions: ["xfdf"] }] }),
   verifySignatures: (docId) => invoke("verify_signatures", { docId }),
   launchFiles: () => invoke("launch_files"),
   launchFileDone: (path) => invoke("launch_file_done", { path }),

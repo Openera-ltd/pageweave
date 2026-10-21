@@ -154,7 +154,7 @@ fn capabilities_lists_operations() {
     assert!(v["result"]["operations"].as_array().expect("ops").iter().any(|o| o == "annotate"));
     assert_eq!(v["result"]["network"], "none");
     let ops = v["result"]["operations"].as_array().expect("ops");
-    for id in ["set_bookmarks", "export_text", "redact"] {
+    for id in ["set_bookmarks", "export_text", "redact", "export_form_data", "read_form_data", "import_form_data"] {
         assert!(ops.iter().any(|o| o == id), "{id} listed");
     }
 }
@@ -794,4 +794,74 @@ fn images_to_pdf_command() {
         .output()
         .expect("run");
     assert_eq!(bad.status.code(), Some(4), "damaged input exit code: {}", String::from_utf8_lossy(&bad.stderr));
+}
+
+#[test]
+fn form_export_and_import_round_trip_through_files() {
+    let dir = tempfile::tempdir().expect("tmp");
+    // A .json name picks JSON without --format.
+    let data = dir.path().join("data.json");
+    let r =
+        bin().args(["--json", "form-export", "-o"]).arg(&data).arg(fixture("form-nested.pdf")).output().expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert_eq!(json(&r)["result"]["data"]["format"], "json");
+    let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(&data).expect("read")).expect("json");
+    v["fields"][0]["value"] = "Ada".into();
+    v["fields"][1]["value"] = "Paris".into();
+    std::fs::write(&data, serde_json::to_vec(&v).expect("ser")).expect("write");
+
+    let r = bin()
+        .args(["--json", "form-import", "--preview"])
+        .arg(fixture("form-nested.pdf"))
+        .arg(&data)
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let p = json(&r);
+    assert_eq!(p["result"]["operation"], "read_form_data");
+    let changed: Vec<&str> = p["result"]["data"]["matched"]
+        .as_array()
+        .expect("matched")
+        .iter()
+        .filter(|m| m["changed"] == true)
+        .map(|m| m["name"].as_str().unwrap_or(""))
+        .collect();
+    assert_eq!(changed, ["applicant.name", "applicant.address.city"]);
+
+    let out = dir.path().join("filled.pdf");
+    let r = bin()
+        .args(["--json", "form-import", "-o"])
+        .arg(&out)
+        .arg(fixture("form-nested.pdf"))
+        .arg(&data)
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert_eq!(json(&r)["result"]["data"]["filled"], 2);
+    let fields = bin().args(["--json", "fields"]).arg(&out).output().expect("run");
+    let f = json(&fields);
+    let names: Vec<(&str, &str)> = f["result"]["data"]["fields"]
+        .as_array()
+        .expect("fields")
+        .iter()
+        .take(2)
+        .map(|x| (x["name"].as_str().unwrap_or(""), x["value"].as_str().unwrap_or("")))
+        .collect();
+    assert_eq!(names, [("applicant.name", "Ada"), ("applicant.address.city", "Paris")]);
+
+    // XFDF by default; neither -o nor --preview is a usage error.
+    let x = dir.path().join("data.xfdf");
+    let r = bin().args(["form-export", "-o"]).arg(&x).arg(&out).output().expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert!(std::fs::read_to_string(&x).expect("read").contains("<value>Paris</value>"));
+    let r = bin().arg("form-import").arg(fixture("form-nested.pdf")).arg(&x).output().expect("run");
+    assert_eq!(r.status.code(), Some(1), "usage error");
+    // A document without a form is refused with invalid input (exit 2).
+    let r = bin()
+        .args(["form-export", "-o"])
+        .arg(dir.path().join("n.xfdf"))
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert_eq!(r.status.code(), Some(2), "{}", String::from_utf8_lossy(&r.stderr));
 }

@@ -1948,3 +1948,48 @@ kbd,
   color: var(--danger);
   font-size: 12px;
 }
+
+/* Form data import preview */
+.formdata-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2);
+  min-width: 0;
+}
+.formdata-list li {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  gap: var(--space-4);
+  min-width: 0;
+}
+.formdata-list li:last-child {
+  border-bottom: 0;
+}
+.formdata-name {
+  flex: 0 0 40%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.formdata-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.formdata-unused summary {
+  cursor: pointer;
+  padding: var(--space-2) 0;
+  color: var(--text-muted);
+}
+.formdata-unused summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-1);
+}

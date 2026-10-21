@@ -642,6 +642,20 @@ pub fn apply_edits(
     output: &Path,
     policy: CollisionPolicy,
 ) -> PwResult<(CommittedOutput, Vec<String>)> {
+    apply_edits_protecting(input, password, values, annotations, output, policy, &[input.to_path_buf()])
+}
+
+/// [`apply_edits`] where `protected` lists every file the output may never replace (the input and
+/// any other file the operation read, such as a form data file).
+pub(crate) fn apply_edits_protecting(
+    input: &Path,
+    password: Option<&str>,
+    values: &[FieldValue],
+    annotations: &[AnnotationSpec],
+    output: &Path,
+    policy: CollisionPolicy,
+    protected: &[std::path::PathBuf],
+) -> PwResult<(CommittedOutput, Vec<String>)> {
     let filled = if values.is_empty() { None } else { Some(fill_bytes(input, password, values)?) };
     let (bytes, expected) = if annotations.is_empty() {
         match filled {
@@ -659,7 +673,7 @@ pub fn apply_edits(
     };
 
     let mut out_encrypted = false;
-    let committed = write_atomic_bytes(output, policy, &[input.to_path_buf()], &bytes, |staged| {
+    let committed = write_atomic_bytes(output, policy, protected, &bytes, |staged| {
         // Form check first: it needs exclusive engine access, so no shared access may be held here.
         if !values.is_empty() {
             let info = match form_fields(staged, None) {

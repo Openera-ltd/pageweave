@@ -36,7 +36,7 @@ import {
   type PendingAnnotation,
   type PendingKind,
 } from "./annotations";
-import { missingRequired, setEdit, toFieldValues, fieldLabel, type FormEdits } from "./forms";
+import { isFillable, missingRequired, setEdit, toFieldValues, fieldLabel, type FormEdits } from "./forms";
 import { COMMAND_BY_ID, COMMANDS, commandForShortcut, effectiveBindings, type CommandHandlers, type CommandId } from "./commands";
 import { clampZoom, fitWidthZoom, nextZoom, pageOrigin, screenRectToPdf, ZOOM_PRESETS, CSS_PX_PER_PT, displaySizePt } from "./geometry";
 import { basename, siblingOutput } from "./paths";
@@ -61,6 +61,8 @@ import { SignDialog } from "./components/SignDialog";
 import { SignatureMarkDialog } from "./components/SignatureMarkDialog";
 import { TrustSignerDialog, TrustedCertificatesDialog } from "./components/TrustDialogs";
 import { UnprotectDialog } from "./components/UnprotectDialog";
+import { ExportFormDataDialog, ImportFormDataDialog } from "./components/FormDataDialogs";
+import type { ImportPlan } from "./formData";
 import { EditPropertiesDialog } from "./components/EditPropertiesDialog";
 import { SaveAttachmentDialog } from "./components/SaveAttachmentDialog";
 import { EditBookmarksDialog } from "./components/EditBookmarksDialog";
@@ -87,6 +89,8 @@ type DialogState =
   | { kind: "redact"; areas: RedactArea[] }
   | { kind: "protect" }
   | { kind: "sanitize" }
+  | { kind: "exportFormData" }
+  | { kind: "importFormData" }
   | { kind: "compare" }
   | { kind: "print" }
   | { kind: "removeBlank" }
@@ -128,6 +132,8 @@ const OPERATION_TITLES: Partial<Record<Operation["op"], string>> = {
   add_attachments: "Attach files",
   watermark: "Add watermark",
   crop_pages: "Crop pages",
+  export_form_data: "Export form data",
+  import_form_data: "Fill form from data",
 };
 
 function operationTarget(op: Operation): string {
@@ -687,6 +693,31 @@ export function App() {
     openTool("save");
   };
 
+  /** Form data export/import needs a form PageWeave can fill. */
+  const formAvail = (): true | string => {
+    if (!active) return NO_DOC;
+    if ((active.info.form_type ?? "none") === "none") return "This document has no form fields.";
+    const f = forms[active.doc_id];
+    if (f === undefined) return "Reading the form fields…";
+    if (f === null) return "The form fields couldn’t be read.";
+    if (f.has_xfa) return "This form uses XFA, which PageWeave can’t fill.";
+    return f.fields.some(isFillable) ? true : "This document has no form fields.";
+  };
+
+  /** Put imported values into the form as unsaved edits, with Undo. */
+  const applyImport = (docId: number, plan: ImportPlan, source: string) => {
+    const before = formEdits[docId];
+    setFormEdits((all) => ({ ...all, [docId]: plan.edits }));
+    const n = plan.changes.length;
+    notify({
+      kind: "success",
+      title: `Filled ${n} field${n === 1 ? "" : "s"} from ${source}`,
+      detail: "Save a copy to keep them (Ctrl+S).",
+      actions: [{ label: "Undo", run: () => setFormEdits(({ [docId]: _new, ...rest }) => (before ? { ...rest, [docId]: before } : rest)) }],
+      persistent: false,
+    });
+  };
+
   const selectionAvail = (): true | string => (pageSelection() ? true : "Select text on a page first.");
   const roomAvail = (): true | string => (activePending.length < MAX_PENDING ? true : "Save a copy first; too many unsaved annotations.");
 
@@ -753,6 +784,8 @@ export function App() {
     "file.properties": { run: () => setDialog({ kind: "properties" }), available: all(needDoc, noDialog) },
     "file.protect": { run: () => setDialog({ kind: "protect" }), available: all(needDoc, noDialog) },
     "file.sanitize": { run: () => setDialog({ kind: "sanitize" }), available: all(needDoc, noDialog) },
+    "file.exportFormData": { run: () => setDialog({ kind: "exportFormData" }), available: all(needDoc, noDialog, formAvail) },
+    "file.importFormData": { run: () => setDialog({ kind: "importFormData" }), available: all(needDoc, noDialog, formAvail) },
     "file.reduceSize": { run: () => openTool("optimize"), available: all(needDoc, noDialog) },
     "file.compare": { run: () => setDialog({ kind: "compare" }), available: all(needDoc, noDialog) },
     "file.print": { run: () => setDialog({ kind: "print" }), available: all(needDoc, noDialog) },
@@ -1023,6 +1056,12 @@ export function App() {
           setActiveId(doc.doc_id);
           setDialog({ kind: "sanitize" });
         }, dialog ? "Close the open dialog first." : true),
+        ...(doc.doc_id === activeId && (doc.info.form_type ?? "none") !== "none"
+          ? [
+              item("file.importFormData", "Import form data…", () => setDialog({ kind: "importFormData" }), dialog ? "Close the open dialog first." : formAvail()),
+              item("file.exportFormData", "Export form data…", () => setDialog({ kind: "exportFormData" }), dialog ? "Close the open dialog first." : formAvail()),
+            ]
+          : []),
         item("file.compare", "Compare with…", () => {
           setActiveId(doc.doc_id);
           setDialog({ kind: "compare" });
@@ -1054,6 +1093,7 @@ export function App() {
     const straightened = r.data?.straightened;
     const turned = r.data?.turned;
     const signer = r.operation === "sign" ? r.data?.signer : undefined;
+    const exported = r.operation === "export_form_data" ? r.data?.fields : undefined;
     const detail =
       typeof before === "number" && typeof after === "number"
         ? sizeChange(before, after)
@@ -1061,6 +1101,8 @@ export function App() {
           ? `${straightened} page${straightened === 1 ? "" : "s"} straightened`
           : typeof signer === "string"
             ? `Signed as ${signer}`
+          : typeof exported === "number"
+            ? `${exported} field value${exported === 1 ? "" : "s"}`
             : typeof turned === "number"
             ? `${turned} page${turned === 1 ? "" : "s"} turned upright`
           : out?.pages != null && r.outputs.length === 1
@@ -1434,6 +1476,12 @@ export function App() {
       {dialog?.kind === "editProperties" && active && <EditPropertiesDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "unprotect" && active && <UnprotectDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "sanitize" && active && <SanitizeDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
+      {dialog?.kind === "exportFormData" && active && forms[active.doc_id] && (
+        <ExportFormDataDialog doc={active} form={forms[active.doc_id]!} edits={editsOf(active.doc_id)} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />
+      )}
+      {dialog?.kind === "importFormData" && active && forms[active.doc_id] && (
+        <ImportFormDataDialog doc={active} form={forms[active.doc_id]!} edits={editsOf(active.doc_id)} jobs={jobs} onClose={() => setDialog(null)} onApply={(plan, source) => applyImport(active.doc_id, plan, source)} />
+      )}
       {dialog?.kind === "trustSigner" && active && (
         <TrustSignerDialog
           doc={active}

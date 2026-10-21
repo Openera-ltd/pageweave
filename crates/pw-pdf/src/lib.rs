@@ -18,6 +18,7 @@ mod downsample;
 mod edit;
 mod exec;
 mod extract;
+mod formdata;
 mod forms;
 mod images;
 mod marks;
@@ -46,6 +47,10 @@ pub use edit::{
 };
 pub use exec::execute;
 pub use extract::{extract_images, ExtractedImage};
+pub use formdata::{
+    current_value, export_entries, export_form_data, import_form_data, match_entries, read_form_data, FormDataMatch,
+    MatchedValue, SkippedEntry,
+};
 pub use forms::{apply_edits, fill_form, form_fields, FieldKind, FormField, FormInfo, FormWidget};
 pub use images::images_to_pdf;
 pub use ocr::{ocr_pages, OcrSummary};
