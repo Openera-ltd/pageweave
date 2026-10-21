@@ -87,7 +87,7 @@ fn luhn(d: &[u32]) -> bool {
             }
         })
         .sum();
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 fn iban_ok(s: &str) -> bool {
@@ -151,8 +151,11 @@ fn accept(p: TextPattern, m: &str, before: Option<char>, after: Option<char>) ->
     }
 }
 
+/// Byte offset of a character in the page string, and its box (None for generated characters).
+type CharBox = (usize, Option<SearchRect>);
+
 /// Characters of a page with their boxes (None for generated characters without a box).
-fn page_chars(page: &PdfPage) -> PwResult<(String, Vec<(usize, Option<SearchRect>)>)> {
+fn page_chars(page: &PdfPage) -> PwResult<(String, Vec<CharBox>)> {
     let text = page.text().map_err(|e| map_pdfium_error(&e, "text"))?;
     let mut s = String::new();
     // Byte offset in `s` → box of the character starting there.
