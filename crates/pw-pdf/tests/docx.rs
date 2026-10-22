@@ -172,15 +172,23 @@ fn structure_is_carried_over_as_editable_content() {
     for item in ["• Flow rose", "• Sediment fell", "• Water quality met"] {
         assert!(text.lines().any(|l| l.starts_with(item)), "{item}");
     }
-    assert!(text.lines().any(|l| l == "Station\tFlow\tSediment"), "table row on one line:\n{text}");
-    assert!(x.contains("<w:tabs><w:tab w:val=\"left\""));
+    // The ruled table is a Word table: 4 rows × 3 columns with borders, cell text in reading order.
+    assert_eq!(r.data["tables"], 1, "{}", r.data);
+    let tbl = &x[x.find("<w:tbl>").expect("table")..x.find("</w:tbl>").expect("table end")];
+    assert_eq!(count(tbl, "<w:tr>"), 4);
+    assert_eq!(count(tbl, "<w:gridCol "), 3);
+    assert_eq!(count(tbl, "<w:tc>"), 12);
+    assert!(tbl.contains("<w:insideH w:val=\"single\""), "borders");
+    let cells: Vec<String> = tbl.split("<w:tc>").skip(1).map(docx_text).map(|t| t.trim().to_string()).collect();
+    assert_eq!(cells[..6], ["Station", "Flow", "Sediment", "North", "12.4", "0.82"], "{cells:?}");
     // The picture, as stored pixels (lossless PNG for a grey image), inline in column 2.
     assert_eq!(r.data["pictures"], 1);
     assert_eq!(pkg.media.len(), 1);
     let img = image::load_from_memory(&pkg.media[0].1).expect("picture decodes");
     assert_eq!((img.width(), img.height()), (60, 20), "the image's own pixels, not a rendering");
-    // Table borders are not carried over yet, and the report says so.
-    assert!(r.warnings.iter().any(|w| w.contains("not carried over")), "{:?}", r.warnings);
+    // The table's lines became its borders: nothing drawn is left out.
+    assert_eq!(r.data["drawings_left_out"], 0, "{}", r.data);
+    assert!(!r.warnings.iter().any(|w| w.contains("drawn line")), "{:?}", r.warnings);
     assert_eq!(r.data["pages_with_columns"], serde_json::json!([1]));
 }
 
@@ -362,8 +370,7 @@ fn libreoffice_opens_every_word_file_with_the_same_pages_text_and_layout() {
     let skip_ink: &[(&str, u32, &str)] =
         &[("photo-heavy.pdf", 4, "its only picture is a stamp comment, not carried over (reported)")];
     let cases: &[(&str, f64, f64)] = &[
-        // Page 2's table borders are not carried over (reported), so less of its ink is kept.
-        ("article.pdf", 0.99, 0.78),
+        ("article.pdf", 0.99, 0.95),
         ("five-pages.pdf", 0.99, 0.90),
         ("uncompressed-report.pdf", 0.99, 0.90),
         ("photo-heavy.pdf", 0.99, 0.90),

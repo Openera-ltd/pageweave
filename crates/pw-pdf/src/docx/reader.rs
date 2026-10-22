@@ -23,6 +23,7 @@ pub struct DocxCheck {
     pub links: usize,
     pub paragraphs: usize,
     pub headings: usize,
+    pub tables: usize,
 }
 
 fn bad(what: &str) -> PwError {
@@ -132,6 +133,7 @@ pub fn check_docx(bytes: &[u8]) -> PwResult<DocxCheck> {
                     "t" => in_text = true,
                     "sectPr" => out.sections += 1,
                     "p" => out.paragraphs += 1,
+                    "tbl" => out.tables += 1,
                     "hyperlink" => {
                         let id = attr(&e, "r:id").ok_or_else(|| bad("a link has no target"))?;
                         match doc_rels.get(&id) {

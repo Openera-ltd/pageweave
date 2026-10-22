@@ -1115,8 +1115,8 @@ fn print_human(r: &OperationResult) {
                 println!("Wrote {} ({} bytes)", o.path.display(), o.bytes);
             }
             println!(
-                "Pages: {}, paragraphs: {}, headings: {}, pictures: {}, links: {}",
-                d["pages"], d["paragraphs"], d["headings"], d["pictures"], d["links"]
+                "Pages: {}, paragraphs: {}, headings: {}, tables: {}, pictures: {}, links: {}",
+                d["pages"], d["paragraphs"], d["headings"], d["tables"], d["pictures"], d["links"]
             );
         }
         "ocr_pages" => {

@@ -3,7 +3,7 @@
 //! columns, paragraphs with exact spacing and indents, formatted runs, links, inline pictures and
 //! pictures behind text. No macros, no external content other than web/mail links.
 
-use super::layout::{Align, Item, PageLayout, Paragraph, Picture, RowPicture, Run, VertAlign};
+use super::layout::{Align, Item, PageLayout, Paragraph, Picture, RowPicture, Run, TableItem, VertAlign, CELL_PAD};
 use pw_core::{PwError, PwResult};
 use std::fmt::Write as _;
 use std::io::Write as _;
@@ -257,6 +257,90 @@ impl Ctx<'_> {
         self.body.push_str("</w:p>");
     }
 
+    /// A spacer paragraph (exact height) that can carry a prefix and section properties.
+    fn spacer(&mut self, height: f32, prefix: &str, sect: Option<&str>) {
+        let _ = write!(
+            self.body,
+            "<w:p><w:pPr><w:widowControl w:val=\"0\"/><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"{}\" w:lineRule=\"exact\"/>",
+            twips(height.max(1.0)).clamp(20, 31_680)
+        );
+        if let Some(s) = sect {
+            self.body.push_str(s);
+        }
+        self.body.push_str("</w:pPr>");
+        self.body.push_str(prefix);
+        self.body.push_str("</w:p>");
+    }
+
+    fn table(&mut self, t: &TableItem, indent: f32, space_before: f32, prefix: &str, sect: Option<&str>) {
+        // The gap above (and any column break) goes in a spacer paragraph: tables have no spacing.
+        self.spacer(space_before, prefix, None);
+        let total: f32 = t.widths.iter().sum();
+        let border = "w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"";
+        let _ = write!(
+            self.body,
+            "<w:tbl><w:tblPr><w:tblW w:w=\"{}\" w:type=\"dxa\"/><w:tblInd w:w=\"{}\" w:type=\"dxa\"/>\
+<w:tblBorders><w:top {border}/><w:left {border}/><w:bottom {border}/><w:right {border}/><w:insideH {border}/><w:insideV {border}/></w:tblBorders>\
+<w:tblLayout w:type=\"fixed\"/><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:left w:w=\"{pad}\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/><w:right w:w=\"{pad}\" w:type=\"dxa\"/></w:tblCellMar>\
+<w:tblLook w:val=\"0000\"/></w:tblPr><w:tblGrid>",
+            twips(total),
+            twips(indent).clamp(0, 31_680),
+            pad = twips(CELL_PAD)
+        );
+        for w in &t.widths {
+            let _ = write!(self.body, "<w:gridCol w:w=\"{}\"/>", twips(*w).max(20));
+        }
+        self.body.push_str("</w:tblGrid>");
+        let cols = t.widths.len();
+        for (r, h) in t.heights.iter().enumerate() {
+            let _ = write!(
+                self.body,
+                "<w:tr><w:trPr><w:trHeight w:val=\"{}\" w:hRule=\"atLeast\"/></w:trPr>",
+                twips(*h).max(20)
+            );
+            let mut c = 0;
+            while c < cols {
+                let Some(cell) = t
+                    .cells
+                    .iter()
+                    .find(|x| r >= x.row && r < x.row + x.row_span && c >= x.col && c < x.col + x.col_span)
+                else {
+                    // A slot no cell covers cannot happen for a detected grid; keep the row valid anyway.
+                    let _ = write!(
+                        self.body,
+                        "<w:tc><w:tcPr><w:tcW w:w=\"{}\" w:type=\"dxa\"/></w:tcPr><w:p/></w:tc>",
+                        twips(t.widths[c])
+                    );
+                    c += 1;
+                    continue;
+                };
+                let width: f32 = t.widths[cell.col..cell.col + cell.col_span].iter().sum();
+                let _ = write!(self.body, "<w:tc><w:tcPr><w:tcW w:w=\"{}\" w:type=\"dxa\"/>", twips(width));
+                if cell.col_span > 1 {
+                    let _ = write!(self.body, "<w:gridSpan w:val=\"{}\"/>", cell.col_span);
+                }
+                let first_row = cell.row == r;
+                if cell.row_span > 1 {
+                    self.body.push_str(if first_row { "<w:vMerge w:val=\"restart\"/>" } else { "<w:vMerge/>" });
+                }
+                self.body.push_str("</w:tcPr>");
+                if first_row && !cell.paragraphs.is_empty() {
+                    for p in &cell.paragraphs {
+                        self.para(p, "", None);
+                    }
+                } else {
+                    self.body.push_str("<w:p/>");
+                }
+                self.body.push_str("</w:tc>");
+                c = cell.col + cell.col_span;
+            }
+            self.body.push_str("</w:tr>");
+        }
+        self.body.push_str("</w:tbl>");
+        // A table cannot carry section properties, and two tables in a row would merge.
+        self.spacer(1.0, "", sect);
+    }
+
     fn pictures_para(&mut self, row: &[RowPicture], space_before: f32, prefix: &str, sect: Option<&str>) {
         let _ = write!(self.body, "<w:p><w:pPr><w:widowControl w:val=\"0\"/>");
         // Pictures after the first sit at tab stops at their own positions.
@@ -379,6 +463,7 @@ fn document_xml(input: &DocxInput) -> String {
             match item {
                 Some(Item::Para(p)) => ctx.para(p, &pre, s),
                 Some(Item::Pictures { row, space_before }) => ctx.pictures_para(row, *space_before, &pre, s),
+                Some(Item::Table { table, indent, space_before }) => ctx.table(table, *indent, *space_before, &pre, s),
                 None => {
                     ctx.body.push_str("<w:p><w:pPr>");
                     if let Some(s) = s {

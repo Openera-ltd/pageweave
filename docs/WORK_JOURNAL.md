@@ -294,3 +294,4 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - Ran: fmt/clippy (below), pw-pdf docx tests 7/7 + unit 12, CLI + MCP tests, worker mutation test with conversion (10 cases/fixture), E2E "convert to Word" passes. Measurements in `docs/benchmarks/DOCX_BASELINE.md` (175 pages in 3.3 s, 46 MB, debug).
 - CI: Linux job installs LibreOffice (writer, no GUI) + DejaVu/Liberation fonts for the round trip; Windows sets PW_SKIP_SOFFICE=1 (no LibreOffice there; the test says SKIPPED).
 - Not done: Word tables from ruled tables, shapes/borders, comments, form fields, Microsoft Word check, real-document benchmark.
+- Follow-up: ruled tables → Word tables (`docx/tables.rs`: rules from path segments incl. closing edges, merged collinear pieces, connected grids, merged cells by missing rules; cells' text laid out per cell). Article page 2 ink coverage 0.794 → 0.995; drawings on table grids no longer reported as left out.

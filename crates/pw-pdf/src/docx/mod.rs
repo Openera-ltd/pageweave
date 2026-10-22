@@ -10,7 +10,6 @@
 
 pub mod layout;
 pub mod reader;
-#[allow(dead_code)] // Wired into the layout in the next step (ruled tables → Word tables).
 pub mod tables;
 pub mod writer;
 
@@ -26,6 +25,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
+use tables::Rule;
 use writer::{DocxInput, Media, MediaKind};
 
 /// Pictures larger than this on their long side are scaled down (PNG only; JPEG stays as stored).
@@ -40,6 +40,8 @@ pub struct DocxReport {
     pub headings: usize,
     pub pictures: usize,
     pub links: usize,
+    /// Ruled tables carried over as Word tables.
+    pub tables: usize,
     /// Pages laid out in more than one column somewhere.
     pub pages_with_columns: Vec<u32>,
     /// Pages with no text layer (1-based): their pictures are kept, their text is not editable.
@@ -146,12 +148,57 @@ fn count_pictures(o: &PdfPageObject, depth: usize) -> usize {
     }
 }
 
+/// The straight horizontal and vertical lines a path draws (page coordinates as displayed).
+fn path_rules(path: &PdfPagePathObject, rot: u32, w: f32, h: f32, origin: (f32, f32)) -> Vec<Rule> {
+    let stroked = path.is_stroked().unwrap_or(false);
+    let filled = !matches!(path.fill_mode(), Ok(PdfPathFillMode::None) | Err(_));
+    if !stroked && !filled {
+        return Vec::new();
+    }
+    let Ok(m) = path.matrix() else { return Vec::new() };
+    let segs = path.segments().transform(m);
+    let n = segs.len();
+    if n > 5000 {
+        return Vec::new();
+    }
+    let disp = |x: PdfPoints, y: PdfPoints| page_to_display(rot, w, h, x.value - origin.0, y.value - origin.1);
+    let mut out = Vec::new();
+    let (mut cur, mut start) = ((0.0f32, 0.0f32), (0.0f32, 0.0f32));
+    for i in 0..n {
+        let Ok(seg) = segs.get(i) else { continue };
+        let (x, y) = seg.point();
+        let p = disp(x, y);
+        match seg.segment_type() {
+            PdfPathSegmentType::MoveTo => {
+                cur = p;
+                start = p;
+            }
+            PdfPathSegmentType::LineTo => {
+                if let Some(r) = tables::rule_from_segment(cur.0, cur.1, p.0, p.1) {
+                    out.push(r);
+                }
+                cur = p;
+            }
+            _ => cur = p,
+        }
+        if seg.is_close() {
+            if let Some(r) = tables::rule_from_segment(cur.0, cur.1, start.0, start.1) {
+                out.push(r);
+            }
+            cur = start;
+        }
+    }
+    out
+}
+
 struct Extracted {
     input: PageInput,
     /// Turned text, in engine order, split at line ends.
     turned: Vec<String>,
     recognized_layer: bool,
     drawings: usize,
+    /// Drawn lines of each path object (for telling table lines from other drawings).
+    path_rules: Vec<Vec<Rule>>,
     pictures_left_out: usize,
     turned_upright: bool,
     comments: usize,
@@ -303,6 +350,8 @@ fn extract_page(page: &PdfPage, doc: &PdfDocument, shared: &mut Shared) -> PwRes
     let recognized_layer = invisible > 0 && visible == 0;
 
     let mut pictures = Vec::new();
+    let mut rules: Vec<Rule> = Vec::new();
+    let mut path_rules_all: Vec<Vec<Rule>> = Vec::new();
     let mut drawings = 0;
     let mut pictures_left_out = 0;
     let mut place = |img: &PdfPageImageObject, r: PdfRect, pictures: &mut Vec<Picture>, left_out: &mut usize| {
@@ -333,7 +382,13 @@ fn extract_page(page: &PdfPage, doc: &PdfDocument, shared: &mut Shared) -> PwRes
                 }
                 None => pictures_left_out += count_pictures(&o, 0),
             },
-            PdfPageObject::Path(_) | PdfPageObject::Shading(_) => drawings += 1,
+            PdfPageObject::Path(path) => {
+                drawings += 1;
+                let r = path_rules(path, rot, w, h, origin);
+                rules.extend(r.iter().copied());
+                path_rules_all.push(r);
+            }
+            PdfPageObject::Shading(_) => drawings += 1,
             _ => {}
         }
     }
@@ -346,7 +401,8 @@ fn extract_page(page: &PdfPage, doc: &PdfDocument, shared: &mut Shared) -> PwRes
         }
     }
     Ok(Extracted {
-        input: PageInput { width: dw, height: dh, glyphs, pictures },
+        input: PageInput { width: dw, height: dh, glyphs, pictures, rules },
+        path_rules: path_rules_all,
         turned_upright,
         comments,
         fields,
@@ -435,6 +491,7 @@ pub fn convert_to_docx(
     let mut expected: HashMap<char, usize> = HashMap::new();
     let mut report = DocxReport { pages: idx.len() as u32, ..Default::default() };
     let mut placed_pictures = 0usize;
+    let mut expected_tables = 0usize;
     for (k, &p) in idx.iter().enumerate() {
         if cancelled() {
             return Err(PwError::cancelled());
@@ -482,7 +539,20 @@ pub fn convert_to_docx(
                     _ => 0,
                 })
                 .sum::<usize>();
-        report.drawings_left_out += ex.drawings;
+        // Paths that only draw the lines of a table were carried over as its borders.
+        let on_table = |r: &Rule| {
+            lay.tables.iter().any(|t| match *r {
+                Rule::H { y, x0, x1 } => {
+                    t.ys.iter().any(|ty| (ty - y).abs() <= 2.0) && x0 >= t.left() - 2.0 && x1 <= t.right() + 2.0
+                }
+                Rule::V { x, y0, y1 } => {
+                    t.xs.iter().any(|tx| (tx - x).abs() <= 2.0) && y0 >= t.bottom() - 2.0 && y1 <= t.top() + 2.0
+                }
+            })
+        };
+        let table_paths = ex.path_rules.iter().filter(|rs| !rs.is_empty() && rs.iter().all(on_table)).count();
+        report.drawings_left_out += ex.drawings - table_paths;
+        expected_tables += lay.tables.len();
         report.comments_left_out += ex.comments;
         report.form_fields_left_out += ex.fields;
         if ex.turned_upright {
@@ -505,6 +575,9 @@ pub fn convert_to_docx(
         if c.pictures != placed_pictures {
             return Err(fail("a picture is missing"));
         }
+        if c.tables != expected_tables {
+            return Err(fail("a table is missing"));
+        }
         if c.chars != expected {
             return Err(fail("text is missing or changed"));
         }
@@ -526,6 +599,7 @@ pub fn convert_to_docx(
     report.headings = check.headings;
     report.pictures = check.pictures;
     report.links = check.links;
+    report.tables = check.tables;
 
     let mut warnings = Vec::new();
     let list = |v: &[u32]| {
@@ -545,10 +619,7 @@ pub fn convert_to_docx(
         ));
     }
     if report.drawings_left_out > 0 {
-        warnings.push(format!(
-            "{} line(s), shape(s) or border(s) were not carried over (tables come out as text).",
-            report.drawings_left_out
-        ));
+        warnings.push(format!("{} drawn line(s) or shape(s) were not carried over.", report.drawings_left_out));
     }
     if report.pictures_left_out > 0 {
         warnings.push(format!("{} picture(s) inside grouped content could not be placed.", report.pictures_left_out));

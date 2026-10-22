@@ -1030,11 +1030,7 @@ fn to_docx_writes_a_word_file_and_reports_what_was_kept() {
     assert_eq!(v["result"]["operation"], "convert_to_docx");
     assert_eq!(v["result"]["data"]["pages"], 2);
     assert_eq!(v["result"]["data"]["links"], 1);
-    assert!(v["result"]["warnings"]
-        .as_array()
-        .expect("warnings")
-        .iter()
-        .any(|w| w.as_str().unwrap_or("").contains("not carried over")));
+    assert_eq!(v["result"]["data"]["tables"], 1, "the ruled table on page 2");
     let z = zip::ZipArchive::new(std::fs::File::open(&out).expect("open")).expect("a Word package");
     assert!(z.file_names().any(|n| n == "word/document.xml"));
     // Existing output → conflict (exit 5); wrong extension → invalid input (exit 2).

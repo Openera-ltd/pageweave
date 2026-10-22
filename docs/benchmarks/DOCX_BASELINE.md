@@ -18,7 +18,7 @@ representative, rights-cleared corpus with annotated ground truth is still neede
 
 | Fixture | Pages | Words | Worst page ink coverage | Notes |
 |---|---|---|---|---|
-| article.pdf | 3 → 3 | 1.0000 | 0.794 | page 2: table borders not carried over (reported); pages 1 and 3 ≥ 0.985 |
+| article.pdf | 3 → 3 | 1.0000 | 0.985 | page 2 (ruled table → Word table): 0.995; before tables were carried over it was 0.794 |
 | five-pages.pdf | 5 → 5 | 1.0000 | 1.000 | |
 | uncompressed-report.pdf | 4 → 4 | 1.0000 | 0.996 | |
 | photo-heavy.pdf | 4 → 4 | 1.0000 | 1.000 | page 4 excluded: its only picture is a stamp comment (not carried over, reported) |
@@ -26,7 +26,7 @@ representative, rights-cleared corpus with annotated ground truth is still neede
 | mixed-sizes-rotated.pdf | 3 → 3 | 1.0000 | 1.000 | page 3 laid out unturned so its text reads upright (reported); excluded from ink and word order |
 | search-terms.pdf | 3 → 3 | 1.0000 | 1.000 | |
 
-Test guards: words ≥ 0.99 for all; ink ≥ 0.78 (article), ≥ 0.85–0.90 (others).
+Test guards: words ≥ 0.99 for all; ink ≥ 0.95 (article), ≥ 0.85–0.90 (others).
 
 ## Conversion time (debug build, same machine)
 

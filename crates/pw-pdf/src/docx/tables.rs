@@ -31,6 +31,7 @@ pub fn rule_from_segment(x0: f32, y0: f32, x1: f32, y1: f32) -> Option<Rule> {
     }
 }
 
+#[cfg(test)]
 /// Rules from a thin filled rectangle (many generators draw lines as filled boxes), or the four
 /// edges of a framed rectangle.
 pub fn rules_from_rect(left: f32, bottom: f32, right: f32, top: f32, filled_thin_only: bool) -> Vec<Rule> {

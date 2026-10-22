@@ -2,6 +2,7 @@
 //! paragraphs and pictures in reading order. Pure (no engine calls), so it is unit tested on
 //! synthetic pages. Coordinates are PDF points in the page's displayed orientation, y upwards.
 
+use super::tables::{find_tables, Rule, Table};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -61,6 +62,8 @@ pub struct PageInput {
     pub height: f32,
     pub glyphs: Vec<Glyph>,
     pub pictures: Vec<Picture>,
+    /// Drawn horizontal and vertical lines (for ruled tables).
+    pub rules: Vec<Rule>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,7 +128,36 @@ pub enum Item {
         row: Vec<RowPicture>,
         space_before: f32,
     },
+    /// A ruled table.
+    Table {
+        table: TableItem,
+        indent: f32,
+        space_before: f32,
+    },
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableCell {
+    pub row: usize,
+    pub col: usize,
+    pub row_span: usize,
+    pub col_span: usize,
+    pub paragraphs: Vec<Paragraph>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableItem {
+    /// Column widths, points.
+    pub widths: Vec<f32>,
+    /// Row heights, points (minimum: rows grow to fit their text).
+    pub heights: Vec<f32>,
+    pub cells: Vec<TableCell>,
+}
+
+/// Inner space between a cell's lines and its text, points.
+pub const CELL_PAD: f32 = 2.0;
+/// Tables travel through the column flow as placeholder pictures with ids from here up.
+const TABLE_ID_BASE: usize = usize::MAX / 2;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Column {
@@ -155,6 +187,8 @@ pub struct PageLayout {
     pub floating: Vec<Picture>,
     /// Pictures narrower columns could not hold at full size (shrunk to fit).
     pub shrunk_pictures: usize,
+    /// Ruled tables found on the page (grids, for reporting which drawn lines were used).
+    pub tables: Vec<Table>,
 }
 
 #[derive(Debug, Clone)]
@@ -545,6 +579,67 @@ struct Pending {
     first_baseline: Option<f32>,
 }
 
+/// One paragraph from its lines: alignment, indents, line pitch, heading level, tab stops and
+/// runs. Returns it with its top and bottom.
+fn make_paragraph(
+    p: &[Line],
+    col_left: f32,
+    col_right: f32,
+    body: f32,
+    heading_sizes: &[f32],
+) -> (Paragraph, f32, f32) {
+    let size = p.iter().map(|l| l.size).fold(0.0, f32::max);
+    let left = if p.len() >= 2 { p[1..].iter().map(|l| l.rect.left).fold(f32::MAX, f32::min) } else { p[0].rect.left };
+    let pitch = median(p.windows(2).map(|w| w[0].baseline - w[1].baseline).collect())
+        .filter(|&d| d >= size)
+        .unwrap_or(size * 1.2);
+    let chars: usize = p.iter().map(|l| l.glyphs.len()).sum();
+    let avg_size = {
+        let real: Vec<&Glyph> = p.iter().flat_map(|l| l.glyphs.iter()).filter(|g| !g.generated).collect();
+        real.iter().map(|g| g.size).sum::<f32>() / real.len().max(1) as f32
+    };
+    let heading = (avg_size >= 1.25 * body && p.len() <= 3 && chars <= 200)
+        .then(|| heading_sizes.iter().position(|&s| (s - avg_size).abs() < 0.5).map(|i| (i + 1).min(3) as u8))
+        .flatten();
+    let tabs: Vec<f32> = p[0].tabs.iter().map(|x| (x - col_left).max(0.0)).collect();
+    let align = if tabs.is_empty() { alignment(p, col_left, col_right) } else { Align::Left };
+    let (indent, first_line) = match align {
+        Align::Center | Align::Right => (0.0, 0.0),
+        _ => ((left - col_left).max(0.0), p[0].rect.left - left),
+    };
+    let top = p[0].rect.top;
+    let bottom = p.last().map(|l| l.rect.bottom).unwrap_or(top);
+    (Paragraph { runs: runs_of(p), align, indent, first_line, space_before: 0.0, pitch, heading, tabs }, top, bottom)
+}
+
+/// The text of one table: each cell's glyphs (in engine order) become that cell's paragraphs.
+fn table_item(t: &Table, cell_glyphs: Vec<Vec<Glyph>>, body: f32) -> TableItem {
+    let widths: Vec<f32> = t.xs.windows(2).map(|w| w[1] - w[0]).collect();
+    let heights: Vec<f32> = t.ys.windows(2).map(|w| w[0] - w[1]).collect();
+    let cells = t
+        .cells
+        .iter()
+        .zip(cell_glyphs)
+        .map(|(c, glyphs)| {
+            let (c0, c1) = (t.xs[c.col] + CELL_PAD, t.xs[c.col + c.col_span] - CELL_PAD);
+            let mut lines = build_lines(&glyphs);
+            lines.sort_by(|a, b| b.baseline.total_cmp(&a.baseline));
+            let mut paragraphs_out = Vec::new();
+            let mut prev_base: Option<f32> = None;
+            for p in paragraphs(join_pieces(lines), c0, c1) {
+                let (mut par, _, _) = make_paragraph(&p, c0, c1, body, &[]);
+                if let Some(b) = prev_base {
+                    par.space_before = (b - p[0].baseline - par.pitch).max(0.0);
+                }
+                prev_base = p.last().map(|l| l.baseline);
+                paragraphs_out.push(par);
+            }
+            TableCell { row: c.row, col: c.col, row_span: c.row_span, col_span: c.col_span, paragraphs: paragraphs_out }
+        })
+        .collect();
+    TableItem { widths, heights, cells }
+}
+
 fn column_items(
     lines: Vec<Line>,
     pictures: Vec<Picture>,
@@ -552,49 +647,42 @@ fn column_items(
     body: f32,
     heading_sizes: &[f32],
     start: ColumnStart,
+    tables: &[TableItem],
 ) -> (Vec<Item>, usize, Vec<Picture>, Option<End>) {
     let (col_left, col_right) = col;
     let line_rects: Vec<Rect> = lines.iter().map(|l| l.rect).collect();
     let col_w = (col_right - col_left).max(1.0);
     let mut pending: Vec<Pending> = Vec::new();
     for p in paragraphs(join_pieces(lines), col_left, col_right) {
-        let size = p.iter().map(|l| l.size).fold(0.0, f32::max);
-        let left =
-            if p.len() >= 2 { p[1..].iter().map(|l| l.rect.left).fold(f32::MAX, f32::min) } else { p[0].rect.left };
-        let pitch = median(p.windows(2).map(|w| w[0].baseline - w[1].baseline).collect())
-            .filter(|&d| d >= size)
-            .unwrap_or(size * 1.2);
-        let chars: usize = p.iter().map(|l| l.glyphs.len()).sum();
-        let avg_size = {
-            let real: Vec<&Glyph> = p.iter().flat_map(|l| l.glyphs.iter()).filter(|g| !g.generated).collect();
-            real.iter().map(|g| g.size).sum::<f32>() / real.len().max(1) as f32
-        };
-        let heading = (avg_size >= 1.25 * body && p.len() <= 3 && chars <= 200)
-            .then(|| heading_sizes.iter().position(|&s| (s - avg_size).abs() < 0.5).map(|i| (i + 1).min(3) as u8))
-            .flatten();
-        let tabs: Vec<f32> = p[0].tabs.iter().map(|x| (x - col_left).max(0.0)).collect();
-        let align = if tabs.is_empty() { alignment(&p, col_left, col_right) } else { Align::Left };
-        let (indent, first_line) = match align {
-            Align::Center | Align::Right => (0.0, 0.0),
-            _ => ((left - col_left).max(0.0), p[0].rect.left - left),
-        };
-        let top = p[0].rect.top;
-        let bottom = p.last().map(|l| l.rect.bottom).unwrap_or(top);
+        let (par, top, bottom) = make_paragraph(&p, col_left, col_right, body, heading_sizes);
         pending.push(Pending {
             top,
             bottom,
             first_baseline: Some(p[0].baseline),
             last_baseline: p.last().map(|l| l.baseline),
-            item: Item::Para(Paragraph {
-                runs: runs_of(&p),
-                align,
-                indent,
-                first_line,
-                space_before: 0.0,
-                pitch,
-                heading,
-                tabs,
-            }),
+            item: Item::Para(par),
+        });
+    }
+    // Tables (placeholder pictures) take their place in the flow.
+    let (table_pics, pictures): (Vec<Picture>, Vec<Picture>) =
+        pictures.into_iter().partition(|p| p.id >= TABLE_ID_BASE);
+    for tp in table_pics {
+        let Some(t) = tables.get(tp.id - TABLE_ID_BASE) else { continue };
+        let mut table = t.clone();
+        let width: f32 = table.widths.iter().sum();
+        if width > col_w {
+            let k = col_w / width;
+            for w in &mut table.widths {
+                *w *= k;
+            }
+        }
+        let indent = (tp.rect.left - col_left).clamp(0.0, (col_w - table.widths.iter().sum::<f32>()).max(0.0));
+        pending.push(Pending {
+            top: tp.rect.top,
+            bottom: tp.rect.bottom,
+            first_baseline: None,
+            last_baseline: None,
+            item: Item::Table { table, indent, space_before: 0.0 },
         });
     }
     let mut shrunk = 0;
@@ -669,12 +757,12 @@ fn column_items(
                 // After a picture: the first line's box starts about a line's ascent above its baseline.
                 (prev_bottom - p.first_baseline.unwrap_or(p.top) - 0.8 * par.pitch).max(0.0)
             }
-            (Item::Pictures { .. }, Some((prev_bottom, _))) => (prev_bottom - p.top).max(0.0),
+            (Item::Pictures { .. } | Item::Table { .. }, Some((prev_bottom, _))) => (prev_bottom - p.top).max(0.0),
         };
         let mut item = p.item;
         match &mut item {
             Item::Para(par) => par.space_before = space,
-            Item::Pictures { space_before, .. } => *space_before = space,
+            Item::Pictures { space_before, .. } | Item::Table { space_before, .. } => *space_before = space,
         }
         prev = Some((p.bottom, p.last_baseline));
         items.push(item);
@@ -703,15 +791,42 @@ type AddBand<'a> = dyn FnMut(Vec<Line>, Vec<Picture>, &[(f32, f32)], &mut Vec<Ba
 
 /// Lay out one page.
 pub fn layout_page(page: &PageInput) -> PageLayout {
-    let lines = build_lines(&page.glyphs);
+    // Ruled tables take the glyphs inside them; generated spaces follow the glyph before them.
+    let found = find_tables(&page.rules);
+    let mut outside: Vec<Glyph> = Vec::new();
+    let mut cell_glyphs: Vec<Vec<Vec<Glyph>>> = found.iter().map(|t| vec![Vec::new(); t.cells.len()]).collect();
+    let mut dest: Option<(usize, usize)> = None;
+    for g in &page.glyphs {
+        if !g.generated {
+            let (cx, cy) = ((g.left + g.right) / 2.0, (g.bottom + g.top) / 2.0);
+            dest = found
+                .iter()
+                .enumerate()
+                .find_map(|(ti, t)| t.contains(cx, cy).then(|| t.cell_at(cx, cy).map(|c| (ti, c))).flatten());
+        }
+        match dest {
+            Some((ti, ci)) => cell_glyphs[ti][ci].push(g.clone()),
+            None => outside.push(g.clone()),
+        }
+    }
+    let lines = build_lines(&outside);
     let body = body_size(&lines);
+    let table_items: Vec<TableItem> = found.iter().zip(cell_glyphs).map(|(t, cg)| table_item(t, cg, body)).collect();
+    let table_pics: Vec<Picture> = found
+        .iter()
+        .enumerate()
+        .map(|(i, t)| Picture {
+            id: TABLE_ID_BASE + i,
+            rect: Rect { left: t.left(), bottom: t.bottom(), right: t.right(), top: t.top() },
+        })
+        .collect();
     let page_area = (page.width * page.height).max(1.0);
     // Backgrounds: pictures over half the page that text overlaps.
     let (backgrounds, pictures): (Vec<Picture>, Vec<Picture>) = page.pictures.iter().cloned().partition(|p| {
         p.rect.width() * p.rect.height() > 0.5 * page_area && lines.iter().any(|l| l.rect.overlaps(&p.rect))
     });
     let pictures: Vec<Picture> =
-        pictures.into_iter().filter(|p| p.rect.width() >= 2.0 && p.rect.height() >= 2.0).collect();
+        pictures.into_iter().filter(|p| p.rect.width() >= 2.0 && p.rect.height() >= 2.0).chain(table_pics).collect();
 
     let mut content: Option<Rect> = None;
     for r in lines.iter().map(|l| l.rect).chain(pictures.iter().map(|p| p.rect)) {
@@ -765,7 +880,8 @@ pub fn layout_page(page: &PageInput) -> PageLayout {
             let in_col = |x: f32| x >= c0 - 0.5 && x <= c1 + 0.5 || edges.len() == 1;
             let col_lines: Vec<Line> = band_lines.iter().filter(|l| in_col(l.rect.cx())).cloned().collect();
             let col_pics: Vec<Picture> = band_pics.iter().filter(|p| in_col(p.rect.cx())).cloned().collect();
-            let (items, s, f, end) = column_items(col_lines, col_pics, (c0, c1), body, &heading_sizes, start);
+            let (items, s, f, end) =
+                column_items(col_lines, col_pics, (c0, c1), body, &heading_sizes, start, &table_items);
             shrunk_pictures += s;
             floating.extend(f);
             if let Some(e) = end {
@@ -839,6 +955,7 @@ pub fn layout_page(page: &PageInput) -> PageLayout {
         backgrounds,
         floating,
         shrunk_pictures,
+        tables: found,
     }
 }
 
@@ -849,7 +966,12 @@ fn emitted_chars(layout: &PageLayout) -> HashMap<char, usize> {
     for b in &layout.bands {
         for c in &b.columns {
             for it in &c.items {
-                if let Item::Para(p) = it {
+                let paras: Vec<&Paragraph> = match it {
+                    Item::Para(p) => vec![p],
+                    Item::Table { table, .. } => table.cells.iter().flat_map(|c| c.paragraphs.iter()).collect(),
+                    Item::Pictures { .. } => vec![],
+                };
+                for p in paras {
                     for r in &p.runs {
                         for ch in r.text.chars().filter(|c| !c.is_whitespace()) {
                             *m.entry(ch).or_default() += 1;
@@ -908,7 +1030,7 @@ mod tests {
     }
 
     fn page(glyphs: Vec<Glyph>) -> PageInput {
-        PageInput { width: 612.0, height: 792.0, glyphs, pictures: vec![] }
+        PageInput { width: 612.0, height: 792.0, glyphs, pictures: vec![], rules: vec![] }
     }
 
     fn texts(l: &PageLayout) -> Vec<Vec<String>> {
