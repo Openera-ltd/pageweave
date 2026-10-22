@@ -36,6 +36,7 @@ mod pagelabels;
 mod patterns;
 mod properties;
 mod protect;
+pub mod reading;
 mod redact;
 pub mod resources;
 mod sanitize;

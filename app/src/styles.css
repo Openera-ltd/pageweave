@@ -861,6 +861,16 @@ textarea {
   pointer-events: none;
 }
 
+/* Read aloud: the word (or sentence) being heard. An outline as well as a tint, so it does not
+   depend on colour alone and stays visible over highlights. */
+.page .reading-mark {
+  position: absolute;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  outline: 2px solid var(--accent);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
 .page .hit.current {
   background: var(--hit-current);
   outline: 1px solid rgba(255, 120, 0, 0.9);
@@ -2155,4 +2165,29 @@ kbd,
 }
 .comment-main .hint {
   font-size: var(--font-size-1);
+}
+
+/* ---------- Read aloud bar ---------- */
+.readbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.readbar .status {
+  color: var(--text-muted);
+  font-size: var(--font-size-1);
+  min-width: 12ch;
+}
+
+.readbar .status.error {
+  color: var(--danger);
+}
+
+.readbar select {
+  max-width: 30ch;
 }

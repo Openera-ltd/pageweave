@@ -5,7 +5,7 @@ import { basename, dirname, join, siblingOutput, stem } from "../paths";
 import { toPwError, type AnnotationChange, type AnnotationSpec, type BookmarkInfo, type CollisionPolicy, type FieldValue, type PageEdit, type StampPosition, type JobSnapshot, type WatermarkLayer, type OpenedDoc, type Operation, type PwError } from "../types";
 import { Dialog, useDebounced } from "./ui";
 
-export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop" | "text" | "word" | "slides" | "tables" | "optimize" | "deskew" | "extractImages" | "orient";
+export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop" | "text" | "word" | "slides" | "audio" | "tables" | "optimize" | "deskew" | "extractImages" | "orient";
 
 const TITLES: Record<PageTool, string> = {
   extract: "Extract pages",
@@ -22,6 +22,7 @@ const TITLES: Record<PageTool, string> = {
   text: "Export as text",
   word: "Convert to Word",
   slides: "Convert to PowerPoint",
+  audio: "Save as audio",
   tables: "Export tables",
   optimize: "Reduce file size",
   deskew: "Straighten pages",
@@ -30,7 +31,7 @@ const TITLES: Record<PageTool, string> = {
 };
 
 /** Start-button label (the title's first word does not fit every tool). */
-const START: Partial<Record<PageTool, string>> = { slides: "Convert", tables: "Export", word: "Convert", ocr: "Recognize", watermark: "Add watermark", crop: "Crop", text: "Export", optimize: "Reduce size", deskew: "Straighten", extractImages: "Extract", orient: "Turn upright" };
+const START: Partial<Record<PageTool, string>> = { audio: "Save audio", slides: "Convert", tables: "Export", word: "Convert", ocr: "Recognize", watermark: "Add watermark", crop: "Crop", text: "Export", optimize: "Reduce size", deskew: "Straighten", extractImages: "Extract", orient: "Turn upright" };
 
 const SUFFIX: Record<PageTool, string> = {
   extract: "extract",
@@ -47,6 +48,7 @@ const SUFFIX: Record<PageTool, string> = {
   text: "",
   word: "",
   slides: "",
+  audio: "",
   tables: "",
   optimize: "smaller",
   deskew: "straightened",
@@ -55,7 +57,7 @@ const SUFFIX: Record<PageTool, string> = {
 };
 
 /** Tools that offer "All pages" (on by default unless pages were preselected). */
-const ALL_PAGES_TOOLS: PageTool[] = ["rotate", "stamp", "images", "ocr", "watermark", "crop", "text", "word", "slides", "tables", "deskew", "extractImages", "orient"];
+const ALL_PAGES_TOOLS: PageTool[] = ["rotate", "stamp", "images", "ocr", "watermark", "crop", "text", "word", "slides", "audio", "tables", "deskew", "extractImages", "orient"];
 
 export type CropUnit = "mm" | "in" | "pt";
 /** Points per unit. */
@@ -116,6 +118,9 @@ interface Props {
   jobs: Record<string, JobSnapshot>;
   onClose: () => void;
   onFinished: (job: JobSnapshot) => void;
+  /** For the audio tool: the read-aloud voice (null = default) and speed. */
+  readVoice?: string | null;
+  readRate?: number;
 }
 
 type RangeCheck = { state: "idle" | "checking" } | { state: "ok"; count: number } | { state: "error"; message: string };
@@ -142,7 +147,7 @@ function useRangeCheck(docId: number, spec: string, enabled: boolean): RangeChec
   return check;
 }
 
-export function PageToolsDialog({ tool, doc, initialPages, annotations, formValues, objectEdits, annotationChanges, jobs, onClose, onFinished }: Props) {
+export function PageToolsDialog({ tool, doc, initialPages, annotations, formValues, objectEdits, annotationChanges, jobs, onClose, onFinished, readVoice = null, readRate = 1 }: Props) {
   const nAnnots = annotations?.length ?? 0;
   const nFields = formValues?.length ?? 0;
   const nObjects = (objectEdits ?? []).reduce((n, p) => n + p.edits.length, 0);
@@ -182,6 +187,8 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
           ? join(dirname(doc.path), `${stem(doc.path)}.docx`)
           : tool === "slides"
             ? join(dirname(doc.path), `${stem(doc.path)}.pptx`)
+          : tool === "audio"
+            ? join(dirname(doc.path), `${stem(doc.path)}.wav`)
           : tool === "tables"
             ? join(dirname(doc.path), `${stem(doc.path)}.xlsx`)
             : siblingOutput(doc.path, suffix),
@@ -322,6 +329,8 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         return { op: "convert_to_docx", input: doc.path, pages: allPages ? null : pages, output };
       case "slides":
         return { op: "convert_to_pptx", input: doc.path, pages: allPages ? null : pages, output };
+      case "audio":
+        return { op: "read_aloud_to_wav", input: doc.path, pages: allPages ? null : pages, voice: readVoice, rate: readRate, output };
       case "tables":
         return { op: "export_tables", input: doc.path, pages: allPages ? null : pages, format: sheetFormat, output };
       case "crop":
@@ -370,6 +379,9 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
     } else if (tool === "slides") {
       const p = await api.pickSaveAnyPath(output);
       if (p) setOutput(/\.pptx$/i.test(p) ? p : `${p}.pptx`);
+    } else if (tool === "audio") {
+      const p = await api.pickSaveAnyPath(output);
+      if (p) setOutput(/\.wav$/i.test(p) ? p : `${p}.wav`);
     } else if (tool === "tables") {
       const p = await api.pickSaveAnyPath(output);
       if (p) setOutput(/\.xlsx$/i.test(p) ? p : `${p}.xlsx`);
@@ -814,6 +826,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         {tool === "split" && splitMode !== "bookmarks" && <span className="hint">Files are named “{doc.name.replace(/\.pdf$/i, "")}_part01.pdf”, …</span>}
         {tool === "extractImages" && <span className="hint">JPEG images are saved exactly as stored; others as PNG. Repeated images are saved once.</span>}
         {tool === "text" && <span className="hint">UTF-8 text, one section per page. Scanned pages need text recognition first.</span>}
+        {tool === "audio" && <span className="hint">The pages read aloud with the read-aloud voice and speed ({readRate}×), as a WAV file.</span>}
         {tool === "slides" && <span className="hint">One slide per page with editable text boxes, tables and pictures. Slides take the first page's size.</span>}
         {tool === "word" && <span className="hint">Editable text, headings, columns, pictures and links. Scanned pages need text recognition first.</span>}
         {tool === "images" && <span className="hint">PNG files named “{doc.name.replace(/\.pdf$/i, "")}_p001.png”, …</span>}

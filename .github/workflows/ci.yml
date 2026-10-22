@@ -55,11 +55,19 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - name: System libraries (WebKitGTK, WebDriver, virtual display; LibreOffice for the Word round trip)
+      - name: System libraries (WebKitGTK, WebDriver, virtual display; LibreOffice for the Word round trip; flite and a virtual sound device for read aloud)
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev webkit2gtk-driver xvfb \
-            libreoffice-writer-nogui libreoffice-calc-nogui libreoffice-impress-nogui fonts-dejavu-core fonts-liberation
+            libreoffice-writer-nogui libreoffice-calc-nogui libreoffice-impress-nogui fonts-dejavu-core fonts-liberation \
+            flite pulseaudio gstreamer1.0-pulseaudio
+      - name: Virtual sound output (read aloud plays into a null sink; no sound hardware on the runner)
+        run: |
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=e2e
+          pactl set-default-sink e2e
+          echo "PULSE_SERVER=$(pactl info | sed -n 's/^Server String: //p')" >> "$GITHUB_ENV"
+          pactl info | grep -E "Server String|Default Sink"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy

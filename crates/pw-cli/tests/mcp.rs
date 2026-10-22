@@ -283,7 +283,7 @@ fn write_tools_create_verified_new_files_and_leave_sources_alone() {
     let before = std::fs::read(root.path().join("five-pages.pdf")).expect("read");
     let mut c = Client::start(&[root.path()], true);
     let names = tool_names(&mut c);
-    assert_eq!(names.len(), 22, "{names:?}");
+    assert_eq!(names.len(), 23, "{names:?}");
 
     let r = c.ok("extract_pages", json!({ "path": "five-pages.pdf", "pages": "4, 2", "output": "ex.pdf" }));
     assert_eq!(r["outputs"][0]["pages"], 2);
@@ -333,6 +333,20 @@ fn write_tools_create_verified_new_files_and_leave_sources_alone() {
             "office.not_installed"
         );
     }
+    if pw_speech::engine_info().is_ok() {
+        let a = c.ok(
+            "read_aloud_to_wav",
+            json!({ "path": "five-pages.pdf", "pages": "1", "rate": 1.5, "output": "p1.wav" }),
+        );
+        assert_eq!(a["data"]["pages"], 1, "{a}");
+        assert!(std::fs::read(root.path().join("p1.wav")).expect("wav").starts_with(b"RIFF"));
+    } else {
+        assert!(std::env::var("PW_SKIP_SPEECH").as_deref() == Ok("1"), "a speech engine is required for this test");
+    }
+    assert_eq!(
+        c.err("read_aloud_to_wav", json!({ "path": "five-pages.pdf", "output": "p1.mp3" })),
+        "mcp.output_extension"
+    );
     let t = c.ok("export_tables", json!({ "path": "tables.pdf", "output": "t.xlsx" }));
     assert_eq!(t["data"]["tables"], 2, "{t}");
     assert_eq!(c.err("export_tables", json!({ "path": "five-pages.pdf", "output": "n.xlsx" })), "tables.none");

@@ -326,3 +326,9 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - CI #92 (Windows): `resources` exited non-zero because the optional Office entry (no LibreOffice on the runner) counted as missing → the exit code now follows required capabilities only; the CLI test checks it with LibreOffice hidden.
 - Ran: fmt, clippy, all Rust tests, vitest 130, control audit, licenses, full E2E 82/82.
 - Not done: wrapped cells merged into one row; borderless tables in Word/PowerPoint export; a real-document benchmark.
+
+## 2026-10-22 — Session 2, checkpoint 18: read aloud (TTS-HL-001, D-021)
+- New crate `pw-speech` (sentence splitting, WAV reading/writing, WinRT backend with word timings, flite backend with sentence timings); `pw-pdf::reading` (reading-order page text with word rectangles; layout paragraphs now carry a box per character); `ReadCall::ReadingText`; op `read_aloud_to_wav`, CLI `speak`, MCP `read_aloud_to_wav` (23 tools); settings `read_voice`/`read_rate` (validated, repaired); Settings ▸ Resources "Read aloud".
+- App: `ReadAloudBar` (paragraph queue across pages, prefetch, highlight from audio position, pause/resume, sentence steps, speed/voice restart, Follow after manual scrolling, errors with Try again), toolbar button, Ctrl+Shift+L, selection and page menus, page tool "Save as audio".
+- Found while testing in the real app: WebKitGTK's `<audio>` reported "not supported" for WAV data/blob URLs even with a working GStreamer and sound device, while Web Audio decoded and played → playback through Web Audio. The container (and CI) has no sound hardware → a PulseAudio null sink for E2E.
+- Ran: pw-speech unit tests, pw-pdf reading tests 2/2, CLI/MCP tests, vitest (142), E2E "read aloud" passes; `cargo clippy -p pw-speech --target x86_64-pc-windows-msvc` clean (the Windows backend is type-checked here, run on Windows CI).

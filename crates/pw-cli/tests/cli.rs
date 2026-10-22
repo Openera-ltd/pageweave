@@ -1082,6 +1082,44 @@ fn tables_export_to_xlsx_and_csv() {
 }
 
 #[test]
+fn speak_lists_voices_and_reads_pages_into_a_wav() {
+    let dir = tempfile::tempdir().expect("tmp");
+    if pw_speech::engine_info().is_err() {
+        assert!(std::env::var("PW_SKIP_SPEECH").as_deref() == Ok("1"), "a speech engine is required for this test");
+        let r = bin().args(["--json", "speak"]).output().expect("run");
+        assert_eq!(json(&r)["error"]["code"], "speech.unavailable");
+        return;
+    }
+    let voices = bin().args(["--json", "speak"]).output().expect("run");
+    let v = json(&voices);
+    assert!(voices.status.success(), "{v}");
+    let list = v["result"]["voices"].as_array().expect("voices");
+    assert!(list.iter().filter(|x| x["default"] == true).count() == 1, "{v}");
+    let out = dir.path().join("p1.wav");
+    let r = bin()
+        .args(["--json", "speak", "--pages", "1", "--rate", "1.25", "-o"])
+        .arg(&out)
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    let v = json(&r);
+    assert!(r.status.success(), "{v}");
+    assert_eq!(v["result"]["operation"], "read_aloud_to_wav");
+    assert_eq!(v["result"]["data"]["sentences"], 3, "{v}");
+    assert!(std::fs::read(&out).expect("wav").starts_with(b"RIFF"));
+    // A PDF without -o is a usage error; a bad speed is refused.
+    let r = bin().args(["--json", "speak"]).arg(fixture("five-pages.pdf")).output().expect("run");
+    assert_eq!(r.status.code(), Some(2));
+    let r = bin()
+        .args(["--json", "speak", "--rate", "9", "-o"])
+        .arg(dir.path().join("x.wav"))
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert_eq!(json(&r)["error"]["code"], "speech.rate");
+}
+
+#[test]
 fn to_pptx_writes_one_slide_per_page() {
     let dir = tempfile::tempdir().expect("tmp");
     let out = dir.path().join("a.pptx");

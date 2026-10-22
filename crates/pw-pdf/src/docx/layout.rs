@@ -111,6 +111,9 @@ pub struct Paragraph {
     pub tabs: Vec<f32>,
     /// Where its lines are on the page (for slide export).
     pub rect: Rect,
+    /// Where each character of the runs' text is on the page, in order (read-aloud highlighting).
+    /// Spaces joining lines take the position of the character before them.
+    pub boxes: Vec<Rect>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -481,8 +484,9 @@ fn same_style(a: &Glyph, b: &Glyph) -> bool {
         && a.link == b.link
 }
 
-fn runs_of(lines: &[Line]) -> Vec<Run> {
+fn runs_of(lines: &[Line]) -> (Vec<Run>, Vec<Rect>) {
     let mut runs: Vec<Run> = Vec::new();
+    let mut boxes: Vec<Rect> = Vec::new();
     let mut last_style: Option<(Glyph, VertAlign)> = None;
     for (k, line) in lines.iter().enumerate() {
         let n = line.glyphs.len();
@@ -506,6 +510,7 @@ fn runs_of(lines: &[Line]) -> Vec<Run> {
             let joins = runs.last().is_some_and(|r: &Run| {
                 last_style.as_ref().is_some_and(|(s, v)| same_style(s, &style) && *v == vert) && !r.text.is_empty()
             });
+            boxes.push(rect_of(g));
             if joins {
                 runs.last_mut().expect("run").text.push(g.ch);
             } else {
@@ -529,12 +534,14 @@ fn runs_of(lines: &[Line]) -> Vec<Run> {
                 if let Some(r) = runs.last_mut() {
                     if !r.text.ends_with(' ') {
                         r.text.push(' ');
+                        let at = boxes.last().copied().unwrap_or(line.rect);
+                        boxes.push(Rect { left: at.right, right: at.right, ..at });
                     }
                 }
             }
         }
     }
-    runs
+    (runs, boxes)
 }
 
 fn median(mut v: Vec<f32>) -> Option<f32> {
@@ -622,7 +629,10 @@ fn make_paragraph(
         top: a.top.max(l.rect.top),
     });
     (
-        Paragraph { runs: runs_of(p), align, indent, first_line, space_before: 0.0, pitch, heading, tabs, rect },
+        {
+            let (runs, boxes) = runs_of(p);
+            Paragraph { runs, align, indent, first_line, space_before: 0.0, pitch, heading, tabs, rect, boxes }
+        },
         top,
         bottom,
     )

@@ -171,6 +171,9 @@ export interface Settings {
   recent_files: string[];
   shortcuts: Record<string, string>;
   restore_session: boolean;
+  /** Read aloud voice id (system default when null) and speed (0.5–2). */
+  read_voice: string | null;
+  read_rate: number;
 }
 
 export type CollisionPolicy = "fail" | "rename" | "replace";
@@ -333,6 +336,7 @@ export type Operation =
   | { op: "optimize"; input: string; images: { max_dpi: number; quality: number } | null; output: string }
   | { op: "export_text"; input: string; pages: string | null; output: string }
   | { op: "convert_to_docx"; input: string; pages: string | null; output: string }
+  | { op: "read_aloud_to_wav"; input: string; pages: string | null; voice: string | null; rate: number; output: string }
   | { op: "convert_to_pptx"; input: string; pages: string | null; output: string }
   | { op: "convert_office_to_pdf"; input: string; output: string }
   | { op: "export_tables"; input: string; pages: string | null; format: "xlsx" | "csv"; output: string }
@@ -530,4 +534,49 @@ export interface EditableObjects {
   rotation: number;
   texts: EditableText[];
   images: EditableImage[];
+}
+
+/** The computer's speech engine (read aloud). */
+export interface SpeechVoice {
+  id: string;
+  name: string;
+  language: string;
+  default: boolean;
+}
+
+export interface SpeechInfo {
+  name: string;
+  /** Whether highlighting follows words or whole sentences. */
+  precision: "word" | "sentence";
+  voices: SpeechVoice[];
+}
+
+/** One page's text in reading order; offsets count Unicode characters (use Array.from). */
+export interface ReadingWord {
+  start: number;
+  end: number;
+  rects: SearchRect[];
+}
+
+export interface ReadingPage {
+  page: number;
+  text: string;
+  words: ReadingWord[];
+}
+
+/** A stretch of spoken text (character offsets) and when it is heard (ms from the start). */
+export interface SpeechMark {
+  start: number;
+  end: number;
+  start_ms: number;
+  end_ms: number;
+}
+
+export interface Spoken {
+  /** WAV data URL. */
+  audio: string;
+  duration_ms: number;
+  sentences: SpeechMark[];
+  words: SpeechMark[];
+  precision: "word" | "sentence";
 }

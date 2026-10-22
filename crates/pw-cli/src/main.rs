@@ -148,6 +148,21 @@ enum Command {
         #[arg(short, long)]
         output: PathBuf,
     },
+    /// Read pages aloud with the computer's speech voice into a WAV file (-o file.wav). Without
+    /// -o, list the voices.
+    Speak {
+        file: Option<PathBuf>,
+        #[arg(long)]
+        pages: Option<String>,
+        /// A voice id from `speak` without a file (the default voice when absent).
+        #[arg(long)]
+        voice: Option<String>,
+        /// 0.5 to 2 (1 is normal).
+        #[arg(long, default_value_t = 1.0)]
+        rate: f32,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
     /// Convert to a PowerPoint presentation (.pptx), one slide per page: text boxes, tables,
     /// pictures and links; a report says what could not be carried over.
     ToPptx {
@@ -715,6 +730,16 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
         Command::FromOffice { file, output } => {
             Operation::ConvertOfficeToPdf { input: file.clone(), output: output.clone() }
         }
+        Command::Speak { file: Some(file), pages, voice, rate, output: Some(output) } => Operation::ReadAloudToWav {
+            input: file.clone(),
+            pages: pages.clone(),
+            voice: voice.clone(),
+            rate: *rate,
+            output: output.clone(),
+        },
+        Command::Speak { .. } => {
+            return Err(PwError::invalid("usage", "Give a PDF and -o file.wav, or nothing to list the voices."))
+        }
         Command::ToPptx { file, pages, output } => {
             Operation::ConvertToPptx { input: file.clone(), pages: pages.clone(), output: output.clone() }
         }
@@ -1172,6 +1197,20 @@ fn print_human(r: &OperationResult) {
                 println!("Wrote {} ({} bytes, {} pages)", o.path.display(), o.bytes, o.pages.unwrap_or(0));
             }
         }
+        "read_aloud_to_wav" => {
+            let d = &r.data;
+            for o in &r.outputs {
+                println!("Wrote {} ({} bytes)", o.path.display(), o.bytes);
+            }
+            println!(
+                "Pages: {}, sentences: {}, length: {:.1} s, voice: {} ({})",
+                d["pages"],
+                d["sentences"],
+                d["duration_ms"].as_f64().unwrap_or(0.0) / 1000.0,
+                d["voice"].as_str().unwrap_or(""),
+                d["engine"].as_str().unwrap_or("")
+            );
+        }
         "convert_to_pptx" => {
             let d = &r.data;
             for o in &r.outputs {
@@ -1425,6 +1464,20 @@ fn run() -> ExitCode {
         };
     }
     let outcome = (|| -> Result<serde_json::Value, PwError> {
+        if let Command::Speak { file: None, output: None, .. } = &cli.command {
+            let info = pw_speech::engine_info()?;
+            if !cli.json {
+                for v in &info.voices {
+                    println!("{} {}  {}  {}", if v.default { "*" } else { " " }, v.id, v.language, v.name);
+                }
+                let by = match info.precision {
+                    pw_speech::Precision::Word => "word",
+                    pw_speech::Precision::Sentence => "sentence",
+                };
+                println!("Engine: {} (timings by {by})", info.name);
+            }
+            return Ok(serde_json::to_value(info).unwrap_or_default());
+        }
         let Some(mut req) = build_request(&cli)? else {
             return Ok(capabilities());
         };

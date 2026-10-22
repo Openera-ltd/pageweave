@@ -295,6 +295,25 @@ pub const TOOLS: &[Tool] = &[
         },
     },
     Tool {
+        name: "read_aloud_to_wav",
+        title: "Read aloud to an audio file",
+        description: "Read all or chosen pages aloud with this computer's speech voice into a WAV file (mono 16-bit). Text is read in reading order (columns one after another, tables cell by cell). Pages without text (scans) are skipped; run recognize_text first for those.",
+        effect: Effect::WritesNewFiles,
+        long: true,
+        schema: || {
+            obj(
+                json!({
+                    "path": path_prop("Source PDF"),
+                    "pages": { "type": "string", "description": PAGES },
+                    "voice": { "type": "string", "description": "Voice id (see the app or `pageweave speak`); the default voice when absent" },
+                    "rate": { "type": "number", "minimum": 0.5, "maximum": 2.0, "description": "Speed, 1 is normal" },
+                    "output": path_prop("New .wav file (must not exist)")
+                }),
+                &["path", "output"],
+            )
+        },
+    },
+    Tool {
         name: "convert_to_pptx",
         title: "Convert to PowerPoint",
         description: "Convert all or chosen pages to a PowerPoint presentation (.pptx), one slide per page with editable text boxes, tables, pictures and links. The result reports what could not be carried over.",
@@ -389,6 +408,19 @@ struct PagesOutArg {
 #[serde(deny_unknown_fields)]
 struct PathOutArg {
     path: String,
+    output: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpeakArg {
+    path: String,
+    #[serde(default)]
+    pages: Option<String>,
+    #[serde(default)]
+    voice: Option<String>,
+    #[serde(default)]
+    rate: Option<f32>,
     output: String,
 }
 
@@ -592,6 +624,16 @@ pub fn operation(tool: &Tool, a: &Value, roots: &Roots) -> PwResult<Operation> {
         "convert_office_to_pdf" => {
             let x: PathOutArg = args(a)?;
             Operation::ConvertOfficeToPdf { input: roots.input(&x.path)?, output: pdf(&x.output)? }
+        }
+        "read_aloud_to_wav" => {
+            let x: SpeakArg = args(a)?;
+            Operation::ReadAloudToWav {
+                input: roots.input(&x.path)?,
+                pages: x.pages,
+                voice: x.voice,
+                rate: x.rate.unwrap_or(1.0),
+                output: roots.output(&x.output, &["wav"])?,
+            }
         }
         "convert_to_pptx" => {
             let x: OptPagesOutArg = args(a)?;

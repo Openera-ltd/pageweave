@@ -545,6 +545,31 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(w);
             (vec![out(&c, Some(report.pages))], serde_json::to_value(&report).unwrap_or_default())
         }
+        Operation::ReadAloudToWav { input, pages, voice, rate, output } => {
+            let page_progress = |done: u64, total: u64| {
+                if let Some(c) = ctx {
+                    c.set_progress(done, total, "pages");
+                }
+            };
+            let (c, report) = crate::reading::read_aloud_to_wav(
+                input,
+                &opts,
+                pages.as_deref(),
+                voice.as_deref(),
+                *rate,
+                output,
+                policy,
+                &cancelled,
+                &page_progress,
+            )?;
+            if report.pages_without_text > 0 {
+                warnings.push(format!(
+                    "{} of {} pages have no text and were skipped.",
+                    report.pages_without_text, report.pages
+                ));
+            }
+            (vec![out(&c, None)], serde_json::to_value(&report).unwrap_or_default())
+        }
         Operation::ConvertToPptx { input, pages, output } => {
             let page_progress = |done: u64, total: u64| {
                 if let Some(c) = ctx {

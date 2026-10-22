@@ -21,6 +21,7 @@ tauri-build = { version = "=2.7.3", features = [] }
 [dependencies]
 pw-core.workspace = true
 pw-pdf.workspace = true
+pw-speech.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true

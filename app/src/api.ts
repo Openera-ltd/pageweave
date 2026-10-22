@@ -19,6 +19,9 @@ import type {
   OperationRequest,
   FormInfo,
   PageText,
+  ReadingPage,
+  SpeechInfo,
+  Spoken,
   RecoveredJob,
   SanitizeFindings,
   SignatureReport,
@@ -82,6 +85,12 @@ export interface Api {
   pickOfficeFile(): Promise<string | null>;
   /** The installed LibreOffice ("LibreOffice 24.2…"), or null. */
   officeEngine(): Promise<string | null>;
+  /** The speech engine and its voices (fails with speech.unavailable when there is none). */
+  speechInfo(): Promise<SpeechInfo>;
+  /** One page's text in reading order with word positions. */
+  readingText(docId: number, page: number): Promise<ReadingPage>;
+  /** Speak a paragraph: audio plus timings. */
+  speakText(text: string, voice: string | null, rate: number): Promise<Spoken>;
   /** A signing certificate file (.pfx/.p12). */
   pickCertificateFile(): Promise<string | null>;
   /** Any files (no type filter), e.g. to attach. */
@@ -165,6 +174,9 @@ export const tauriApi: Api = {
     return typeof r === "string" ? r : null;
   },
   officeEngine: () => invoke("office_engine"),
+  speechInfo: () => invoke("speech_info"),
+  readingText: (docId, page) => invoke("reading_text", { docId, page }),
+  speakText: (text, voice, rate) => invoke("speak_text", { text, voice, rate }),
   pickCertificateFile: async () => {
     const r = await openDialog({ multiple: false, directory: false, filters: [{ name: "Certificate files", extensions: ["pfx", "p12"] }] });
     return typeof r === "string" ? r : null;

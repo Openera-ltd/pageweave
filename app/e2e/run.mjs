@@ -1448,6 +1448,83 @@ await test("convert to PowerPoint: one slide per page with text boxes, table and
   assert(s2.includes("<a:tbl>") && s2.includes("Station"), "slide 2: table");
 });
 
+await test("read aloud: words highlighted as heard, pause/resume, next sentence, speed saved, stop; save as audio", async () => {
+  const src = join(FIX, "article.pdf");
+  const out = join(work, "article-page2.wav");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    // Shortcut starts reading at the current page.
+    await s.keys(["Control", "Shift", "l"]);
+    await s.waitFor('[data-testid="readbar"]');
+    await axeCheck(s, "read-aloud-bar");
+    await s.waitUntil(async () => ["playing", "error"].includes(await s.exec("return document.querySelector('[data-testid=readbar]').dataset.status")), "reading starts", 30000);
+    const status = await s.exec("return document.querySelector('[data-testid=readbar]').dataset.status");
+    assert(status === "playing", `reading plays (status ${status}: ${await s.text('[data-testid="readbar"] [role="status"]')})`);
+    // The highlight moves with the audio.
+    await s.waitFor('.reading-mark[data-reading="0"]', 15000);
+    writeFileSync(join(ART, "read-aloud.png"), await s.screenshot());
+    const w1 = Number(await s.exec("return document.querySelector('[data-testid=readbar]').dataset.where"));
+    await s.waitUntil(async () => Number(await s.exec("return document.querySelector('[data-testid=readbar]').dataset.where")) > w1, "highlight advances", 15000);
+    // Pause stops the highlight; resume continues.
+    await s.click('[data-testid="read-toggle"]');
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=readbar]').dataset.status")) === "paused", "paused");
+    const w2 = Number(await s.exec("return document.querySelector('[data-testid=readbar]').dataset.where"));
+    await new Promise((r) => setTimeout(r, 800));
+    assert(Number(await s.exec("return document.querySelector('[data-testid=readbar]').dataset.where")) === w2, "no movement while paused");
+    await s.click('[data-testid="read-toggle"]');
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=readbar]').dataset.status")) === "playing", "resumed");
+    // Next sentence jumps ahead.
+    await s.click('[data-testid="read-next"]');
+    await s.waitUntil(async () => Number(await s.exec("return document.querySelector('[data-testid=readbar]').dataset.where")) > w2, "next sentence");
+    // A new speed restarts the sentence and is saved.
+    await s.exec("const e = document.querySelector('#read-rate'); e.value = '1.5'; e.dispatchEvent(new Event('change', { bubbles: true }));");
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=readbar]').dataset.status")) === "playing", "playing at 1.5x", 30000);
+    // Scrolling by hand stops following until Follow is pressed.
+    await s.exec("document.querySelector('[data-testid=viewer]').dispatchEvent(new WheelEvent('wheel', { deltaY: 200, bubbles: true }))");
+    await s.waitFor('[data-testid="read-follow"]');
+    await s.click('[data-testid="read-follow"]');
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=read-follow]')")), "following again");
+    // Stop from the toolbar button.
+    await s.click('[data-command="read.stop"]');
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=readbar]')")), "bar closed");
+    assert(!(await s.exec("return !!document.querySelector('.reading-mark')")), "highlight removed");
+    // Read from a page's context menu, then stop with the palette command.
+    await s.exec("const p = document.querySelector('[data-page=\"1\"]'); p.scrollIntoView(); const r = p.getBoundingClientRect(); p.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: r.left + 40, clientY: r.top + 40 }))");
+    await s.click('[role="menuitem"][data-command="read.aloud"]');
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=readbar]')?.dataset.status")) === "playing", "reading page 2", 30000);
+    assert((await s.text('[data-testid="readbar"] [role="status"]')).includes("page 2"), "reads page 2");
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Stop reading");
+    await s.click('[role="option"][data-command="read.stop"]');
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=readbar]')")), "stopped from the palette");
+    // Save page 2 as audio with the saved speed.
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Save as audio");
+    await s.click('[role="option"][data-command="read.saveAudio"]');
+    await s.waitFor("#output");
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("article.wav"), "default name");
+    await s.type("#output", out);
+    await s.exec("const c = [...document.querySelectorAll('[role=dialog] input[type=checkbox]')].find((x) => x.checked); if (c) c.click();");
+    await s.type("#pages", "2");
+    await s.waitUntil(async () => (await s.text("#pages-msg")) === "1 page selected", "page 2 chosen");
+    await axeCheck(s, "save-audio-dialog");
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved article-page2.wav")), "saved notice", 120000);
+  });
+  const wav = readFileSync(out);
+  assert(wav.subarray(0, 4).toString() === "RIFF" && wav.subarray(8, 12).toString() === "WAVE", "a WAV file");
+  assert(wav.length > 44 + 16000, "with audio");
+  // The speed is kept across a restart.
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-command="read.aloud"]');
+    await s.waitFor('[data-testid="readbar"]');
+    assert((await s.exec("return document.querySelector('#read-rate').value")) === "1.5", "speed restored");
+    await s.click('[data-testid="read-stop"]');
+  });
+});
+
 await test("export tables: Excel workbook with values kept and merged cells; CSV files into a folder; nothing found is said", async () => {
   const src = join(FIX, "tables.pdf");
   const out = join(work, "tables-export.xlsx");
@@ -2780,14 +2857,14 @@ await test("batch: reduce size of the open files into a folder, again with exist
   assert(leftovers.length === 0, `no partial files left: ${leftovers}`);
 });
 
-await test("settings ▸ resources: PDF engine and text recognition verified against their checksums; check again", async () => {
+await test("settings ▸ resources: PDF engine and text recognition verified against their checksums, speech voices found; check again", async () => {
   await withApp([], async (s) => {
     await s.keys(["Control", ","]);
     await s.waitFor("#tab-resources");
     await s.click("#tab-resources");
     const states = () => s.exec("return [...document.querySelectorAll('[data-testid=resources-list] li')].map(l => l.dataset.resource + ':' + l.dataset.state)");
     // Office documents are optional (LibreOffice installed separately): ready or not installed.
-    await s.waitUntil(async () => /^\["pdf_engine:ready","text_recognition:ready","office_documents:(ready|missing)"\]$/.test(JSON.stringify(await states())), "required ready, optional listed", 30000);
+    await s.waitUntil(async () => /^\["pdf_engine:ready","text_recognition:ready","read_aloud:ready","office_documents:(ready|missing)"\]$/.test(JSON.stringify(await states())), "required ready, optional listed", 30000);
     const text = await s.text('[data-testid="resources-list"]');
     assert(!/\.onnx|\.dll|\.so|onnxruntime|pdfium/i.test(text), `no technical file or model names in the UI: ${text}`);
     await s.click('[data-testid="resources-check"]');

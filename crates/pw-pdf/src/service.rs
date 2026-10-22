@@ -35,6 +35,7 @@ pub enum ReadCall {
     Open { path: PathBuf },
     Render { path: PathBuf, page: u32, scale: f32 },
     PageText { path: PathBuf, page: u32 },
+    ReadingText { path: PathBuf, page: u32 },
     Search { path: PathBuf, query: String, match_case: bool, whole_word: bool },
     FormFields { path: PathBuf },
     RedactionPreview { path: PathBuf, areas: Vec<pw_core::ops::RedactArea> },
@@ -53,6 +54,7 @@ impl ReadCall {
             ReadCall::Open { path } => ("open", path, None),
             ReadCall::Render { path, page, .. } => ("render", path, Some(*page)),
             ReadCall::PageText { path, page } => ("page_text", path, Some(*page)),
+            ReadCall::ReadingText { path, page } => ("reading_text", path, Some(*page)),
             ReadCall::Search { path, .. } => ("search", path, None),
             ReadCall::FormFields { path } => ("form_fields", path, None),
             ReadCall::RedactionPreview { path, .. } => ("redaction_preview", path, None),
@@ -94,6 +96,7 @@ pub fn run_call(call: &ReadCall, password: Option<&str>) -> PwResult<ReadReply> 
             crate::render_page_png(path, &opts, *page, *scale).map(|(png, _, _)| ReadReply::Bytes(png))
         }
         ReadCall::PageText { path, page } => to_json(crate::page_text_segments(path, &opts, *page)),
+        ReadCall::ReadingText { path, page } => to_json(crate::reading::reading_text(path, &opts, *page)),
         ReadCall::Search { path, query, match_case, whole_word } => {
             crate::search(path, &opts, query, *match_case, *whole_word, &|| false)
                 .map(|(hits, truncated)| ReadReply::Json(json!({ "hits": hits, "truncated": truncated })))

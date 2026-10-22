@@ -192,8 +192,36 @@ fn path_rules(path: &PdfPagePathObject, rot: u32, w: f32, h: f32, origin: (f32, 
     out
 }
 
+/// How displayed coordinates relate to the page's own (unrotated) coordinates.
+#[derive(Debug, Clone, Copy)]
+struct Frame {
+    rot: u32,
+    w: f32,
+    h: f32,
+    origin: (f32, f32),
+}
+
+impl Frame {
+    /// A displayed rectangle in the page's own coordinates (as the viewer and search use).
+    fn to_page(self, r: &Rect) -> crate::SearchRect {
+        let back = |dx: f32, dy: f32| -> (f32, f32) {
+            let (x, y) = match self.rot {
+                90 => (self.w - dy, dx),
+                180 => (self.w - dx, self.h - dy),
+                270 => (dy, self.h - dx),
+                _ => (dx, dy),
+            };
+            (x + self.origin.0, y + self.origin.1)
+        };
+        let (ax, ay) = back(r.left, r.bottom);
+        let (bx, by) = back(r.right, r.top);
+        crate::SearchRect { left: ax.min(bx), bottom: ay.min(by), right: ax.max(bx), top: ay.max(by) }
+    }
+}
+
 struct Extracted {
     input: PageInput,
+    frame: Frame,
     /// Turned text, in engine order, split at line ends.
     turned: Vec<String>,
     recognized_layer: bool,
@@ -404,6 +432,7 @@ fn extract_page(page: &PdfPage, doc: &PdfDocument, shared: &mut Shared, with_pic
     }
     Ok(Extracted {
         input: PageInput { width: dw, height: dh, glyphs, pictures, rules },
+        frame: Frame { rot, w, h, origin },
         path_rules: path_rules_all,
         turned_upright,
         comments,
@@ -449,6 +478,7 @@ fn add_turned(layout: &mut PageLayout, turned: &[String]) {
                 heading: None,
                 tabs: Vec::new(),
                 rect: Rect { left: 0.0, bottom: 0.0, right: 0.0, top: 0.0 },
+                boxes: Vec::new(),
             })
         })
         .collect();
@@ -481,6 +511,97 @@ pub(crate) fn page_tables(page: &PdfPage, doc: &PdfDocument) -> PwResult<Vec<lay
     found.extend(layout::borderless_tables(&ex.input));
     found.sort_by(|a, b| b.rect.top.total_cmp(&a.rect.top).then(a.rect.left.total_cmp(&b.rect.left)));
     Ok(found)
+}
+
+/// One page's text in reading order (columns one after another, table cells row by row, turned
+/// text last), paragraphs separated by line ends, with where each word is on the page (in the
+/// page's own coordinates). Offsets count Unicode characters.
+pub(crate) fn page_reading(page: &PdfPage, doc: &PdfDocument) -> PwResult<crate::reading::ReadingPage> {
+    let mut shared = Shared {
+        media: Vec::new(),
+        media_by_hash: HashMap::new(),
+        links: Vec::new(),
+        link_ids: HashMap::new(),
+        fonts: BTreeSet::new(),
+    };
+    let ex = extract_page(page, doc, &mut shared, false)?;
+    let mut lay = layout::layout_page(&ex.input);
+    add_turned(&mut lay, &ex.turned);
+    let mut paras: Vec<&layout::Paragraph> = Vec::new();
+    for b in &lay.bands {
+        for c in &b.columns {
+            for it in &c.items {
+                match it {
+                    layout::Item::Para(p) => paras.push(p),
+                    layout::Item::Table { table, .. } => {
+                        for cell in &table.cells {
+                            paras.extend(cell.paragraphs.iter());
+                        }
+                    }
+                    layout::Item::Pictures { .. } => {}
+                }
+            }
+        }
+    }
+    let mut chars: Vec<char> = Vec::new();
+    let mut boxes: Vec<Option<Rect>> = Vec::new();
+    for p in paras {
+        let text: String = p.runs.iter().map(|r| r.text.as_str()).collect();
+        let n0 = chars.len();
+        for ch in text.chars() {
+            chars.push(if ch == '\t' { ' ' } else { ch });
+        }
+        let added = chars.len() - n0;
+        // Turned text has no positions; a mismatch (never expected) drops them rather than misplacing.
+        let have = p.boxes.len() == added;
+        boxes.extend((0..added).map(|i| have.then(|| p.boxes[i])));
+        while chars.last().is_some_and(|c| *c == ' ') && chars.len() > n0 {
+            chars.pop();
+            boxes.pop();
+        }
+        if chars.len() > n0 {
+            chars.push('\n');
+            boxes.push(None);
+        }
+    }
+    if chars.last() == Some(&'\n') {
+        chars.pop();
+        boxes.pop();
+    }
+    let mut words = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i].is_whitespace() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && !chars[i].is_whitespace() {
+            i += 1;
+        }
+        // One rectangle per line the word is on (a hyphenated word can span two).
+        let mut rects: Vec<Rect> = Vec::new();
+        for b in boxes[start..i].iter().flatten() {
+            if b.right <= b.left && b.top <= b.bottom {
+                continue;
+            }
+            match rects.last_mut() {
+                Some(r) if b.bottom < r.top && b.top > r.bottom && b.left >= r.left - 1.0 => {
+                    r.left = r.left.min(b.left);
+                    r.right = r.right.max(b.right);
+                    r.bottom = r.bottom.min(b.bottom);
+                    r.top = r.top.max(b.top);
+                }
+                _ => rects.push(*b),
+            }
+        }
+        words.push(crate::reading::ReadingWord {
+            start: start as u32,
+            end: i as u32,
+            rects: rects.iter().map(|r| ex.frame.to_page(r)).collect(),
+        });
+    }
+    Ok(crate::reading::ReadingPage { page: 0, text: chars.into_iter().collect(), words })
 }
 
 /// What the PDF's chosen pages hold, laid out for an editable document: shared by Word and

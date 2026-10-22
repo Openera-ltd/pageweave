@@ -690,6 +690,19 @@ pub enum Operation {
         input: PathBuf,
         output: PathBuf,
     },
+    /// Read pages (all when `pages` is absent) aloud with the computer's speech voice into a WAV
+    /// file (`voice`: an id from the speech engine, the default voice when absent; `rate`: 0.5–2,
+    /// 1 is normal).
+    ReadAloudToWav {
+        input: PathBuf,
+        #[serde(default)]
+        pages: Option<String>,
+        #[serde(default)]
+        voice: Option<String>,
+        #[serde(default = "normal_rate")]
+        rate: f32,
+        output: PathBuf,
+    },
     /// Convert pages (all when `pages` is absent) into a PowerPoint presentation (.pptx), one
     /// slide per page.
     ConvertToPptx {
@@ -980,6 +993,7 @@ pub const OPERATION_IDS: &[&str] = &[
     "export_text",
     "convert_to_docx",
     "convert_to_pptx",
+    "read_aloud_to_wav",
     "convert_office_to_pdf",
     "export_tables",
     "optimize",
@@ -1039,6 +1053,7 @@ impl Operation {
             Operation::ExportText { .. } => "export_text",
             Operation::ConvertToDocx { .. } => "convert_to_docx",
             Operation::ConvertToPptx { .. } => "convert_to_pptx",
+            Operation::ReadAloudToWav { .. } => "read_aloud_to_wav",
             Operation::ConvertOfficeToPdf { .. } => "convert_office_to_pdf",
             Operation::ExportTables { .. } => "export_tables",
             Operation::Optimize { .. } => "optimize",
@@ -1138,6 +1153,7 @@ impl Operation {
             | Operation::ExportText { input, .. }
             | Operation::ConvertToDocx { input, .. }
             | Operation::ConvertToPptx { input, .. }
+            | Operation::ReadAloudToWav { input, .. }
             | Operation::ConvertOfficeToPdf { input, .. }
             | Operation::ExportTables { input, .. }
             | Operation::Optimize { input, .. }
@@ -1205,6 +1221,7 @@ impl Operation {
             | Operation::ExportText { output, .. }
             | Operation::ConvertToDocx { output, .. }
             | Operation::ConvertToPptx { output, .. }
+            | Operation::ReadAloudToWav { output, .. }
             | Operation::ConvertOfficeToPdf { output, .. }
             | Operation::Optimize { output, .. }
             | Operation::Deskew { output, .. }
@@ -1279,6 +1296,15 @@ impl Operation {
                 let ok = output.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf"));
                 if !ok {
                     return Err(PwError::invalid("office.extension", "Save the PDF with a .pdf name."));
+                }
+            }
+            Operation::ReadAloudToWav { output, rate, .. } => {
+                let ok = output.extension().is_some_and(|e| e.eq_ignore_ascii_case("wav"));
+                if !ok {
+                    return Err(PwError::invalid("speech.extension", "Save the recording with a .wav name."));
+                }
+                if !rate.is_finite() || !(0.5..=2.0).contains(rate) {
+                    return Err(PwError::invalid("speech.rate", "The reading speed must be between 0.5× and 2×."));
                 }
             }
             Operation::ConvertToPptx { output, .. } => {
@@ -1830,6 +1856,10 @@ fn validate_page_edits(pages: &[PageEdits]) -> PwResult<()> {
         }
     }
     Ok(())
+}
+
+fn normal_rate() -> f32 {
+    1.0
 }
 
 #[cfg(test)]

@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 pw-core.workspace = true
 pw-ocr.workspace = true
+pw-speech.workspace = true
 pdfium-render.workspace = true
 image.workspace = true
 serde.workspace = true
@@ -40,6 +41,7 @@ quick-xml.workspace = true
 tempfile.workspace = true
 
 [dev-dependencies]
+pw-speech.workspace = true
 image.workspace = true
 lopdf.workspace = true
 tempfile.workspace = true

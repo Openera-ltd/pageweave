@@ -189,6 +189,46 @@ fn run_job(
     result
 }
 
+/// The computer's speech engine and voices (read aloud, D-021).
+#[tauri::command]
+async fn speech_info() -> CmdResult<pw_speech::EngineInfo> {
+    blocking(pw_speech::engine_info).await
+}
+
+/// One page's text in reading order with word positions (read aloud). Runs in a reader process.
+#[tauri::command]
+async fn reading_text(state: State<'_, AppState>, doc_id: DocId, page: u32) -> CmdResult<serde_json::Value> {
+    read(&state, doc_id, move |path| ReadCall::ReadingText { path, page }).await
+}
+
+#[derive(Serialize)]
+pub struct Spoken {
+    /// A WAV file as a data URL, for an audio element.
+    audio: String,
+    duration_ms: u32,
+    sentences: Vec<pw_speech::Mark>,
+    words: Vec<pw_speech::Mark>,
+    precision: pw_speech::Precision,
+}
+
+/// Speak a piece of text (a paragraph) with the system voice. No PDF is parsed here.
+#[tauri::command]
+async fn speak_text(text: String, voice: Option<String>, rate: f32) -> CmdResult<Spoken> {
+    use base64::Engine as _;
+    blocking(move || {
+        let s = pw_speech::speak(&text, &pw_speech::SpeakOptions { voice, rate }, &|| false)?;
+        let wav = pw_speech::wav::encode(s.sample_rate, &s.samples);
+        Ok(Spoken {
+            audio: format!("data:audio/wav;base64,{}", base64::engine::general_purpose::STANDARD.encode(wav)),
+            duration_ms: s.duration_ms(),
+            sentences: s.sentences,
+            words: s.words,
+            precision: s.precision,
+        })
+    })
+    .await
+}
+
 /// The LibreOffice installed on this computer, for opening Office files (D-019).
 #[tauri::command]
 async fn office_engine() -> CmdResult<Option<String>> {
@@ -571,6 +611,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_info,
             office_engine,
+            speech_info,
+            reading_text,
+            speak_text,
             get_settings,
             save_settings,
             open_document,

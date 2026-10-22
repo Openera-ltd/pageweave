@@ -3281,6 +3281,7 @@ dependencies = [
  "dunce",
  "pw-core",
  "pw-pdf",
+ "pw-speech",
  "serde",
  "serde_json",
  "tauri",
@@ -3719,6 +3720,7 @@ dependencies = [
  "pw-mcp",
  "pw-ocr",
  "pw-pdf",
+ "pw-speech",
  "serde_json",
  "tempfile",
  "zip",
@@ -3782,6 +3784,7 @@ dependencies = [
  "pdfium-render",
  "pw-core",
  "pw-ocr",
+ "pw-speech",
  "quick-xml",
  "regex",
  "ring",
@@ -3794,6 +3797,16 @@ dependencies = [
  "time",
  "x509-cert 0.2.5",
  "zip",
+]
+
+[[package]]
+name = "pw-speech"
+version = "0.1.0"
+dependencies = [
+ "pw-core",
+ "serde",
+ "tempfile",
+ "windows",
 ]
 
 [[package]]

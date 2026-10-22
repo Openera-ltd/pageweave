@@ -11,6 +11,7 @@ import {
   ZoomOut,
   MoveHorizontal,
   PencilLine,
+  Volume2,
   Type as TypeIcon,
 } from "lucide-react";
 import { useApi } from "./api";
@@ -48,6 +49,7 @@ import { applyAppearance } from "./theme";
 import { toPwError, type AppInfo, type AttachmentInfo, type CollisionPolicy, type FormField, type FormInfo, type FormValue, type JobSnapshot, type OpenedDoc, type Operation, type PwError, type RecoveredJob, type RedactArea, type SearchHit, type SearchRect, type Settings, type SignatureReport } from "./types";
 import { CommandButton, Menu, type MenuItemOrSeparator } from "./components/ui";
 import { Viewer, type ScrollRequest } from "./components/Viewer";
+import { ReadAloudBar, type ReadStart } from "./components/ReadAloudBar";
 import { Sidebar, type SidebarView } from "./components/Sidebar";
 import { PageToolsDialog, type PageTool } from "./components/PageToolsDialog";
 import { OrganizeDialog } from "./components/OrganizeDialog";
@@ -190,6 +192,23 @@ export function App() {
   useEffect(() => {
     api.officeEngine().then(setOfficeEngine).catch(() => setOfficeEngine(null));
   }, [api]);
+  // Read aloud: whether the computer has a speech voice (true, or why not; checked once), the
+  // open reader (one document at a time) and what it highlights.
+  const [speechReady, setSpeechReady] = useState<true | string>("Checking for speech voices…");
+  useEffect(() => {
+    api.speechInfo().then(
+      () => setSpeechReady(true),
+      (e) => setSpeechReady(toPwError(e).message),
+    );
+  }, [api]);
+  const [reader, setReader] = useState<(ReadStart & { docId: number }) | null>(null);
+  const [readMark, setReadMark] = useState<{ page: number; rects: SearchRect[] } | null>(null);
+  const [readFollow, setReadFollow] = useState(true);
+  const stopFollowing = useCallback(() => setReadFollow(false), []);
+  // A closed document is no longer read.
+  useEffect(() => {
+    if (reader && !tabs.some((t) => t.doc_id === reader.docId)) setReader(null);
+  }, [reader, tabs]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState<SearchState>(EMPTY_SEARCH);
   const [hits, setHits] = useState<SearchHit[]>([]);
@@ -947,6 +966,9 @@ export function App() {
     "pages.exportText": { run: () => openTool("text"), available: all(needDoc, noDialog) },
     "file.toWord": { run: () => openTool("word"), available: all(needDoc, noDialog) },
     "file.toPowerPoint": { run: () => openTool("slides"), available: all(needDoc, noDialog) },
+    "read.aloud": { run: () => startReading(), available: all(needDoc, () => speechReady) },
+    "read.stop": { run: () => setReader(null), available: () => (reader ? true : "Nothing is being read aloud.") },
+    "read.saveAudio": { run: () => openTool("audio"), available: all(needDoc, noDialog, () => speechReady) },
     "file.exportTables": { run: () => openTool("tables"), available: all(needDoc, noDialog) },
     "pages.labels": { run: () => setDialog({ kind: "pageLabels" }), available: all(needDoc, noDialog) },
     "pages.deskew": { run: () => openTool("deskew"), available: all(needDoc, noDialog) },
@@ -1039,6 +1061,21 @@ export function App() {
     run: run ?? (() => runCommand(id)),
   });
 
+  /** Read aloud from the selection's first word, or from the top of `page` (default: the current page). */
+  const startReading = (page?: number, rects?: Map<number, SearchRect[]> | null) => {
+    if (!active) return;
+    const sel = rects ?? (pageSelection() ? selectionRects() : null);
+    const first = sel ? [...sel.entries()].sort((a, b) => a[0] - b[0])[0] : undefined;
+    setReadFollow(true);
+    setReader((r) => ({
+      docId: active.doc_id,
+      page: page ?? first?.[0] ?? view.page,
+      at: null,
+      rect: page === undefined ? first?.[1][0] : undefined,
+      nonce: (r?.nonce ?? 0) + 1,
+    }));
+  };
+
   const pageMenu = (page: number, x: number, y: number) => {
     const n = page + 1;
     const multi = (active?.info.page_count ?? 0) > 1;
@@ -1072,6 +1109,7 @@ export function App() {
         ...(selected
           ? [
               { ...(item("edit.copy", "Copy", () => copySelection(selected), true) as Exclude<MenuItemOrSeparator, "separator">), shortcut: "Ctrl+C" },
+              { ...(item("read.aloud", "Read aloud from here", () => startReading(undefined, rects), speechReady) as Exclude<MenuItemOrSeparator, "separator">), shortcut: bindings["read.aloud"]?.[0] },
               "separator" as const,
               { ...(item("annotate.highlight", "Highlight", () => annotateSelection("highlight", rects!), room) as Exclude<MenuItemOrSeparator, "separator">), shortcut: bindings["annotate.highlight"]?.[0] },
               { ...(item("annotate.underline", "Underline", () => annotateSelection("underline", rects!), room) as Exclude<MenuItemOrSeparator, "separator">), shortcut: bindings["annotate.underline"]?.[0] },
@@ -1086,6 +1124,7 @@ export function App() {
         item("pages.delete", `Delete page ${n}…`, () => openTool("delete", String(n)), multi ? true : "A one-page document has no pages to delete."),
         item("pages.organize"),
         item("file.editBookmarks", `Add bookmark for page ${n}…`, () => setDialog({ kind: "bookmarks", addOnOpen: true, page }), dialog ? "Close the open dialog first." : true),
+        ...(selected ? [] : [item("read.aloud", `Read page ${n} aloud`, () => startReading(page), speechReady)]),
         "separator",
         item("redact.markPage", `Mark page ${n} for redaction`, () => markPage(page), room),
         item("redact.markArea", markMode ? "Stop marking areas" : "Mark areas for redaction"),
@@ -1164,7 +1203,7 @@ export function App() {
 
   const pagesMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
-    setMenu({ label: "Page tools", x: r.left, y: r.bottom + 2, items: [item("pages.organize"), "separator", item("pages.extract"), item("pages.delete"), item("pages.rotate"), item("pages.split"), item("pages.stamp"), item("pages.watermark"), item("pages.crop"), item("pages.exportImages"), item("pages.extractImages"), item("pages.exportText"), item("file.toWord"), item("file.toPowerPoint"), item("file.exportTables"), item("pages.labels"), item("pages.ocr"), item("pages.deskew"), item("pages.orient"), item("pages.removeBlank"), "separator", item("pages.merge")] });
+    setMenu({ label: "Page tools", x: r.left, y: r.bottom + 2, items: [item("pages.organize"), "separator", item("pages.extract"), item("pages.delete"), item("pages.rotate"), item("pages.split"), item("pages.stamp"), item("pages.watermark"), item("pages.crop"), item("pages.exportImages"), item("pages.extractImages"), item("pages.exportText"), item("file.toWord"), item("file.toPowerPoint"), item("file.exportTables"), item("read.saveAudio"), item("pages.labels"), item("pages.ocr"), item("pages.deskew"), item("pages.orient"), item("pages.removeBlank"), "separator", item("pages.merge")] });
   };
 
   /* ---------- Job results ---------- */
@@ -1335,6 +1374,7 @@ export function App() {
             <Layers /> Pages
           </button>
           <CommandButton command="search.open" handlers={handlers} bindings={bindings} icon={<Search />} pressed={searchOpen} />
+          <CommandButton command={reader ? "read.stop" : "read.aloud"} handlers={handlers} bindings={bindings} icon={<Volume2 />} pressed={!!reader} />
           <CommandButton command="edit.toggleEditMode" handlers={handlers} bindings={bindings} icon={<PencilLine />} pressed={editMode} />
           {editMode && <CommandButton command="edit.addText" handlers={handlers} bindings={bindings} icon={<TypeIcon />} pressed={addTextArmed} />}
         </div>
@@ -1426,6 +1466,27 @@ export function App() {
             />
           )}
           <div ref={viewerHost} style={{ display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0, minWidth: 0 }}>
+            <div>
+            {reader && reader.docId === active.doc_id && (
+              <ReadAloudBar
+                key={reader.docId}
+                docId={reader.docId}
+                pageCount={active.info.page_count}
+                start={reader}
+                voice={settings?.read_voice ?? null}
+                rate={settings?.read_rate ?? 1}
+                onSettings={(voice, rate) => {
+                  if (!settings) return;
+                  const next = { ...settings, read_voice: voice, read_rate: rate };
+                  setSettings(next);
+                  api.saveSettings(next).then(setSettings, (e) => notifyError("Couldn’t save the reading settings", e));
+                }}
+                onHighlight={setReadMark}
+                follow={readFollow}
+                onFollow={() => setReadFollow(true)}
+                onClose={() => setReader(null)}
+              />
+            )}
             {searchOpen ? (
               <SearchBar
                 state={search}
@@ -1448,9 +1509,8 @@ export function App() {
                 onMarkAll={markMatches}
                 markAllAvailable={handlers["redact.markMatches"].available()}
               />
-            ) : (
-              <div />
-            )}
+            ) : null}
+            </div>
             <Viewer
               key={active.doc_id}
               doc={active}
@@ -1460,6 +1520,8 @@ export function App() {
               scrollRequest={scrollRequest}
               hits={hits}
               currentHit={search.current}
+              reading={reader && reader.docId === active.doc_id && readMark ? { ...readMark, follow: readFollow } : null}
+              onReadingInterrupted={stopFollowing}
               onPageContextMenu={pageMenu}
               annotations={activePending}
               form={forms[active.doc_id] ?? null}
@@ -1521,6 +1583,8 @@ export function App() {
           objectEdits={dialog.tool === "save" ? toPageEdits(objEditsOf(active.doc_id)) : undefined}
           annotationChanges={dialog.tool === "save" ? toChanges(annotChangesOf(active.doc_id)) : undefined}
           jobs={jobs}
+          readVoice={settings?.read_voice ?? null}
+          readRate={settings?.read_rate ?? 1}
           onClose={() => {
             afterSave.current = null;
             setDialog(null);

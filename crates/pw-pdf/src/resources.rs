@@ -169,9 +169,39 @@ fn office_documents() -> Capability {
     }
 }
 
+/// Read aloud: the computer's own speech voices (D-021; none are bundled). Required: reading
+/// aloud is a core capability, so a computer without a voice is reported as not ready.
+fn read_aloud() -> Capability {
+    let (state, detail) = match pw_speech::engine_info() {
+        Ok(i) => {
+            let n = i.voices.len();
+            let langs: std::collections::BTreeSet<&str> = i.voices.iter().map(|v| v.language.as_str()).collect();
+            (
+                ResourceState::Ready,
+                format!(
+                    "{n} voice{} of this computer ({}).",
+                    if n == 1 { "" } else { "s" },
+                    langs.into_iter().collect::<Vec<_>>().join(", ")
+                ),
+            )
+        }
+        Err(e) => (ResourceState::Missing, format!("{} {}", e.message, e.action).trim().to_string()),
+    };
+    Capability {
+        id: "read_aloud".into(),
+        title: "Read aloud".into(),
+        state,
+        detail,
+        bytes: 0,
+        location: None,
+        files: vec![],
+        required: true,
+    }
+}
+
 /// Check every installed resource against its pinned checksum.
 pub fn resource_status() -> PwResult<ResourceReport> {
-    let capabilities = vec![pdf_engine()?, text_recognition()?, office_documents()];
+    let capabilities = vec![pdf_engine()?, text_recognition()?, read_aloud(), office_documents()];
     let all_ready = capabilities.iter().filter(|c| c.required).all(|c| c.state == ResourceState::Ready);
     Ok(ResourceReport { capabilities, all_ready })
 }
