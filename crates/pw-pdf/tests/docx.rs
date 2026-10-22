@@ -52,7 +52,8 @@ fn package(path: &Path) -> Package {
     let xml = read("word/document.xml");
     let rels = read("word/_rels/document.xml.rels");
     let _ = read("[Content_Types].xml");
-    let names: Vec<String> = z.file_names().filter(|n| n.starts_with("word/media/")).map(str::to_string).collect();
+    let names: Vec<String> =
+        z.file_names().flatten().filter(|n| n.starts_with("word/media/")).map(|n| n.to_string()).collect();
     let media = names
         .into_iter()
         .map(|n| {

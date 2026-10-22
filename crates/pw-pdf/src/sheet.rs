@@ -604,7 +604,7 @@ mod tests {
         let back = read_xlsx(&bytes).expect("read");
         assert_eq!(back[0], grid().cells);
         let z = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).expect("zip");
-        assert!(z.file_names().any(|n| n == "xl/styles.xml"));
+        assert!(z.file_names().flatten().any(|n| n == "xl/styles.xml"));
         let mut sheet = String::new();
         zip::ZipArchive::new(std::io::Cursor::new(&bytes))
             .expect("zip")

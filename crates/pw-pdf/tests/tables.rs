@@ -131,7 +131,13 @@ fn libreoffice_opens_the_workbook_with_the_same_values() {
         .output()
         .expect("soffice");
     assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
-    let csv = std::fs::read_to_string(dir.path().join("lo/t.csv")).expect("LibreOffice wrote CSV");
+    let csv = std::fs::read_to_string(dir.path().join("lo/t.csv")).unwrap_or_else(|e| {
+        panic!(
+            "LibreOffice wrote no CSV ({e}); is LibreOffice Calc installed? stdout: {} stderr: {}",
+            String::from_utf8_lossy(&st.stdout),
+            String::from_utf8_lossy(&st.stderr)
+        )
+    });
     let rows: Vec<&str> = csv.lines().collect();
     assert_eq!(rows[0], "Account,,Opened,Balance");
     assert_eq!(rows[1], "007,Savings,2026-03-12,\"1,234.50\"", "leading zeros, dates and grouped amounts unchanged");

@@ -1032,7 +1032,7 @@ fn to_docx_writes_a_word_file_and_reports_what_was_kept() {
     assert_eq!(v["result"]["data"]["links"], 1);
     assert_eq!(v["result"]["data"]["tables"], 1, "the ruled table on page 2");
     let z = zip::ZipArchive::new(std::fs::File::open(&out).expect("open")).expect("a Word package");
-    assert!(z.file_names().any(|n| n == "word/document.xml"));
+    assert!(z.file_names().flatten().any(|n| n == "word/document.xml"));
     // Existing output → conflict (exit 5); wrong extension → invalid input (exit 2).
     let again =
         bin().args(["--json", "to-docx"]).arg(fixture("article.pdf")).arg("-o").arg(&out).output().expect("run");
