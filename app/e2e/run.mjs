@@ -5,7 +5,7 @@
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { inflateRawSync } from "node:zlib";
 import { join, resolve } from "node:path";
@@ -2756,6 +2756,37 @@ await test("engine crash on a damaged file fails the job with a reason; the app 
     await s.keys(["Control", "d"]);
     await s.waitUntil(async () => await s.exec("return !!document.querySelector('[role=dialog]')"), "app still responds");
   });
+});
+
+await test("viewer: an engine crash while showing a page fails only that page; other pages, Retry and the app keep working", async () => {
+  // Debug builds honour PW_READER_TEST in the reader processes; release builds ignore it.
+  if (!/[\\/]debug[\\/]/.test(APP)) throw new Skip("needs a debug build (the crash hook is compiled out of release builds)");
+  // The test driver starts the app with its own environment, so the hook goes in a file.
+  const hook = join(tmpdir(), "pageweave-reader-test");
+  writeFileSync(hook, "abort:2");
+  try {
+    await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+      await pageLoaded(s, 0);
+      await s.exec("document.querySelector('[data-page=\"2\"]').scrollIntoView()");
+      await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-page=\"2\"] .page-error')?.textContent ?? ''")).includes("Page 3 could not be displayed"), "page 3 fails with a reason", 30000);
+      await pageLoaded(s, 1);
+      await s.exec("document.querySelector('[data-page=\"3\"]').scrollIntoView()");
+      await pageLoaded(s, 3);
+      // Retry answers at once with the same failure instead of crashing another reader.
+      await s.exec("document.querySelector('[data-page=\"2\"]').scrollIntoView()");
+      await s.exec("document.querySelector('[data-page=\"2\"] .page-error button').click()");
+      await s.waitUntil(async () => (await s.exec("return !!document.querySelector('[data-page=\"2\"] .page-error')")), "still the same reason");
+      // The app keeps working: search finds text on another page.
+      await s.click('[data-testid="viewer"]');
+      await s.keys(["Control", "f"]);
+      await s.waitFor('input[aria-label="Find in document"]');
+      await s.type('input[aria-label="Find in document"]', "PWMARK004");
+      await s.keys(["Enter"]);
+      await s.waitUntil(async () => (await s.text(".searchbar .count")) === "1 of 1", "search works", 20000);
+    });
+  } finally {
+    rmSync(hook, { force: true });
+  }
 });
 
 /* ------------------------------------------------------------------ */

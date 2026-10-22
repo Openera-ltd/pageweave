@@ -15,5 +15,16 @@ fn main() {
         }
         return;
     }
+    // Reader mode (D-018): the viewer's page images and read-only calls, until stdin closes.
+    if std::env::args_os().nth(1).is_some_and(|a| a == pw_pdf::service::READER_FLAG) {
+        let h = std::thread::Builder::new()
+            .name("pageweave-reader".into())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(pw_pdf::service::run_reader);
+        if let Ok(h) = h {
+            let _ = h.join();
+        }
+        return;
+    }
     pageweave_app::run()
 }

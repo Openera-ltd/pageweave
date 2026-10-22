@@ -301,3 +301,8 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - New fixture `tables.pdf` (gen_fixtures.py): merged header, vertical merge, values a spreadsheet could corrupt.
 - Ran: pw-pdf tables tests 4/4 (LibreOffice reads the workbook back unchanged), sheet unit tests, CLI + MCP tests, E2E "export tables".
 - Not done: borderless tables, cell formatting, Microsoft Excel check.
+
+## 2026-10-22 — Session 2, checkpoint 14: reader processes for the viewer (D-018)
+- `pw_pdf::service` (ReadCall, ReaderPool, run_reader); app commands open/search/page text/fields/redaction preview/attachments/comments/signatures/objects/edit preview/hidden-info and the `pwpage` images go through the pool (2 readers); CLI and app executables accept `--pw-reader`.
+- Found while testing: serde_json's default float parsing is not exact (last-digit differences) → `float_roundtrip`; a process-wide env var raced between parallel tests → per-pool env; the WebDriver starts the app with its own environment → debug-only hook file.
+- Ran: reader tests 4/4 (same answers as in-process, passwords, parallel calls, crash fails one call and is remembered, hang times out, idle reader killed and replaced, speed), app crate unit tests, E2E "viewer: an engine crash …" passes.

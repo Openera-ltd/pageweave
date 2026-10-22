@@ -1312,6 +1312,18 @@ fn main() -> ExitCode {
             Err(_) => ExitCode::from(71),
         };
     }
+    // Reader mode (D-018): read-only calls for a parent process, until stdin closes.
+    if std::env::args_os().nth(1).is_some_and(|a| a == pw_pdf::service::READER_FLAG) {
+        return match std::thread::Builder::new().name("pageweave-reader".into()).stack_size(CLI_STACK_BYTES).spawn(
+            || {
+                pw_pdf::service::run_reader();
+                ExitCode::SUCCESS
+            },
+        ) {
+            Ok(h) => h.join().unwrap_or(ExitCode::from(70)),
+            Err(_) => ExitCode::from(71),
+        };
+    }
     match std::thread::Builder::new().name("pageweave-cli".into()).stack_size(CLI_STACK_BYTES).spawn(run) {
         Ok(h) => h.join().unwrap_or(ExitCode::from(70)),
         Err(_) => ExitCode::from(71),

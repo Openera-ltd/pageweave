@@ -38,6 +38,7 @@ mod protect;
 mod redact;
 pub mod resources;
 mod sanitize;
+pub mod service;
 mod sheet;
 mod sign;
 mod signatures;

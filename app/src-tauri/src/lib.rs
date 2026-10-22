@@ -10,10 +10,11 @@ use pw_core::log::Level;
 use pw_core::ops::{OperationRequest, SCHEMA_VERSION};
 use pw_core::settings::{LoadOutcome, Settings};
 use pw_core::{fields, PwError};
+use pw_pdf::service::ReadCall;
 use serde::Serialize;
 use state::{AppState, DocId, OpenedDoc};
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 use tauri::{Emitter, Manager, State};
 
@@ -103,29 +104,37 @@ async fn search(
     whole_word: bool,
 ) -> CmdResult<serde_json::Value> {
     let doc = state.doc(doc_id)?;
+    let st = state.inner().clone();
     blocking(move || {
-        let opts = pw_pdf::OpenOptions { password: doc.password.as_deref() };
-        let (hits, truncated) = pw_pdf::search(&doc.path, &opts, &query, match_case, whole_word, &|| false)?;
-        Ok(serde_json::json!({ "hits": hits, "truncated": truncated }))
+        st.read_json(
+            &ReadCall::Search { path: doc.path.clone(), query, match_case, whole_word },
+            doc.password.as_deref(),
+        )
     })
     .await
+}
+
+/// A read-only call for an open document, in a reader process (D-018), off the UI thread.
+async fn read(
+    state: &State<'_, AppState>,
+    doc_id: DocId,
+    call: impl FnOnce(PathBuf) -> ReadCall + Send + 'static,
+) -> CmdResult<serde_json::Value> {
+    let doc = state.doc(doc_id)?;
+    let st = state.inner().clone();
+    blocking(move || st.read_json(&call(doc.path.clone()), doc.password.as_deref())).await
 }
 
 /// Text runs with geometry for one page (selectable text layer). Runs on a worker thread.
 #[tauri::command]
-async fn page_text(state: State<'_, AppState>, doc_id: DocId, page: u32) -> CmdResult<pw_pdf::PageText> {
-    let doc = state.doc(doc_id)?;
-    blocking(move || {
-        pw_pdf::page_text_segments(&doc.path, &pw_pdf::OpenOptions { password: doc.password.as_deref() }, page)
-    })
-    .await
+async fn page_text(state: State<'_, AppState>, doc_id: DocId, page: u32) -> CmdResult<serde_json::Value> {
+    read(&state, doc_id, move |path| ReadCall::PageText { path, page }).await
 }
 
 /// AcroForm fields of an open document. Runs on a worker thread.
 #[tauri::command]
-async fn form_fields(state: State<'_, AppState>, doc_id: DocId) -> CmdResult<pw_pdf::FormInfo> {
-    let doc = state.doc(doc_id)?;
-    blocking(move || pw_pdf::form_fields(&doc.path, doc.password.as_deref())).await
+async fn form_fields(state: State<'_, AppState>, doc_id: DocId) -> CmdResult<serde_json::Value> {
+    read(&state, doc_id, |path| ReadCall::FormFields { path }).await
 }
 
 /// What redacting `areas` of an open document would remove (read-only). Runs on a worker thread.
@@ -134,25 +143,18 @@ async fn redaction_preview(
     state: State<'_, AppState>,
     doc_id: DocId,
     areas: Vec<pw_core::ops::RedactArea>,
-) -> CmdResult<Vec<pw_pdf::AreaPreview>> {
+) -> CmdResult<serde_json::Value> {
     let doc = state.doc(doc_id)?;
     // Same validation as the engine operation (area count and geometry).
     OperationRequest::new(pw_core::ops::Operation::RedactionPreview { input: doc.path.clone(), areas: areas.clone() })
         .validate()?;
-    blocking(move || {
-        pw_pdf::redaction_preview(&doc.path, &pw_pdf::OpenOptions { password: doc.password.as_deref() }, &areas)
-    })
-    .await
+    read(&state, doc_id, move |path| ReadCall::RedactionPreview { path, areas }).await
 }
 
 /// Files embedded in an open document (read-only). Runs on a worker thread.
 #[tauri::command]
-async fn list_attachments(state: State<'_, AppState>, doc_id: DocId) -> CmdResult<Vec<pw_pdf::AttachmentInfo>> {
-    let doc = state.doc(doc_id)?;
-    blocking(move || {
-        pw_pdf::list_attachments(&doc.path, &pw_pdf::OpenOptions { password: doc.password.as_deref() }).map(|(l, _)| l)
-    })
-    .await
+async fn list_attachments(state: State<'_, AppState>, doc_id: DocId) -> CmdResult<serde_json::Value> {
+    read(&state, doc_id, |path| ReadCall::ListAttachments { path }).await
 }
 
 /// Run one job in a worker copy of this executable (decision D-015), so a crash inside the PDF
@@ -195,37 +197,22 @@ async fn resource_status() -> CmdResult<pw_pdf::resources::ResourceReport> {
 
 /// Comments and markup already in the open document (read-only).
 #[tauri::command]
-async fn list_annotations(state: State<'_, AppState>, doc_id: DocId) -> CmdResult<pw_pdf::AnnotationList> {
-    let doc = state.doc(doc_id)?;
-    blocking(move || pw_pdf::list_annotations(&doc.path, &pw_pdf::OpenOptions { password: doc.password.as_deref() }))
-        .await
+async fn list_annotations(state: State<'_, AppState>, doc_id: DocId) -> CmdResult<serde_json::Value> {
+    read(&state, doc_id, |path| ReadCall::ListAnnotations { path }).await
 }
 
 /// The open document's digital signatures, checked against the trusted certificates (read-only).
 /// Runs on a worker thread.
 #[tauri::command]
-async fn verify_signatures(state: State<'_, AppState>, doc_id: DocId) -> CmdResult<pw_pdf::SignatureReport> {
-    let doc = state.doc(doc_id)?;
-    let dir = state.trust_dir.clone();
-    blocking(move || {
-        let anchors = pw_pdf::load_trusted_certificates(&trusted_files(&dir))?;
-        pw_pdf::verify_signatures(&doc.path, &pw_pdf::OpenOptions { password: doc.password.as_deref() }, &anchors)
-    })
-    .await
+async fn verify_signatures(state: State<'_, AppState>, doc_id: DocId) -> CmdResult<serde_json::Value> {
+    let trusted = trusted_files(&state.trust_dir);
+    read(&state, doc_id, move |path| ReadCall::VerifySignatures { path, trusted }).await
 }
 
 /// The editable text runs and pictures of one page of an open document (read-only).
 #[tauri::command]
-async fn page_objects(
-    state: State<'_, AppState>,
-    doc_id: DocId,
-    page: u32,
-) -> CmdResult<pw_pdf::objects::EditableObjects> {
-    let doc = state.doc(doc_id)?;
-    blocking(move || {
-        pw_pdf::objects::editable_objects(&doc.path, &pw_pdf::OpenOptions { password: doc.password.as_deref() }, page)
-    })
-    .await
+async fn page_objects(state: State<'_, AppState>, doc_id: DocId, page: u32) -> CmdResult<serde_json::Value> {
+    read(&state, doc_id, move |path| ReadCall::PageObjects { path, page }).await
 }
 
 /// One page with pending object edits applied, as a PNG data URL (nothing is written).
@@ -239,14 +226,11 @@ async fn preview_page_edits(
 ) -> CmdResult<String> {
     use base64::Engine as _;
     let doc = state.doc(doc_id)?;
+    let st = state.inner().clone();
     blocking(move || {
-        let png = pw_pdf::objects::preview_object_edits(
-            &doc.path,
-            &pw_pdf::OpenOptions { password: doc.password.as_deref() },
-            page,
-            &edits,
-            scale_permille as f32 / 1000.0,
-        )?;
+        let call =
+            ReadCall::PreviewEdits { path: doc.path.clone(), page, edits, scale: scale_permille as f32 / 1000.0 };
+        let png = st.read_bytes(&call, doc.password.as_deref())?;
         Ok(format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(png)))
     })
     .await
@@ -365,10 +349,8 @@ async fn remove_trusted_certificate(state: State<'_, AppState>, fingerprint: Str
 
 /// What hidden information an open document holds (read-only). Runs on a worker thread.
 #[tauri::command]
-async fn sanitize_inspect(state: State<'_, AppState>, doc_id: DocId) -> CmdResult<pw_pdf::SanitizeFindings> {
-    let doc = state.doc(doc_id)?;
-    blocking(move || pw_pdf::sanitize_inspect(&doc.path, &pw_pdf::OpenOptions { password: doc.password.as_deref() }))
-        .await
+async fn sanitize_inspect(state: State<'_, AppState>, doc_id: DocId) -> CmdResult<serde_json::Value> {
+    read(&state, doc_id, |path| ReadCall::SanitizeInspect { path }).await
 }
 
 /// Start an operation as a job. When `doc_id` is given, its password is supplied by the host so
@@ -538,7 +520,12 @@ pub fn run() {
             let config_dir = app.path().app_config_dir()?;
             let data_dir = app.path().app_local_data_dir()?;
             let engine_dir = app.path().resource_dir().ok();
-            let state = AppState::new(&config_dir, &data_dir, engine_dir);
+            let mut state = AppState::new(&config_dir, &data_dir, engine_dir);
+            // Page images and read-only calls run in reader processes (D-018): two, so the viewer
+            // can render while another call is busy.
+            if let Ok(exe) = std::env::current_exe() {
+                state.readers = Some(Arc::new(pw_pdf::service::ReaderPool::new(exe, 2)));
+            }
             let launch = state::launch_args(std::env::args_os().skip(1));
             let launch_count = launch.len();
             state.set_launch_files(launch);
