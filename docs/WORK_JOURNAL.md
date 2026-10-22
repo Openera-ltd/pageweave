@@ -318,3 +318,11 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - `convert_office_to_pdf` op, `pw-pdf/src/office.rs` (find LibreOffice, private hardened profile, copy of the input, time limit, cancel, PDFium-verified atomic write), CLI `from-office`, MCP `convert_office_to_pdf`, app "Open a Word, Excel or PowerPoint file…" (start screen, palette, drop, launch argument, Open) with `OfficeDialog`; Settings ▸ Resources gains "Office documents (optional)" (`required: false`, not counted in `all_ready`).
 - Tried to prove the macro hardening: the test document's macro did not run even in a deliberately unsafe profile (LibreOffice 24.2 headless conversion), so the test guards but does not prove; recorded in the test and D-019.
 - Ran: office tests 3/3, OfficeDialog tests 4/4, MCP tests, E2E "open an Office file".
+
+## 2026-10-22 — Session 2, checkpoint 17: borderless tables for table export (D-020)
+- `pw-pdf/src/docx/borderless.rs` (rows of glyphs → cells split at ≥ 1 em gaps → runs of rows sharing free vertical channels → grid; prose-in-columns rejection), `layout::borderless_tables`, used by `page_tables` for table export only. Empty drawn grids are no longer exported (blank-pages.pdf page 5 had produced a 15 × 4 sheet of empty cells).
+- New fixture `borderless-tables.pdf` (gen_fixtures.py): a lineless table, a table with horizontal rules only, text around both, and a page of two-column prose.
+- Checked every fixture with `pageweave tables --format csv`: only article.pdf (its ruled table, once), tables.pdf (unchanged), borderless-tables.pdf (both tables, exact values) produce tables.
+- CI #92 (Windows): `resources` exited non-zero because the optional Office entry (no LibreOffice on the runner) counted as missing → the exit code now follows required capabilities only; the CLI test checks it with LibreOffice hidden.
+- Ran: fmt, clippy, all Rust tests, vitest 130, control audit, licenses, full E2E 82/82.
+- Not done: wrapped cells merged into one row; borderless tables in Word/PowerPoint export; a real-document benchmark.

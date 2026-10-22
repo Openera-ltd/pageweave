@@ -157,7 +157,7 @@ enum Command {
         #[arg(short, long)]
         output: PathBuf,
     },
-    /// Save the ruled tables as an Excel workbook (-o file.xlsx, one sheet per table) or as CSV
+    /// Save the tables (ruled or aligned columns) as an Excel workbook (-o file.xlsx, one sheet per table) or as CSV
     /// files (--format csv, -o an existing folder). Values are kept exactly.
     Tables {
         file: PathBuf,
@@ -1404,11 +1404,13 @@ fn run() -> ExitCode {
                     }
                 }
                 use pw_pdf::resources::ResourceState as S;
-                let worst = r.capabilities.iter().map(|c| c.state).fold(S::Ready, |a, b| match (a, b) {
-                    (S::Damaged, _) | (_, S::Damaged) => S::Damaged,
-                    (S::Missing, _) | (_, S::Missing) => S::Missing,
-                    _ => S::Ready,
-                });
+                // Optional capabilities (e.g. Office documents) never make the exit code fail.
+                let worst =
+                    r.capabilities.iter().filter(|c| c.required).map(|c| c.state).fold(S::Ready, |a, b| match (a, b) {
+                        (S::Damaged, _) | (_, S::Damaged) => S::Damaged,
+                        (S::Missing, _) | (_, S::Missing) => S::Missing,
+                        _ => S::Ready,
+                    });
                 let cat = match worst {
                     S::Ready => return ExitCode::SUCCESS,
                     S::Missing => pw_core::ErrorCategory::MissingResource,

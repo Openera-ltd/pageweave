@@ -89,12 +89,15 @@ fn ruled_tables_of_other_documents_and_clear_failures() {
     let r = export("article.pdf", TableFormat::Xlsx, Some("2"), &out).expect("article");
     assert_eq!(r.data["found"], serde_json::json!([[2, 1, 4, 3]]));
     assert!(part(&out, "xl/worksheets/sheet1.xml").contains("<v>12.4</v>"));
-    // No ruled tables → a clear refusal, nothing written.
+    // No tables → a clear refusal, nothing written.
     let none = dir.path().join("none.xlsx");
     let e = export("five-pages.pdf", TableFormat::Xlsx, None, &none).expect_err("no tables");
     assert_eq!(e.code, "tables.none");
-    assert!(e.message.contains("without drawn lines"));
+    assert!(e.message.contains("No tables were found on 5 pages"), "{}", e.message);
     assert!(!none.exists());
+    // A drawn grid with no text in it is not a table.
+    let e = export("blank-pages.pdf", TableFormat::Xlsx, Some("5"), &none).expect_err("empty grid");
+    assert_eq!(e.code, "tables.none");
     // Wrong extension, missing folder, existing output, password.
     let e = export("tables.pdf", TableFormat::Xlsx, None, &dir.path().join("x.csv")).expect_err("ext");
     assert_eq!(e.code, "tables.extension");
@@ -105,6 +108,37 @@ fn ruled_tables_of_other_documents_and_clear_failures() {
     let e =
         export("encrypted-rc4-user-password.pdf", TableFormat::Xlsx, None, &dir.path().join("p.xlsx")).expect_err("pw");
     assert_eq!(e.category, ErrorCategory::PasswordRequired);
+}
+
+#[test]
+fn borderless_tables_are_found_and_prose_columns_are_not() {
+    let dir = tempfile::tempdir().expect("tmp");
+    // Page 1: a table of aligned columns with no lines, and one with horizontal rules only.
+    let r = export("borderless-tables.pdf", TableFormat::Csv, None, dir.path()).expect("export");
+    assert_eq!(r.data["found"], serde_json::json!([[1, 1, 5, 4], [1, 2, 4, 3]]), "{}", r.data);
+    let a = std::fs::read_to_string(dir.path().join("borderless-tables_p1_t1.csv")).expect("csv");
+    assert_eq!(
+        a.trim_start_matches('\u{feff}'),
+        "Crop,Rows,Yield,Grade\r\nApples,120,0.50,A\r\nPears,80,0.75,B\r\nPlums and damsons,007,\"1,250.00\",A\r\nQuince,12,3.10,C\r\n"
+    );
+    let b = std::fs::read_to_string(dir.path().join("borderless-tables_p1_t2.csv")).expect("csv");
+    assert_eq!(
+        b.trim_start_matches('\u{feff}'),
+        "Station,Rain mm,Days\r\nUpper farm,412,61\r\nLower farm,388,58\r\nRiver field,455,64\r\n"
+    );
+    // Values keep their text in the workbook too (007 and 1,250.00 stay text; 0.75 is a number).
+    let out = dir.path().join("b.xlsx");
+    export("borderless-tables.pdf", TableFormat::Xlsx, Some("1"), &out).expect("xlsx");
+    let s1 = part(&out, "xl/worksheets/sheet1.xml");
+    assert!(s1.contains(">007</t>") && s1.contains(">1,250.00</t>") && s1.contains("<v>0.75</v>"), "{s1}");
+    assert!(s1.contains(">0.50</t>"), "trailing zero kept as text: {s1}");
+    // Page 2 is two columns of prose: no table.
+    let e =
+        export("borderless-tables.pdf", TableFormat::Xlsx, Some("2"), &dir.path().join("p.xlsx")).expect_err("prose");
+    assert_eq!(e.code, "tables.none");
+    // The article's ruled table is found once, not again as a borderless one.
+    let r = export("article.pdf", TableFormat::Xlsx, None, &dir.path().join("a.xlsx")).expect("article");
+    assert_eq!(r.data["found"], serde_json::json!([[2, 1, 4, 3]]), "{}", r.data);
 }
 
 #[test]

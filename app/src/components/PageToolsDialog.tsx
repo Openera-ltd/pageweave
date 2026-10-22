@@ -632,7 +632,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
             ))}
           </div>
           <span className="hint">
-            {sheetFormat === "xlsx" ? "One sheet per table; merged cells kept." : "One file per table, text only."} Tables need drawn lines to be recognized; values are kept exactly.
+            {sheetFormat === "xlsx" ? "One sheet per table; merged cells kept." : "One file per table, text only."} Ruled tables and columns aligned over three or more rows are found; values are kept exactly.
           </span>
         </div>
       )}

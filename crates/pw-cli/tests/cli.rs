@@ -1009,7 +1009,12 @@ fn resources_reports_each_capability() {
     assert_eq!(caps[0]["state"], "ready", "{v}");
     assert_eq!(caps[1]["id"], "text_recognition");
     let ready = v["result"]["all_ready"] == true;
-    assert_eq!(r.status.success(), ready, "exit code follows readiness");
+    assert_eq!(r.status.success(), ready, "exit code follows readiness of required capabilities: {v}");
+    // Office documents are optional: whether LibreOffice is installed never changes the exit code.
+    let office = caps.iter().find(|c| c["id"] == "office_documents").expect("office entry");
+    assert_eq!(office["required"], false);
+    let hidden = bin().args(["--json", "resources"]).env("PAGEWEAVE_SOFFICE", "").output().expect("run");
+    assert_eq!(hidden.status.success(), ready, "no LibreOffice: {}", json(&hidden));
     let human = bin().arg("resources").output().expect("run");
     assert!(String::from_utf8_lossy(&human.stdout).contains("READY    PDF engine: Installed and verified."));
 }

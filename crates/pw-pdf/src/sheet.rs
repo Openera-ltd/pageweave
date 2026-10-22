@@ -1,4 +1,5 @@
-//! Tables to spreadsheets (PRD 06 "Spreadsheet/table extraction"): the ruled tables of a document
+//! Tables to spreadsheets (PRD 06 "Spreadsheet/table extraction"): the tables of a document (ruled
+//! grids, and borderless columns of aligned text, D-020)
 //! as an Excel workbook (.xlsx, one sheet per table, merged cells kept) or as CSV files (one per
 //! table). Values are never re-typed in a way that can change them: a cell becomes a number only
 //! when its text is a plain decimal number that a spreadsheet stores exactly (no leading zeros,
@@ -394,7 +395,7 @@ fn csv_back(v: &str) -> String {
     csv_safe(v)
 }
 
-/// The ruled tables of the chosen pages.
+/// The tables (ruled and borderless) of the chosen pages.
 pub fn find_grids(
     input: &Path,
     opts: &OpenOptions,
@@ -415,8 +416,15 @@ pub fn find_grids(
             return Err(PwError::cancelled());
         }
         let page = doc.pages().get(p as PdfPageIndex).map_err(|e| map_pdfium_error(&e, "page"))?;
-        for (i, t) in crate::docx::page_tables(&page, &doc)?.iter().enumerate() {
-            grids.push(grid_of(t, p + 1, i as u32 + 1));
+        // A grid of empty cells (a drawn form area, a frame) is not a table worth a sheet.
+        let tables = crate::docx::page_tables(&page, &doc)?;
+        let with_text = tables
+            .iter()
+            .map(|t| grid_of(t, p + 1, 0))
+            .filter(|g| g.cells.iter().flatten().any(|c| !c.trim().is_empty()));
+        for (i, mut g) in with_text.enumerate() {
+            g.index = i as u32 + 1;
+            grids.push(g);
         }
         progress(k as u64 + 1, idx.len() as u64);
     }
@@ -437,7 +445,7 @@ fn none_found(pages: u32) -> PwError {
         ErrorCategory::UnsupportedOperation,
         "tables.none",
         format!(
-            "No ruled tables were found on {} page{}. Tables without drawn lines are not recognized yet.",
+            "No tables were found on {} page{}: neither ruled grids nor columns of text aligned over three or more rows.",
             pages,
             if pages == 1 { "" } else { "s" }
         ),

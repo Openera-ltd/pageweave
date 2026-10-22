@@ -271,7 +271,7 @@ pub const TOOLS: &[Tool] = &[
     Tool {
         name: "export_tables",
         title: "Export tables to Excel",
-        description: "Save the ruled tables (grids of drawn lines) of all or chosen pages as an Excel workbook (.xlsx), one sheet per table. Values are kept exactly: only plain exact numbers become numbers; codes, identifiers, dates and amounts with separators stay text. Tables without drawn lines are not recognized.",
+        description: "Save the tables (ruled grids, and columns of text aligned over three or more rows) of all or chosen pages as an Excel workbook (.xlsx), one sheet per table. Values are kept exactly: only plain exact numbers become numbers; codes, identifiers, dates and amounts with separators stay text..",
         effect: Effect::WritesNewFiles,
         long: true,
         schema: || {

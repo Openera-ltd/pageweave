@@ -674,8 +674,9 @@ pub enum Operation {
         pages: Option<String>,
         output: PathBuf,
     },
-    /// Save the ruled tables of pages (all when `pages` is absent) as an Excel workbook (one sheet
-    /// per table; `output` is the .xlsx file) or as CSV files (`output` is an existing folder).
+    /// Save the tables (ruled grids and borderless aligned columns) of pages (all when `pages` is
+    /// absent) as an Excel workbook (one sheet per table; `output` is the .xlsx file) or as CSV
+    /// files (`output` is an existing folder).
     ExportTables {
         input: PathBuf,
         #[serde(default)]

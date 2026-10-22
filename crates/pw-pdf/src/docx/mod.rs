@@ -8,6 +8,7 @@
 //! must parse, every picture must decode, and it must hold every character the converted pages
 //! hold. Lines, shapes and table borders are not carried over yet (reported).
 
+pub mod borderless;
 pub mod layout;
 pub mod reader;
 pub mod tables;
@@ -476,6 +477,9 @@ pub(crate) fn page_tables(page: &PdfPage, doc: &PdfDocument) -> PwResult<Vec<lay
             }
         }
     }
+    // Tables without drawn lines too (D-020), in page order with the ruled ones.
+    found.extend(layout::borderless_tables(&ex.input));
+    found.sort_by(|a, b| b.rect.top.total_cmp(&a.rect.top).then(a.rect.left.total_cmp(&b.rect.left)));
     Ok(found)
 }
 

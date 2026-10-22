@@ -810,17 +810,17 @@ type End = (f32, Option<f32>);
 /// Adds a band of lines and pictures with the given column edges.
 type AddBand<'a> = dyn FnMut(Vec<Line>, Vec<Picture>, &[(f32, f32)], &mut Vec<Band>) + 'a;
 
-/// Lay out one page.
-pub fn layout_page(page: &PageInput) -> PageLayout {
-    // Ruled tables take the glyphs inside them; generated spaces follow the glyph before them.
-    let found = find_tables(&page.rules);
+/// Split the page's glyphs into those outside `tables` and those of each table cell; generated
+/// spaces follow the glyph before them.
+#[allow(clippy::type_complexity)]
+fn assign(glyphs: &[Glyph], tables: &[Table]) -> (Vec<Glyph>, Vec<Vec<Vec<Glyph>>>) {
     let mut outside: Vec<Glyph> = Vec::new();
-    let mut cell_glyphs: Vec<Vec<Vec<Glyph>>> = found.iter().map(|t| vec![Vec::new(); t.cells.len()]).collect();
+    let mut cell_glyphs: Vec<Vec<Vec<Glyph>>> = tables.iter().map(|t| vec![Vec::new(); t.cells.len()]).collect();
     let mut dest: Option<(usize, usize)> = None;
-    for g in &page.glyphs {
+    for g in glyphs {
         if !g.generated {
             let (cx, cy) = ((g.left + g.right) / 2.0, (g.bottom + g.top) / 2.0);
-            dest = found
+            dest = tables
                 .iter()
                 .enumerate()
                 .find_map(|(ti, t)| t.contains(cx, cy).then(|| t.cell_at(cx, cy).map(|c| (ti, c))).flatten());
@@ -830,6 +830,30 @@ pub fn layout_page(page: &PageInput) -> PageLayout {
             None => outside.push(g.clone()),
         }
     }
+    (outside, cell_glyphs)
+}
+
+/// The page's borderless tables (decision D-020) as table items, top first: for table export
+/// only. Ruled tables are left to `layout_page`.
+pub fn borderless_tables(page: &PageInput) -> Vec<TableItem> {
+    let avoid: Vec<Rect> = find_tables(&page.rules)
+        .iter()
+        .map(|t| Rect { left: t.left(), bottom: t.bottom(), right: t.right(), top: t.top() })
+        .collect();
+    let found = super::borderless::find_borderless(&page.glyphs, &avoid);
+    if found.is_empty() {
+        return Vec::new();
+    }
+    let (outside, cell_glyphs) = assign(&page.glyphs, &found);
+    let body = body_size(&build_lines(&outside));
+    found.iter().zip(cell_glyphs).map(|(t, cg)| table_item(t, cg, body)).collect()
+}
+
+/// Lay out one page.
+pub fn layout_page(page: &PageInput) -> PageLayout {
+    // Ruled tables take the glyphs inside them; generated spaces follow the glyph before them.
+    let found = find_tables(&page.rules);
+    let (outside, cell_glyphs) = assign(&page.glyphs, &found);
     let lines = build_lines(&outside);
     let body = body_size(&lines);
     let table_items: Vec<TableItem> = found.iter().zip(cell_glyphs).map(|(t, cg)| table_item(t, cg, body)).collect();

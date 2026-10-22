@@ -1484,14 +1484,14 @@ await test("export tables: Excel workbook with values kept and merged cells; CSV
   assert(sheet.includes("<v>-4.5</v>"), "plain number typed");
   const csv = readFileSync(join(folder, "tables_p1_t1.csv"), "utf8");
   assert(csv.includes('007,Savings,2026-03-12,"1,234.50"'), `CSV row: ${csv}`);
-  // A document without ruled tables: the dialog says so and writes nothing.
+  // A document without tables: the dialog says so and writes nothing.
   await withApp([join(FIX, "five-pages.pdf")], async (s) => {
     await pageLoaded(s, 0);
     await open(s);
     const none = join(work, "none.xlsx");
     await s.type("#output", none);
     await s.click('[data-testid="tool-start"]');
-    await s.waitUntil(async () => (await s.text('[role="dialog"]')).includes("No ruled tables were found"), "reason shown in the dialog");
+    await s.waitUntil(async () => (await s.text('[role="dialog"]')).includes("No tables were found"), "reason shown in the dialog");
     assert(!existsSync(none), "nothing written");
   });
 });

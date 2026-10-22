@@ -682,6 +682,60 @@ def build_tables_document() -> bytes:
     return w.render(catalog, info)
 
 
+def build_borderless_tables_document() -> bytes:
+    """Tables without drawn grids for table export (D-020): page 1 has a table of aligned columns
+    with no lines at all and a table with only horizontal rules above and below its header and at
+    its end, with body text around both; page 2 is two columns of prose (not a table)."""
+    w = PdfWriter()
+    catalog, pages_obj = w.reserve(), w.reserve()
+    font = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+
+    def text(x: float, y: float, s: str, size: float = 10) -> str:
+        return f"BT /F1 {size} Tf {x} {y} Td ({esc(s)}) Tj ET\n"
+
+    page_ids = []
+    ops = text(72, 740, "Harvest report PWBORDERLESS", 16)
+    ops += text(72, 712, "Crops picked this season are listed below without any lines.")
+    xs = [72, 220, 320, 420]
+    rows = [["Crop", "Rows", "Yield", "Grade"],
+            ["Apples", "120", "0.50", "A"],
+            ["Pears", "80", "0.75", "B"],
+            ["Plums and damsons", "007", "1,250.00", "A"],
+            ["Quince", "12", "3.10", "C"]]
+    for r, cells in enumerate(rows):
+        for c, v in enumerate(cells):
+            ops += text(xs[c], 684 - 16 * r, v)
+    ops += text(72, 590, "Yields are in tonnes per row and were measured at the packing house.")
+    # A table with horizontal rules only.
+    ops += "0.6 w 0 G\n72 552 m 480 552 l S\n72 532 m 480 532 l S\n72 470 m 480 470 l S\n"
+    xs = [76, 260, 380]
+    rows = [["Station", "Rain mm", "Days"], ["Upper farm", "412", "61"], ["Lower farm", "388", "58"],
+            ["River field", "455", "64"]]
+    for r, cells in enumerate(rows):
+        for c, v in enumerate(cells):
+            ops += text(xs[c], 538 - 18 * r - (4 if r else 0), v)
+    ops += text(72, 440, "Rain was recorded each morning.")
+    c1 = w.stream(ops.encode("latin-1"))
+    page_ids.append(w.add(f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] "
+                          f"/Resources << /Font << /F1 {font} 0 R >> >> /Contents {c1} 0 R >>"))
+    left = ["The river rose slowly through the wet spring and the", "lower fields stayed under water for most of April while",
+            "the upper farm dried out early enough to plant beans", "and the first of the summer barley before the rains",
+            "returned in May and kept the soil soft until harvest", "began in the last week of the long and warm summer"]
+    right = ["Wetlands along the bank stored the floods and let", "them go again over the dry months so the streams",
+             "never ran empty and the cattle had water all year", "which the farmers counted as the best outcome of the",
+             "work done on the ditches and hedges in the winter", "before the season when the new plan came into use"]
+    ops = text(72, 740, "Notes", 14)
+    for i, (a, b) in enumerate(zip(left, right)):
+        ops += text(72, 712 - 13 * i, a, 9) + text(320, 712 - 13 * i, b, 9)
+    c2 = w.stream(ops.encode("latin-1"))
+    page_ids.append(w.add(f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] "
+                          f"/Resources << /Font << /F1 {font} 0 R >> >> /Contents {c2} 0 R >>"))
+    w.set(pages_obj, f"<< /Type /Pages /Kids [{' '.join(f'{p} 0 R' for p in page_ids)}] /Count {len(page_ids)} >>")
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R >>")
+    info = w.add("<< /Title (Borderless tables fixture) /Producer (gen_fixtures.py) >>")
+    return w.render(catalog, info)
+
+
 def main() -> int:
     if len(sys.argv) == 4 and sys.argv[1] == "--big":
         # Large document for benchmarks (not committed): gen_fixtures.py --big PAGES OUT.pdf
@@ -709,6 +763,7 @@ def main() -> int:
     files["form-fields.pdf"] = build_form_document()
     files["form-defaults.pdf"] = build_form_document(defaults=True)
     files["tables.pdf"] = build_tables_document()
+    files["borderless-tables.pdf"] = build_borderless_tables_document()
     files["form-nested.pdf"] = build_nested_form_document()
     files["redaction.pdf"] = build_redaction_document()
     files["redaction-hard.pdf"] = build_redaction_hard_document()
