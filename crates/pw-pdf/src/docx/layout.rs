@@ -1015,8 +1015,7 @@ pub fn layout_page(page: &PageInput) -> PageLayout {
 }
 
 /// Every character the layout emits (whitespace excluded).
-#[cfg(test)]
-fn emitted_chars(layout: &PageLayout) -> HashMap<char, usize> {
+pub(crate) fn emitted_chars(layout: &PageLayout) -> HashMap<char, usize> {
     let mut m = HashMap::new();
     for b in &layout.bands {
         for c in &b.columns {

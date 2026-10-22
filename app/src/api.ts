@@ -21,6 +21,7 @@ import type {
   PageText,
   ReadingPage,
   SpeechInfo,
+  TranslationDirection,
   Spoken,
   RecoveredJob,
   SanitizeFindings,
@@ -85,6 +86,8 @@ export interface Api {
   pickOfficeFile(): Promise<string | null>;
   /** The installed LibreOffice ("LibreOffice 24.2…"), or null. */
   officeEngine(): Promise<string | null>;
+  /** Translation directions and whether each model is installed. */
+  translationDirections(): Promise<TranslationDirection[]>;
   /** The speech engine and its voices (fails with speech.unavailable when there is none). */
   speechInfo(): Promise<SpeechInfo>;
   /** One page's text in reading order with word positions. */
@@ -175,6 +178,7 @@ export const tauriApi: Api = {
   },
   officeEngine: () => invoke("office_engine"),
   speechInfo: () => invoke("speech_info"),
+  translationDirections: () => invoke("translation_directions"),
   readingText: (docId, page) => invoke("reading_text", { docId, page }),
   speakText: (text, voice, rate) => invoke("speak_text", { text, voice, rate }),
   pickCertificateFile: async () => {

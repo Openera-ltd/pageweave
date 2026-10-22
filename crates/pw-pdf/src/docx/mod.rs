@@ -12,6 +12,7 @@ pub mod borderless;
 pub mod layout;
 pub mod reader;
 pub mod tables;
+pub mod translate;
 pub mod writer;
 
 use crate::document::{load, OpenOptions};

@@ -1448,6 +1448,42 @@ await test("convert to PowerPoint: one slide per page with text boxes, table and
   assert(s2.includes("<a:tbl>") && s2.includes("Station"), "slide 2: table");
 });
 
+await test("translate: page to German as Word (layout kept), language detected; pairs through English are said; source unchanged", async () => {
+  const src = join(FIX, "five-pages.pdf");
+  const before = sha(src);
+  const out = join(work, "five-pages-de.docx");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Translate");
+    await s.click('[role="option"][data-command="file.translate"]');
+    await s.waitFor("#translate-to");
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('#translate-to option').length")) === 5, "five languages offered");
+    // French → German has no direct model: the dialog says it goes through English.
+    await s.exec("const f = document.querySelector('#translate-from'); f.value = 'fr'; f.dispatchEvent(new Event('change', { bubbles: true }));");
+    await s.exec("const t = document.querySelector('#translate-to'); t.value = 'de'; t.dispatchEvent(new Event('change', { bubbles: true }));");
+    await s.waitFor('[data-testid="translate-via"]');
+    // Same language on both sides is refused with a reason.
+    await s.exec("const f = document.querySelector('#translate-from'); f.value = 'de'; f.dispatchEvent(new Event('change', { bubbles: true }));");
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=tool-start]').title")) === "Choose two different languages.", "same language refused");
+    // Detect the language, translate page 1 into German as a Word document.
+    await s.exec("const f = document.querySelector('#translate-from'); f.value = ''; f.dispatchEvent(new Event('change', { bubbles: true }));");
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("five-pages-de.docx"), "default name");
+    await s.exec("const c = [...document.querySelectorAll('[role=dialog] input[type=checkbox]')].find((x) => x.checked); if (c) c.click();");
+    await s.type("#pages", "1");
+    await s.waitUntil(async () => (await s.text("#pages-msg")) === "1 page selected", "page 1 chosen");
+    await s.type("#output", out);
+    await axeCheck(s, "translate-dialog");
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved five-pages-de.docx")), "saved notice", 180000);
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Machine translation from English to German")), "review note");
+  });
+  assert(sha(src) === before, "source unchanged");
+  const doc = zipPart(out, "word/document.xml");
+  assert(/fuchs/i.test(doc) && doc.includes("PWMARK001") && doc.includes("PageWeave"), `German text with the marker and name kept: ${doc.slice(0, 600)}`);
+});
+
 await test("read aloud: words highlighted as heard, pause/resume, next sentence, speed saved, stop; save as audio", async () => {
   const src = join(FIX, "article.pdf");
   const out = join(work, "article-page2.wav");
@@ -2870,7 +2906,7 @@ await test("settings ▸ resources: PDF engine and text recognition verified aga
     await s.click("#tab-resources");
     const states = () => s.exec("return [...document.querySelectorAll('[data-testid=resources-list] li')].map(l => l.dataset.resource + ':' + l.dataset.state)");
     // Office documents are optional (LibreOffice installed separately): ready or not installed.
-    await s.waitUntil(async () => /^\["pdf_engine:ready","text_recognition:ready","read_aloud:ready","office_documents:(ready|missing)"\]$/.test(JSON.stringify(await states())), "required ready, optional listed", 30000);
+    await s.waitUntil(async () => /^\["pdf_engine:ready","text_recognition:ready","translation:ready","read_aloud:ready","office_documents:(ready|missing)"\]$/.test(JSON.stringify(await states())), "required ready, optional listed", 30000);
     const text = await s.text('[data-testid="resources-list"]');
     assert(!/\.onnx|\.dll|\.so|onnxruntime|pdfium/i.test(text), `no technical file or model names in the UI: ${text}`);
     await s.click('[data-testid="resources-check"]');

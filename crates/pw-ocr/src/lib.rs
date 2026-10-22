@@ -178,7 +178,9 @@ pub fn default_resource_dir() -> Option<PathBuf> {
 /// directory used.
 static RUNTIME: OnceLock<Result<ort::environment::Environment, String>> = OnceLock::new();
 
-fn runtime(dir: &Path) -> PwResult<&'static ort::environment::Environment> {
+/// The process-wide ONNX Runtime, loaded from the OCR resource folder (which holds the pinned,
+/// verified runtime library); shared by every ONNX model PageWeave runs (OCR, translation).
+pub fn runtime(dir: &Path) -> PwResult<&'static ort::environment::Environment> {
     let r = RUNTIME.get_or_init(|| {
         let lib = dir.join(RUNTIME_FILE);
         if !lib.exists() {

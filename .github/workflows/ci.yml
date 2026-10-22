@@ -81,6 +81,13 @@ jobs:
         run: python3 -I tools/fetch_pdfium.py --platform linux-x64
       - name: Fetch pinned OCR runtime and models (checksum verified)
         run: python3 -I tools/fetch_ocr.py --platform linux-x64
+      - name: Cache pinned translation models
+        uses: actions/cache@v4
+        with:
+          path: third_party/translate
+          key: translate-${{ hashFiles('resources/translate.lock.json') }}
+      - name: Fetch pinned translation models (checksum verified)
+        run: python3 -I tools/fetch_translate.py
       - name: Tool tests (watchdog decision logic)
         run: python3 -I -m unittest discover -s tools/tests -v
       - uses: actions/setup-python@v5
@@ -155,6 +162,13 @@ jobs:
         run: python -I tools/fetch_pdfium.py --platform win-x64
       - name: Fetch pinned OCR runtime and models (checksum verified)
         run: python -I tools/fetch_ocr.py --platform win-x64
+      - name: Cache pinned translation models
+        uses: actions/cache@v4
+        with:
+          path: third_party/translate
+          key: translate-${{ hashFiles('resources/translate.lock.json') }}
+      - name: Fetch pinned translation models (checksum verified)
+        run: python -I tools/fetch_translate.py
       - name: UI install and build
         working-directory: app
         run: |
@@ -177,8 +191,10 @@ jobs:
           cp third_party/pdfium/win-x64/bin/pdfium.dll "$PKG/"
           mkdir -p "$PKG/ocr"
           cp third_party/ocr/win-x64/{onnxruntime.dll,det.onnx,rec.onnx,rec_dict.txt} "$PKG/ocr/"
+          mkdir -p "$PKG/translate"
+          for d in third_party/translate/*-*/; do n=$(basename "$d"); mkdir -p "$PKG/translate/$n"; cp "$d"{encoder.onnx,decoder.onnx,tokenizer.json,config.json} "$PKG/translate/$n/"; done
           cp LICENSE THIRD_PARTY_NOTICES.md "$PKG/"
-          cp -r third_party/licenses/pdfium third_party/licenses/onnxruntime third_party/licenses/ppocr "$PKG/licenses/"
+          cp -r third_party/licenses/pdfium third_party/licenses/onnxruntime third_party/licenses/ppocr third_party/licenses/opus-mt "$PKG/licenses/"
           ls -la "$PKG"
       - name: Smoke-test the package from a clean folder with no repo on the path
         run: |
@@ -233,7 +249,7 @@ jobs:
           if ($p.ExitCode -ne 0) { throw "installer exit $($p.ExitCode)" }
           Get-ChildItem -Recurse $dir | Select-Object FullName, Length | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
           $exe = Get-ChildItem $dir -Filter *.exe | Where-Object { $_.Name -notlike "uninstall*" } | Select-Object -First 1
-          foreach ($f in @("pdfium.dll", "ocr/onnxruntime.dll", "ocr/det.onnx", "ocr/rec.onnx", "ocr/rec_dict.txt", "THIRD_PARTY_NOTICES.md", "licenses/pdfium/pdfium.txt", "licenses/onnxruntime/LICENSE.txt", "licenses/onnxruntime/ThirdPartyNotices.txt", "licenses/ppocr/Apache-2.0.txt", "licenses/ppocr/NOTICE.txt", "licenses/rust-crates.txt", "licenses/ui-npm.txt")) {
+          foreach ($f in @("pdfium.dll", "ocr/onnxruntime.dll", "ocr/det.onnx", "ocr/rec.onnx", "ocr/rec_dict.txt", "THIRD_PARTY_NOTICES.md", "licenses/pdfium/pdfium.txt", "licenses/onnxruntime/LICENSE.txt", "licenses/onnxruntime/ThirdPartyNotices.txt", "licenses/ppocr/Apache-2.0.txt", "licenses/ppocr/NOTICE.txt", "translate/en-de/encoder.onnx", "translate/it-en/decoder.onnx", "licenses/opus-mt/CC-BY-4.0.txt", "licenses/opus-mt/NOTICE.txt", "licenses/rust-crates.txt", "licenses/ui-npm.txt")) {
             if (-not (Test-Path (Join-Path $dir $f))) { throw "installed package is missing $f" }
           }
           $fixture = Join-Path $env:RUNNER_TEMP "smoke input.pdf"
@@ -285,6 +301,13 @@ jobs:
         run: python -I tools/fetch_pdfium.py --platform win-x64
       - name: Fetch pinned OCR runtime and models (checksum verified)
         run: python -I tools/fetch_ocr.py --platform win-x64
+      - name: Cache pinned translation models
+        uses: actions/cache@v4
+        with:
+          path: third_party/translate
+          key: translate-${{ hashFiles('resources/translate.lock.json') }}
+      - name: Fetch pinned translation models (checksum verified)
+        run: python -I tools/fetch_translate.py
       - name: Build UI and the real app (embedded UI), plus CLI for independent checks
         working-directory: app
         run: |

@@ -189,6 +189,12 @@ fn run_job(
     result
 }
 
+/// Translation directions and whether each model is installed (D-022).
+#[tauri::command]
+async fn translation_directions() -> CmdResult<Vec<pw_translate::Direction>> {
+    blocking(pw_translate::directions).await
+}
+
 /// The computer's speech engine and voices (read aloud, D-021).
 #[tauri::command]
 async fn speech_info() -> CmdResult<pw_speech::EngineInfo> {
@@ -612,6 +618,7 @@ pub fn run() {
             app_info,
             office_engine,
             speech_info,
+            translation_directions,
             reading_text,
             speak_text,
             get_settings,

@@ -11,6 +11,7 @@ publish = false
 pw-core.workspace = true
 pw-ocr.workspace = true
 pw-speech.workspace = true
+pw-translate.workspace = true
 pdfium-render.workspace = true
 image.workspace = true
 serde.workspace = true

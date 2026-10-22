@@ -10,5 +10,6 @@ pub mod ops;
 pub mod output;
 pub mod range;
 pub mod settings;
+pub mod text;
 
 pub use error::{ErrorCategory, PwError, PwResult};

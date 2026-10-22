@@ -1,0 +1,24 @@
+[package]
+name = "pw-translate"
+description = "PageWeave translation: OPUS-MT (Marian) models on ONNX Runtime (decision D-022)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version = "1.92" # ort 2.0 requires 1.92
+publish = false
+
+[dependencies]
+pw-core.workspace = true
+pw-ocr.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+# NFKC normalization as the models' SentencePiece setup does (already in the graph via url/idna).
+unicode-normalization = "=0.1.25"
+ort = { version = "=2.0.0-rc.14", default-features = false, features = ["std", "load-dynamic", "api-31"] }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

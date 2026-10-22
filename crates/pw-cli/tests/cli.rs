@@ -1082,6 +1082,28 @@ fn tables_export_to_xlsx_and_csv() {
 }
 
 #[test]
+fn translate_lists_directions_and_translates_pages() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let r = bin().args(["--json", "translate"]).output().expect("run");
+    let v = json(&r);
+    assert!(r.status.success(), "{v}");
+    assert_eq!(v["result"]["directions"].as_array().expect("dirs").len(), 8);
+    let out = dir.path().join("p1-it.txt");
+    let r = bin()
+        .args(["--json", "translate", "--pages", "1", "--to", "it", "-o"])
+        .arg(&out)
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    let v = json(&r);
+    assert!(r.status.success(), "{v}");
+    assert_eq!(v["result"]["data"]["source"], "en");
+    assert!(std::fs::read_to_string(&out).expect("txt").contains("PWMARK001"));
+    let r = bin().args(["--json", "translate", "--to", "it"]).arg(fixture("five-pages.pdf")).output().expect("run");
+    assert_eq!(r.status.code(), Some(2), "missing -o is a usage error");
+}
+
+#[test]
 fn speak_lists_voices_and_reads_pages_into_a_wav() {
     let dir = tempfile::tempdir().expect("tmp");
     if pw_speech::engine_info().is_err() {

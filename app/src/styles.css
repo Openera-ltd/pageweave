@@ -2191,3 +2191,14 @@ kbd,
 .readbar select {
   max-width: 30ch;
 }
+
+/* Two fields side by side (e.g. translate From / To); stacked on narrow windows. */
+.field-row {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.field-row > .field {
+  flex: 1 1 12rem;
+}

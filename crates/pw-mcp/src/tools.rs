@@ -295,6 +295,25 @@ pub const TOOLS: &[Tool] = &[
         },
     },
     Tool {
+        name: "translate_document",
+        title: "Translate a document",
+        description: "Translate all or chosen pages with PageWeave's own local translation models (nothing leaves the computer) into a Word document (.docx, layout kept: headings, columns, tables, pictures) or a text file (.txt). Languages: en, de, fr, es, it (pairs without English go through English). The source language is detected when not given. The result reports numbers, dates, codes and addresses the translation did not keep exactly.",
+        effect: Effect::WritesNewFiles,
+        long: true,
+        schema: || {
+            obj(
+                json!({
+                    "path": path_prop("Source PDF"),
+                    "pages": { "type": "string", "description": PAGES },
+                    "source": { "type": "string", "enum": ["en", "de", "fr", "es", "it"], "description": "Language of the document (detected when absent)" },
+                    "target": { "type": "string", "enum": ["en", "de", "fr", "es", "it"], "description": "Language to translate into" },
+                    "output": path_prop("New .docx or .txt file (must not exist)")
+                }),
+                &["path", "target", "output"],
+            )
+        },
+    },
+    Tool {
         name: "read_aloud_to_wav",
         title: "Read aloud to an audio file",
         description: "Read all or chosen pages aloud with this computer's speech voice into a WAV file (mono 16-bit). Text is read in reading order (columns one after another, tables cell by cell). Pages without text (scans) are skipped; run recognize_text first for those.",
@@ -408,6 +427,18 @@ struct PagesOutArg {
 #[serde(deny_unknown_fields)]
 struct PathOutArg {
     path: String,
+    output: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TranslateArg {
+    path: String,
+    #[serde(default)]
+    pages: Option<String>,
+    #[serde(default)]
+    source: Option<String>,
+    target: String,
     output: String,
 }
 
@@ -624,6 +655,16 @@ pub fn operation(tool: &Tool, a: &Value, roots: &Roots) -> PwResult<Operation> {
         "convert_office_to_pdf" => {
             let x: PathOutArg = args(a)?;
             Operation::ConvertOfficeToPdf { input: roots.input(&x.path)?, output: pdf(&x.output)? }
+        }
+        "translate_document" => {
+            let x: TranslateArg = args(a)?;
+            Operation::TranslateDocument {
+                input: roots.input(&x.path)?,
+                pages: x.pages,
+                source: x.source,
+                target: x.target,
+                output: roots.output(&x.output, &["docx", "txt"])?,
+            }
         }
         "read_aloud_to_wav" => {
             let x: SpeakArg = args(a)?;

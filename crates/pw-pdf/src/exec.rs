@@ -545,6 +545,26 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(w);
             (vec![out(&c, Some(report.pages))], serde_json::to_value(&report).unwrap_or_default())
         }
+        Operation::TranslateDocument { input, pages, source, target, output } => {
+            let page_progress = |done: u64, total: u64| {
+                if let Some(c) = ctx {
+                    c.set_progress(done, total, "paragraphs");
+                }
+            };
+            let (c, report, w) = crate::docx::translate::translate_document(
+                input,
+                &opts,
+                pages.as_deref(),
+                source.as_deref(),
+                target,
+                output,
+                policy,
+                &cancelled,
+                &page_progress,
+            )?;
+            warnings.extend(w);
+            (vec![out(&c, None)], serde_json::to_value(&report).unwrap_or_default())
+        }
         Operation::ReadAloudToWav { input, pages, voice, rate, output } => {
             let page_progress = |done: u64, total: u64| {
                 if let Some(c) = ctx {

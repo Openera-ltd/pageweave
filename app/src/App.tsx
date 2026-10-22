@@ -966,6 +966,7 @@ export function App() {
     "pages.exportText": { run: () => openTool("text"), available: all(needDoc, noDialog) },
     "file.toWord": { run: () => openTool("word"), available: all(needDoc, noDialog) },
     "file.toPowerPoint": { run: () => openTool("slides"), available: all(needDoc, noDialog) },
+    "file.translate": { run: () => openTool("translate"), available: all(needDoc, noDialog) },
     "read.aloud": { run: () => startReading(), available: all(needDoc, () => speechReady) },
     "read.stop": { run: () => setReader(null), available: () => (reader ? true : "Nothing is being read aloud.") },
     "read.saveAudio": { run: () => openTool("audio"), available: all(needDoc, noDialog, () => speechReady) },
@@ -1203,7 +1204,7 @@ export function App() {
 
   const pagesMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
-    setMenu({ label: "Page tools", x: r.left, y: r.bottom + 2, items: [item("pages.organize"), "separator", item("pages.extract"), item("pages.delete"), item("pages.rotate"), item("pages.split"), item("pages.stamp"), item("pages.watermark"), item("pages.crop"), item("pages.exportImages"), item("pages.extractImages"), item("pages.exportText"), item("file.toWord"), item("file.toPowerPoint"), item("file.exportTables"), item("read.saveAudio"), item("pages.labels"), item("pages.ocr"), item("pages.deskew"), item("pages.orient"), item("pages.removeBlank"), "separator", item("pages.merge")] });
+    setMenu({ label: "Page tools", x: r.left, y: r.bottom + 2, items: [item("pages.organize"), "separator", item("pages.extract"), item("pages.delete"), item("pages.rotate"), item("pages.split"), item("pages.stamp"), item("pages.watermark"), item("pages.crop"), item("pages.exportImages"), item("pages.extractImages"), item("pages.exportText"), item("file.toWord"), item("file.toPowerPoint"), item("file.exportTables"), item("file.translate"), item("read.saveAudio"), item("pages.labels"), item("pages.ocr"), item("pages.deskew"), item("pages.orient"), item("pages.removeBlank"), "separator", item("pages.merge")] });
   };
 
   /* ---------- Job results ---------- */

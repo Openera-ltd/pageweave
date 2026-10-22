@@ -1,0 +1,20 @@
+OPUS-MT translation models redistributed by PageWeave (under translate/<source>-<target>/)
+
+Models: Helsinki-NLP OPUS-MT (Language Technology Research Group, University of Helsinki),
+licensed CC BY 4.0 (see CC-BY-4.0.txt in this folder). ONNX conversion (int8-quantized encoder
+and merged decoder) by Xenova, from the original models; redistributed unmodified apart from
+file names (encoder.onnx, decoder.onnx, tokenizer.json, config.json). No endorsement implied.
+
+Citation: Jörg Tiedemann and Santhosh Thottingal. 2020. OPUS-MT — Building open translation
+services for the World. Proceedings of the 22nd Annual Conference of the European Association
+for Machine Translation (EAMT).
+
+Pinned sources (repository @ commit):
+- en-de: Helsinki-NLP/opus-mt-en-de via https://huggingface.co/Xenova/opus-mt-en-de @ 1ca130c44c4c5441ef16d48aae521a424ab644f7
+- de-en: Helsinki-NLP/opus-mt-de-en via https://huggingface.co/Xenova/opus-mt-de-en @ 399dfd68706739fffd503f876093e455ae268a06
+- en-fr: Helsinki-NLP/opus-mt-en-fr via https://huggingface.co/Xenova/opus-mt-en-fr @ 28726206f80896b90035bd99cccd5cc1e151f916
+- fr-en: Helsinki-NLP/opus-mt-fr-en via https://huggingface.co/Xenova/opus-mt-fr-en @ 6b166a182780e118c997879d0ad5be4b53671644
+- en-es: Helsinki-NLP/opus-mt-en-es via https://huggingface.co/Xenova/opus-mt-en-es @ 4b002a4c7edd54a7ced58877258b87f7efd3f892
+- es-en: Helsinki-NLP/opus-mt-es-en via https://huggingface.co/Xenova/opus-mt-es-en @ eadfd7c658a9d8929ac3b8e996b68a68e2c7d480
+- en-it: Helsinki-NLP/opus-mt-en-it via https://huggingface.co/Xenova/opus-mt-en-it @ 075406e3c8c2c30634d4a1bd8f00c21d9e162011
+- it-en: Helsinki-NLP/opus-mt-it-en via https://huggingface.co/Xenova/opus-mt-it-en @ fd0b89b9c052adc1f2f64152f555aa17353728be

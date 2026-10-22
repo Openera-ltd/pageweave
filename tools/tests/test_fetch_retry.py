@@ -9,6 +9,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fetch_ocr  # noqa: E402
+import fetch_translate  # noqa: E402
 import fetch_pdfium  # noqa: E402
 
 
@@ -47,12 +48,12 @@ class RetryTests(unittest.TestCase):
         return waits
 
     def test_timeouts_and_server_errors_are_retried(self):
-        for mod in (fetch_pdfium, fetch_ocr):
+        for mod in (fetch_pdfium, fetch_ocr, fetch_translate):
             waits = self.check(mod, [TimeoutError("t"), urllib.error.URLError("refused"), http(503), b"data"], 4)
             self.assertEqual(waits, [2, 4, 8])
 
     def test_client_errors_fail_at_once_and_retries_are_bounded(self):
-        for mod in (fetch_pdfium, fetch_ocr):
+        for mod in (fetch_pdfium, fetch_ocr, fetch_translate):
             self.check(mod, [http(404)], 1, ok=False)
             self.check(mod, [TimeoutError("t")] * 4, 4, ok=False)
 

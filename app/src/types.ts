@@ -336,6 +336,7 @@ export type Operation =
   | { op: "optimize"; input: string; images: { max_dpi: number; quality: number } | null; output: string }
   | { op: "export_text"; input: string; pages: string | null; output: string }
   | { op: "convert_to_docx"; input: string; pages: string | null; output: string }
+  | { op: "translate_document"; input: string; pages: string | null; source: string | null; target: string; output: string }
   | { op: "read_aloud_to_wav"; input: string; pages: string | null; voice: string | null; rate: number; output: string }
   | { op: "convert_to_pptx"; input: string; pages: string | null; output: string }
   | { op: "convert_office_to_pdf"; input: string; output: string }
@@ -579,4 +580,11 @@ export interface Spoken {
   sentences: SpeechMark[];
   words: SpeechMark[];
   precision: "word" | "sentence";
+}
+
+/** A translation direction PageWeave offers (BCP 47 codes). */
+export interface TranslationDirection {
+  source: string;
+  target: string;
+  installed: boolean;
 }

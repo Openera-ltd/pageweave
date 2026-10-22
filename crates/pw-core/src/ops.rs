@@ -690,6 +690,18 @@ pub enum Operation {
         input: PathBuf,
         output: PathBuf,
     },
+    /// Translate pages (all when `pages` is absent) with the local translation models into a Word
+    /// document (`output` .docx, layout kept) or a text file (.txt). `source` is detected when
+    /// absent; language codes are BCP 47 ("en", "de", …).
+    TranslateDocument {
+        input: PathBuf,
+        #[serde(default)]
+        pages: Option<String>,
+        #[serde(default)]
+        source: Option<String>,
+        target: String,
+        output: PathBuf,
+    },
     /// Read pages (all when `pages` is absent) aloud with the computer's speech voice into a WAV
     /// file (`voice`: an id from the speech engine, the default voice when absent; `rate`: 0.5–2,
     /// 1 is normal).
@@ -994,6 +1006,7 @@ pub const OPERATION_IDS: &[&str] = &[
     "convert_to_docx",
     "convert_to_pptx",
     "read_aloud_to_wav",
+    "translate_document",
     "convert_office_to_pdf",
     "export_tables",
     "optimize",
@@ -1054,6 +1067,7 @@ impl Operation {
             Operation::ConvertToDocx { .. } => "convert_to_docx",
             Operation::ConvertToPptx { .. } => "convert_to_pptx",
             Operation::ReadAloudToWav { .. } => "read_aloud_to_wav",
+            Operation::TranslateDocument { .. } => "translate_document",
             Operation::ConvertOfficeToPdf { .. } => "convert_office_to_pdf",
             Operation::ExportTables { .. } => "export_tables",
             Operation::Optimize { .. } => "optimize",
@@ -1154,6 +1168,7 @@ impl Operation {
             | Operation::ConvertToDocx { input, .. }
             | Operation::ConvertToPptx { input, .. }
             | Operation::ReadAloudToWav { input, .. }
+            | Operation::TranslateDocument { input, .. }
             | Operation::ConvertOfficeToPdf { input, .. }
             | Operation::ExportTables { input, .. }
             | Operation::Optimize { input, .. }
@@ -1222,6 +1237,7 @@ impl Operation {
             | Operation::ConvertToDocx { output, .. }
             | Operation::ConvertToPptx { output, .. }
             | Operation::ReadAloudToWav { output, .. }
+            | Operation::TranslateDocument { output, .. }
             | Operation::ConvertOfficeToPdf { output, .. }
             | Operation::Optimize { output, .. }
             | Operation::Deskew { output, .. }
@@ -1296,6 +1312,22 @@ impl Operation {
                 let ok = output.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf"));
                 if !ok {
                     return Err(PwError::invalid("office.extension", "Save the PDF with a .pdf name."));
+                }
+            }
+            Operation::TranslateDocument { output, source, target, .. } => {
+                let ok =
+                    output.extension().is_some_and(|e| e.eq_ignore_ascii_case("docx") || e.eq_ignore_ascii_case("txt"));
+                if !ok {
+                    return Err(PwError::invalid(
+                        "translate.extension",
+                        "Save the translation as a Word document (.docx) or a text file (.txt).",
+                    ));
+                }
+                let code = |c: &str| {
+                    !c.is_empty() && c.len() <= 12 && c.chars().all(|x| x.is_ascii_alphanumeric() || x == '-')
+                };
+                if !code(target) || source.as_deref().is_some_and(|s| !code(s)) {
+                    return Err(PwError::invalid("translate.language", "Choose the languages from the list."));
                 }
             }
             Operation::ReadAloudToWav { output, rate, .. } => {

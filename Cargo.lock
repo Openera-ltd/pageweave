@@ -3282,6 +3282,7 @@ dependencies = [
  "pw-core",
  "pw-pdf",
  "pw-speech",
+ "pw-translate",
  "serde",
  "serde_json",
  "tauri",
@@ -3721,6 +3722,7 @@ dependencies = [
  "pw-ocr",
  "pw-pdf",
  "pw-speech",
+ "pw-translate",
  "serde_json",
  "tempfile",
  "zip",
@@ -3785,6 +3787,7 @@ dependencies = [
  "pw-core",
  "pw-ocr",
  "pw-speech",
+ "pw-translate",
  "quick-xml",
  "regex",
  "ring",
@@ -3807,6 +3810,20 @@ dependencies = [
  "serde",
  "tempfile",
  "windows",
+]
+
+[[package]]
+name = "pw-translate"
+version = "0.1.0"
+dependencies = [
+ "ort",
+ "pw-core",
+ "pw-ocr",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "unicode-normalization",
 ]
 
 [[package]]

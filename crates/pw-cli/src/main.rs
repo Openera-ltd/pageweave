@@ -148,6 +148,21 @@ enum Command {
         #[arg(short, long)]
         output: PathBuf,
     },
+    /// Translate pages with the local translation models into a Word document (-o file.docx,
+    /// layout kept) or a text file (-o file.txt). Without a file, list the language directions.
+    Translate {
+        file: Option<PathBuf>,
+        #[arg(long)]
+        pages: Option<String>,
+        /// Language of the document (detected when absent), e.g. en.
+        #[arg(long)]
+        from: Option<String>,
+        /// Language to translate into, e.g. de.
+        #[arg(long)]
+        to: Option<String>,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
     /// Read pages aloud with the computer's speech voice into a WAV file (-o file.wav). Without
     /// -o, list the voices.
     Speak {
@@ -740,6 +755,21 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
         Command::Speak { .. } => {
             return Err(PwError::invalid("usage", "Give a PDF and -o file.wav, or nothing to list the voices."))
         }
+        Command::Translate { file: Some(file), pages, from, to: Some(to), output: Some(output) } => {
+            Operation::TranslateDocument {
+                input: file.clone(),
+                pages: pages.clone(),
+                source: from.clone(),
+                target: to.clone(),
+                output: output.clone(),
+            }
+        }
+        Command::Translate { .. } => {
+            return Err(PwError::invalid(
+                "usage",
+                "Give a PDF, --to LANGUAGE and -o file.docx (or .txt), or nothing to list the languages.",
+            ))
+        }
         Command::ToPptx { file, pages, output } => {
             Operation::ConvertToPptx { input: file.clone(), pages: pages.clone(), output: output.clone() }
         }
@@ -1197,6 +1227,23 @@ fn print_human(r: &OperationResult) {
                 println!("Wrote {} ({} bytes, {} pages)", o.path.display(), o.bytes, o.pages.unwrap_or(0));
             }
         }
+        "translate_document" => {
+            let d = &r.data;
+            for o in &r.outputs {
+                println!("Wrote {} ({} bytes)", o.path.display(), o.bytes);
+            }
+            println!(
+                "{} → {}{}{}: {} paragraphs in {:.1} s; numbers/codes kept {}/{}",
+                d["source"].as_str().unwrap_or(""),
+                d["target"].as_str().unwrap_or(""),
+                if d["detected"] == true { " (detected)" } else { "" },
+                if d["via_english"] == true { " through English" } else { "" },
+                d["paragraphs"],
+                d["millis"].as_f64().unwrap_or(0.0) / 1000.0,
+                d["protected_kept"],
+                d["protected_total"]
+            );
+        }
         "read_aloud_to_wav" => {
             let d = &r.data;
             for o in &r.outputs {
@@ -1464,6 +1511,23 @@ fn run() -> ExitCode {
         };
     }
     let outcome = (|| -> Result<serde_json::Value, PwError> {
+        if let Command::Translate { file: None, output: None, to: None, .. } = &cli.command {
+            let dirs = pw_translate::directions()?;
+            if !cli.json {
+                for d in &dirs {
+                    println!(
+                        "{} {} → {}  {} to {}",
+                        if d.installed { "READY  " } else { "MISSING" },
+                        d.source,
+                        d.target,
+                        pw_translate::language_name(&d.source),
+                        pw_translate::language_name(&d.target)
+                    );
+                }
+                println!("Other pairs of these languages are translated through English.");
+            }
+            return Ok(json!({ "directions": dirs }));
+        }
         if let Command::Speak { file: None, output: None, .. } = &cli.command {
             let info = pw_speech::engine_info()?;
             if !cli.json {

@@ -76,6 +76,7 @@ export type CommandId =
   | "file.openOffice"
   | "file.toPowerPoint"
   | "file.exportTables"
+  | "file.translate"
   | "read.aloud"
   | "read.stop"
   | "read.saveAudio"
@@ -175,6 +176,7 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "file.openOffice", label: "Open a Word, Excel or PowerPoint file…", category: "File", shortcuts: [] },
   { id: "file.toPowerPoint", label: "Convert to PowerPoint…", category: "File", shortcuts: [] },
   { id: "file.exportTables", label: "Export tables to Excel or CSV…", category: "File", shortcuts: [] },
+  { id: "file.translate", label: "Translate…", category: "File", shortcuts: [] },
   { id: "read.aloud", label: "Read aloud", category: "View", shortcuts: ["Ctrl+Shift+L"] },
   { id: "read.stop", label: "Stop reading aloud", category: "View", shortcuts: [] },
   { id: "read.saveAudio", label: "Save as audio (WAV)…", category: "File", shortcuts: [] },

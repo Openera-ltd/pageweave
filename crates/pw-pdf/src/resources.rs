@@ -169,6 +169,35 @@ fn office_documents() -> Capability {
     }
 }
 
+/// Translation: the pinned OPUS-MT models (D-022), every file checked against its hash.
+fn translation() -> PwResult<Capability> {
+    const MISSING: &str = "Translation is not installed. Reinstall PageWeave to add it.";
+    let Some(dir) = pw_translate::default_resource_dir() else {
+        return Ok(summarize("translation", "Translation", vec![], None, MISSING));
+    };
+    let files = pw_translate::check_files(&dir)?
+        .into_iter()
+        .map(|f| ResourceFile {
+            name: f.name,
+            state: match f.matches {
+                None => ResourceState::Missing,
+                Some(true) => ResourceState::Ready,
+                Some(false) => ResourceState::Damaged,
+            },
+            bytes: f.bytes,
+        })
+        .collect();
+    let mut c = summarize("translation", "Translation", files, Some(dir.display().to_string()), MISSING);
+    if c.state == ResourceState::Ready {
+        let dirs = pw_translate::directions()?;
+        c.detail = format!(
+            "{} language directions installed and verified (English with German, French, Spanish and Italian; other pairs through English).",
+            dirs.len()
+        );
+    }
+    Ok(c)
+}
+
 /// Read aloud: the computer's own speech voices (D-021; none are bundled). Required: reading
 /// aloud is a core capability, so a computer without a voice is reported as not ready.
 fn read_aloud() -> Capability {
@@ -201,7 +230,7 @@ fn read_aloud() -> Capability {
 
 /// Check every installed resource against its pinned checksum.
 pub fn resource_status() -> PwResult<ResourceReport> {
-    let capabilities = vec![pdf_engine()?, text_recognition()?, read_aloud(), office_documents()];
+    let capabilities = vec![pdf_engine()?, text_recognition()?, translation()?, read_aloud(), office_documents()];
     let all_ready = capabilities.iter().filter(|c| c.required).all(|c| c.state == ResourceState::Ready);
     Ok(ResourceReport { capabilities, all_ready })
 }

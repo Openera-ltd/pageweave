@@ -77,6 +77,7 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `file.openOffice` | Open a Word, Excel or PowerPoint file… | — | Exercised by tests |
 | `file.toPowerPoint` | Convert to PowerPoint… | — | Exercised by tests |
 | `file.exportTables` | Export tables to Excel or CSV… | — | Exercised by tests |
+| `file.translate` | Translate… | — | Exercised by tests |
 | `read.aloud` | Read aloud | Ctrl+Shift+L | Exercised by tests |
 | `read.stop` | Stop reading aloud | — | Exercised by tests |
 | `read.saveAudio` | Save as audio (WAV)… | — | Exercised by tests |
@@ -93,4 +94,4 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `app.commandPalette` | Command palette | Ctrl+K, Ctrl+Shift+P | Exercised by tests |
 | `app.openLogs` | Show log folder | — | Exercised by tests |
 
-Coverage: 86 of 86 commands exercised by unit or real-app E2E tests.
+Coverage: 87 of 87 commands exercised by unit or real-app E2E tests.

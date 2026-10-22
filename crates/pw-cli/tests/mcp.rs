@@ -283,7 +283,7 @@ fn write_tools_create_verified_new_files_and_leave_sources_alone() {
     let before = std::fs::read(root.path().join("five-pages.pdf")).expect("read");
     let mut c = Client::start(&[root.path()], true);
     let names = tool_names(&mut c);
-    assert_eq!(names.len(), 23, "{names:?}");
+    assert_eq!(names.len(), 24, "{names:?}");
 
     let r = c.ok("extract_pages", json!({ "path": "five-pages.pdf", "pages": "4, 2", "output": "ex.pdf" }));
     assert_eq!(r["outputs"][0]["pages"], 2);
@@ -345,6 +345,16 @@ fn write_tools_create_verified_new_files_and_leave_sources_alone() {
     }
     assert_eq!(
         c.err("read_aloud_to_wav", json!({ "path": "five-pages.pdf", "output": "p1.mp3" })),
+        "mcp.output_extension"
+    );
+    let tr = c.ok(
+        "translate_document",
+        json!({ "path": "five-pages.pdf", "pages": "1", "source": "en", "target": "fr", "output": "p1-fr.txt" }),
+    );
+    assert_eq!(tr["data"]["target"], "fr", "{tr}");
+    assert!(std::fs::read_to_string(root.path().join("p1-fr.txt")).expect("txt").contains("PWMARK001"));
+    assert_eq!(
+        c.err("translate_document", json!({ "path": "five-pages.pdf", "target": "fr", "output": "p1.pdf" })),
         "mcp.output_extension"
     );
     let t = c.ok("export_tables", json!({ "path": "tables.pdf", "output": "t.xlsx" }));

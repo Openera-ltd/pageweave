@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, FolderOpen, Plus, Trash2 } from "lucide-react";
 import { useApi } from "../api";
 import { basename, dirname, join, siblingOutput, stem } from "../paths";
-import { toPwError, type AnnotationChange, type AnnotationSpec, type BookmarkInfo, type CollisionPolicy, type FieldValue, type PageEdit, type StampPosition, type JobSnapshot, type WatermarkLayer, type OpenedDoc, type Operation, type PwError } from "../types";
+import { toPwError, type AnnotationChange, type AnnotationSpec, type BookmarkInfo, type CollisionPolicy, type FieldValue, type PageEdit, type StampPosition, type JobSnapshot, type WatermarkLayer, type OpenedDoc, type Operation, type PwError, type TranslationDirection } from "../types";
 import { Dialog, useDebounced } from "./ui";
+import { availability, languageName, languages } from "../translate";
 
-export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop" | "text" | "word" | "slides" | "audio" | "tables" | "optimize" | "deskew" | "extractImages" | "orient";
+export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop" | "text" | "word" | "slides" | "audio" | "translate" | "tables" | "optimize" | "deskew" | "extractImages" | "orient";
 
 const TITLES: Record<PageTool, string> = {
   extract: "Extract pages",
@@ -23,6 +24,7 @@ const TITLES: Record<PageTool, string> = {
   word: "Convert to Word",
   slides: "Convert to PowerPoint",
   audio: "Save as audio",
+  translate: "Translate",
   tables: "Export tables",
   optimize: "Reduce file size",
   deskew: "Straighten pages",
@@ -31,7 +33,7 @@ const TITLES: Record<PageTool, string> = {
 };
 
 /** Start-button label (the title's first word does not fit every tool). */
-const START: Partial<Record<PageTool, string>> = { audio: "Save audio", slides: "Convert", tables: "Export", word: "Convert", ocr: "Recognize", watermark: "Add watermark", crop: "Crop", text: "Export", optimize: "Reduce size", deskew: "Straighten", extractImages: "Extract", orient: "Turn upright" };
+const START: Partial<Record<PageTool, string>> = { translate: "Translate", audio: "Save audio", slides: "Convert", tables: "Export", word: "Convert", ocr: "Recognize", watermark: "Add watermark", crop: "Crop", text: "Export", optimize: "Reduce size", deskew: "Straighten", extractImages: "Extract", orient: "Turn upright" };
 
 const SUFFIX: Record<PageTool, string> = {
   extract: "extract",
@@ -49,6 +51,7 @@ const SUFFIX: Record<PageTool, string> = {
   word: "",
   slides: "",
   audio: "",
+  translate: "",
   tables: "",
   optimize: "smaller",
   deskew: "straightened",
@@ -57,7 +60,7 @@ const SUFFIX: Record<PageTool, string> = {
 };
 
 /** Tools that offer "All pages" (on by default unless pages were preselected). */
-const ALL_PAGES_TOOLS: PageTool[] = ["rotate", "stamp", "images", "ocr", "watermark", "crop", "text", "word", "slides", "audio", "tables", "deskew", "extractImages", "orient"];
+const ALL_PAGES_TOOLS: PageTool[] = ["rotate", "stamp", "images", "ocr", "watermark", "crop", "text", "word", "slides", "audio", "translate", "tables", "deskew", "extractImages", "orient"];
 
 export type CropUnit = "mm" | "in" | "pt";
 /** Points per unit. */
@@ -161,6 +164,23 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   const [dpi, setDpi] = useState(150);
   const [reduceImages, setReduceImages] = useState(false);
   const [sheetFormat, setSheetFormat] = useState<"xlsx" | "csv">("xlsx");
+  // Translate: languages (source null = detect), output format, and the installed directions.
+  const [trFrom, setTrFrom] = useState<string | null>(null);
+  const [trTo, setTrTo] = useState("en");
+  const [trFormat, setTrFormat] = useState<"docx" | "txt">("docx");
+  const [trDirs, setTrDirs] = useState<TranslationDirection[] | null>(null);
+  const [trDirsError, setTrDirsError] = useState<string | null>(null);
+  useEffect(() => {
+    if (tool !== "translate") return;
+    let live = true;
+    api.translationDirections().then(
+      (d) => live && setTrDirs(d),
+      (e) => live && setTrDirsError(toPwError(e).message),
+    );
+    return () => {
+      live = false;
+    };
+  }, [api, tool]);
   const [imagePreset, setImagePreset] = useState("standard");
   /** Tools that write several files into a folder rather than one new PDF. */
   const toFolder = tool === "split" || tool === "images" || tool === "extractImages" || (tool === "tables" && sheetFormat === "csv");
@@ -189,6 +209,8 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
             ? join(dirname(doc.path), `${stem(doc.path)}.pptx`)
           : tool === "audio"
             ? join(dirname(doc.path), `${stem(doc.path)}.wav`)
+          : tool === "translate"
+            ? join(dirname(doc.path), `${stem(doc.path)}-en.docx`)
           : tool === "tables"
             ? join(dirname(doc.path), `${stem(doc.path)}.xlsx`)
             : siblingOutput(doc.path, suffix),
@@ -271,6 +293,12 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
       if (!stampCharsOk(wmText)) return "Watermarks support Latin characters only for now.";
       if (!(wmSizeN >= 8 && wmSizeN <= 400)) return "Use a text size from 8 to 400.";
     }
+    if (tool === "translate") {
+      if (trDirsError) return trDirsError;
+      if (!trDirs) return "Checking the installed languages…";
+      const a = availability(trDirs, trFrom, trTo);
+      if (a !== true && a !== "via-english") return a;
+    }
     if (!output.trim()) return toFolder ? "Choose an output folder." : "Choose where to save the new file.";
     return null;
   })();
@@ -329,6 +357,8 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         return { op: "convert_to_docx", input: doc.path, pages: allPages ? null : pages, output };
       case "slides":
         return { op: "convert_to_pptx", input: doc.path, pages: allPages ? null : pages, output };
+      case "translate":
+        return { op: "translate_document", input: doc.path, pages: allPages ? null : pages, source: trFrom, target: trTo, output };
       case "audio":
         return { op: "read_aloud_to_wav", input: doc.path, pages: allPages ? null : pages, voice: readVoice, rate: readRate, output };
       case "tables":
@@ -379,6 +409,10 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
     } else if (tool === "slides") {
       const p = await api.pickSaveAnyPath(output);
       if (p) setOutput(/\.pptx$/i.test(p) ? p : `${p}.pptx`);
+    } else if (tool === "translate") {
+      const p = await api.pickSaveAnyPath(output);
+      const ext = trFormat === "docx" ? ".docx" : ".txt";
+      if (p) setOutput(p.toLowerCase().endsWith(ext) ? p : `${p}${ext}`);
     } else if (tool === "audio") {
       const p = await api.pickSaveAnyPath(output);
       if (p) setOutput(/\.wav$/i.test(p) ? p : `${p}.wav`);
@@ -617,6 +651,78 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         </p>
       )}
 
+      {tool === "translate" && (
+        <>
+          <div className="field-row">
+            <label className="field">
+              <span className="label">From</span>
+              <select
+                id="translate-from"
+                className="select"
+                value={trFrom ?? ""}
+                disabled={!trDirs}
+                onChange={(e) => setTrFrom(e.target.value || null)}
+              >
+                <option value="">Detect automatically</option>
+                {languages(trDirs ?? []).map((l) => (
+                  <option key={l} value={l}>
+                    {languageName(l)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span className="label">To</span>
+              <select
+                id="translate-to"
+                className="select"
+                value={trTo}
+                disabled={!trDirs}
+                onChange={(e) => {
+                  const to = e.target.value;
+                  setTrTo(to);
+                  setOutput(join(dirname(doc.path), `${stem(doc.path)}-${to}.${trFormat}`));
+                }}
+              >
+                {languages(trDirs ?? []).map((l) => (
+                  <option key={l} value={l}>
+                    {languageName(l)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {trDirs && trFrom && availability(trDirs, trFrom, trTo) === "via-english" && (
+            <span className="hint" data-testid="translate-via">Translated through English (no direct model for this pair).</span>
+          )}
+          <div className="field">
+            <span className="label" id="translate-format-label">Save as</span>
+            <div className="segmented" role="radiogroup" aria-labelledby="translate-format-label">
+              {(
+                [
+                  ["docx", "Word document"],
+                  ["txt", "Text"],
+                ] as const
+              ).map(([f, l]) => (
+                <button
+                  key={f}
+                  type="button"
+                  role="radio"
+                  aria-checked={trFormat === f}
+                  data-testid={`translate-format-${f}`}
+                  onClick={() => {
+                    if (f === trFormat) return;
+                    setTrFormat(f);
+                    setOutput(join(dirname(doc.path), `${stem(doc.path)}-${trTo}.${f}`));
+                  }}
+                >
+                  {l}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
       {tool === "tables" && (
         <div className="field">
           <span className="label" id="sheet-format-label">Format</span>
@@ -826,6 +932,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         {tool === "split" && splitMode !== "bookmarks" && <span className="hint">Files are named “{doc.name.replace(/\.pdf$/i, "")}_part01.pdf”, …</span>}
         {tool === "extractImages" && <span className="hint">JPEG images are saved exactly as stored; others as PNG. Repeated images are saved once.</span>}
         {tool === "text" && <span className="hint">UTF-8 text, one section per page. Scanned pages need text recognition first.</span>}
+        {tool === "translate" && <span className="hint">Translated on this computer; the result is a new file and the PDF is not changed. Review machine translation before relying on it.</span>}
         {tool === "audio" && <span className="hint">The pages read aloud with the read-aloud voice and speed ({readRate}×), as a WAV file.</span>}
         {tool === "slides" && <span className="hint">One slide per page with editable text boxes, tables and pictures. Slides take the first page's size.</span>}
         {tool === "word" && <span className="hint">Editable text, headings, columns, pictures and links. Scanned pages need text recognition first.</span>}
