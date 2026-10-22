@@ -7,6 +7,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { inflateRawSync } from "node:zlib";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Session } from "./webdriver.mjs";
@@ -1329,6 +1330,60 @@ await test("export as text: chosen pages saved as UTF-8 text with page sections;
     await s.exec("[...document.querySelectorAll('[role=dialog] .btn.danger')].find(b => b.textContent.includes('Replace')).click()");
     await s.waitUntil(async () => readFileSync(out, "utf8").includes("PWMARK001"), "replaced with all pages");
   });
+});
+
+/** One part of a ZIP package (the Word file), read with Node's own inflate. */
+function zipPart(file, name) {
+  const b = readFileSync(file);
+  const eocd = b.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  assert(eocd >= 0, `${file} is a ZIP package`);
+  let p = b.readUInt32LE(eocd + 16);
+  const n = b.readUInt16LE(eocd + 10);
+  for (let i = 0; i < n; i++) {
+    const method = b.readUInt16LE(p + 10);
+    const size = b.readUInt32LE(p + 20);
+    const nameLen = b.readUInt16LE(p + 28);
+    const extra = b.readUInt16LE(p + 30);
+    const comment = b.readUInt16LE(p + 32);
+    const local = b.readUInt32LE(p + 42);
+    const entry = b.toString("utf8", p + 46, p + 46 + nameLen);
+    if (entry === name) {
+      const start = local + 30 + b.readUInt16LE(local + 26) + b.readUInt16LE(local + 28);
+      const data = b.subarray(start, start + size);
+      return (method === 8 ? inflateRawSync(data) : data).toString("utf8");
+    }
+    p += 46 + nameLen + extra + comment;
+  }
+  throw new Error(`${name} not in ${file}`);
+}
+
+await test("convert to Word: palette and page tools; editable Word file with columns, headings, link; losses reported; source unchanged", async () => {
+  const src = join(FIX, "article.pdf");
+  const before = sha(src);
+  const out = join(work, "article-converted.docx");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Convert to Word");
+    await s.click('[role="option"][data-command="file.toWord"]');
+    await s.waitFor("#output");
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("article.docx"), "default name is the document's with .docx");
+    await s.type("#output", out);
+    await axeCheck(s, "convert-to-word-dialog");
+    writeFileSync(join(ART, "convert-to-word.png"), await s.screenshot());
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved article-converted.docx")), "saved notice");
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("not carried over")), "losses reported");
+    // Only PDFs open in PageWeave: the notice offers Show in folder, not Open.
+    assert(await s.exec("return !!document.querySelector('.notice button[data-action=\"Show in folder\"]')"), "show in folder offered");
+  });
+  assert(sha(src) === before, "source PDF unchanged");
+  const xml = zipPart(out, "word/document.xml");
+  assert(xml.includes('<w:cols w:num="2"'), "two columns");
+  assert((xml.match(/<w:pStyle w:val="Heading/g) ?? []).length >= 5, "headings styled");
+  assert(xml.includes("1 Introduction") && xml.includes("rivers.example.org") && xml.includes("Station"), "text carried over");
+  assert(zipPart(out, "word/_rels/document.xml.rels").includes("https://rivers.example.org/data"), "link kept");
 });
 
 await test("reduce file size: tab menu and palette; smaller verified copy with the same text; sizes reported; second pass refused", async () => {

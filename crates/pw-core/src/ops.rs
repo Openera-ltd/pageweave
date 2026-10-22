@@ -666,6 +666,13 @@ pub enum Operation {
         pages: Option<String>,
         output: PathBuf,
     },
+    /// Convert pages (all when `pages` is absent) into an editable Word document (.docx).
+    ConvertToDocx {
+        input: PathBuf,
+        #[serde(default)]
+        pages: Option<String>,
+        output: PathBuf,
+    },
     /// Make a new PDF from JPEG and PNG images, one image per page in the given order.
     ImagesToPdf {
         inputs: Vec<PathBuf>,
@@ -939,6 +946,7 @@ pub const OPERATION_IDS: &[&str] = &[
     "set_page_labels",
     "images_to_pdf",
     "export_text",
+    "convert_to_docx",
     "optimize",
     "compare",
     "verify_signatures",
@@ -994,6 +1002,7 @@ impl Operation {
             Operation::SetPageLabels { .. } => "set_page_labels",
             Operation::ImagesToPdf { .. } => "images_to_pdf",
             Operation::ExportText { .. } => "export_text",
+            Operation::ConvertToDocx { .. } => "convert_to_docx",
             Operation::Optimize { .. } => "optimize",
             Operation::Compare { .. } => "compare",
             Operation::VerifySignatures { .. } => "verify_signatures",
@@ -1089,6 +1098,7 @@ impl Operation {
             | Operation::SetBookmarks { input, .. }
             | Operation::SetPageLabels { input, .. }
             | Operation::ExportText { input, .. }
+            | Operation::ConvertToDocx { input, .. }
             | Operation::Optimize { input, .. }
             | Operation::ExtractAttachment { input, .. }
             | Operation::SanitizeInspect { input }
@@ -1150,6 +1160,7 @@ impl Operation {
             | Operation::SetPageLabels { output, .. }
             | Operation::ImagesToPdf { output, .. }
             | Operation::ExportText { output, .. }
+            | Operation::ConvertToDocx { output, .. }
             | Operation::Optimize { output, .. }
             | Operation::Deskew { output, .. }
             | Operation::FixOrientation { output, .. }
@@ -1212,6 +1223,12 @@ impl Operation {
             }
             Operation::Split { split: SplitMode::MaxSize { max_bytes }, .. } if *max_bytes < MIN_SPLIT_BYTES => {
                 return Err(PwError::invalid("split.max_size", "Choose a size limit of at least 10 KB."));
+            }
+            Operation::ConvertToDocx { output, .. } => {
+                let ok = output.extension().is_some_and(|e| e.eq_ignore_ascii_case("docx"));
+                if !ok {
+                    return Err(PwError::invalid("docx.extension", "Save the Word document with a .docx name."));
+                }
             }
             Operation::SetPageLabels { ranges, .. } => {
                 if ranges.len() > MAX_LABEL_RANGES {

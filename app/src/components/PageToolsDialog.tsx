@@ -5,7 +5,7 @@ import { basename, dirname, join, siblingOutput, stem } from "../paths";
 import { toPwError, type AnnotationChange, type AnnotationSpec, type BookmarkInfo, type CollisionPolicy, type FieldValue, type PageEdit, type StampPosition, type JobSnapshot, type WatermarkLayer, type OpenedDoc, type Operation, type PwError } from "../types";
 import { Dialog, useDebounced } from "./ui";
 
-export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop" | "text" | "optimize" | "deskew" | "extractImages" | "orient";
+export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop" | "text" | "word" | "optimize" | "deskew" | "extractImages" | "orient";
 
 const TITLES: Record<PageTool, string> = {
   extract: "Extract pages",
@@ -20,6 +20,7 @@ const TITLES: Record<PageTool, string> = {
   watermark: "Watermark",
   crop: "Crop pages",
   text: "Export as text",
+  word: "Convert to Word",
   optimize: "Reduce file size",
   deskew: "Straighten pages",
   extractImages: "Extract images",
@@ -27,7 +28,7 @@ const TITLES: Record<PageTool, string> = {
 };
 
 /** Start-button label (the title's first word does not fit every tool). */
-const START: Partial<Record<PageTool, string>> = { ocr: "Recognize", watermark: "Add watermark", crop: "Crop", text: "Export", optimize: "Reduce size", deskew: "Straighten", extractImages: "Extract", orient: "Turn upright" };
+const START: Partial<Record<PageTool, string>> = { word: "Convert", ocr: "Recognize", watermark: "Add watermark", crop: "Crop", text: "Export", optimize: "Reduce size", deskew: "Straighten", extractImages: "Extract", orient: "Turn upright" };
 
 const SUFFIX: Record<PageTool, string> = {
   extract: "extract",
@@ -42,6 +43,7 @@ const SUFFIX: Record<PageTool, string> = {
   watermark: "watermarked",
   crop: "cropped",
   text: "",
+  word: "",
   optimize: "smaller",
   deskew: "straightened",
   extractImages: "",
@@ -49,7 +51,7 @@ const SUFFIX: Record<PageTool, string> = {
 };
 
 /** Tools that offer "All pages" (on by default unless pages were preselected). */
-const ALL_PAGES_TOOLS: PageTool[] = ["rotate", "stamp", "images", "ocr", "watermark", "crop", "text", "deskew", "extractImages", "orient"];
+const ALL_PAGES_TOOLS: PageTool[] = ["rotate", "stamp", "images", "ocr", "watermark", "crop", "text", "word", "deskew", "extractImages", "orient"];
 
 export type CropUnit = "mm" | "in" | "pt";
 /** Points per unit. */
@@ -167,7 +169,13 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   const [cropUnit, setCropUnit] = useState<CropUnit>("mm");
   const [crop, setCrop] = useState({ top: "0", right: "0", bottom: "0", left: "0" });
   const [output, setOutput] = useState(
-    toFolder ? dirname(doc.path) : tool === "text" ? join(dirname(doc.path), `${stem(doc.path)}.txt`) : siblingOutput(doc.path, suffix),
+    toFolder
+      ? dirname(doc.path)
+      : tool === "text"
+        ? join(dirname(doc.path), `${stem(doc.path)}.txt`)
+        : tool === "word"
+          ? join(dirname(doc.path), `${stem(doc.path)}.docx`)
+          : siblingOutput(doc.path, suffix),
   );
   const [splitMode, setSplitMode] = useState<"every_n" | "ranges" | "bookmarks" | "max_size">("every_n");
   const [bmLevel, setBmLevel] = useState(1);
@@ -301,6 +309,8 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
       }
       case "text":
         return { op: "export_text", input: doc.path, pages: allPages ? null : pages, output };
+      case "word":
+        return { op: "convert_to_docx", input: doc.path, pages: allPages ? null : pages, output };
       case "crop":
         return { op: "crop_pages", input: doc.path, pages: allPages ? null : pages, margins: cropPt, output };
       case "watermark":
@@ -344,6 +354,9 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
     } else if (tool === "text") {
       const p = await api.pickSaveAnyPath(output);
       if (p) setOutput(/\.txt$/i.test(p) ? p : `${p}.txt`);
+    } else if (tool === "word") {
+      const p = await api.pickSaveAnyPath(output);
+      if (p) setOutput(/\.docx$/i.test(p) ? p : `${p}.docx`);
     } else {
       const p = await api.pickSavePath(output);
       if (p) setOutput(p.toLowerCase().endsWith(".pdf") ? p : `${p}.pdf`);
@@ -750,6 +763,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         {tool === "split" && splitMode !== "bookmarks" && <span className="hint">Files are named “{doc.name.replace(/\.pdf$/i, "")}_part01.pdf”, …</span>}
         {tool === "extractImages" && <span className="hint">JPEG images are saved exactly as stored; others as PNG. Repeated images are saved once.</span>}
         {tool === "text" && <span className="hint">UTF-8 text, one section per page. Scanned pages need text recognition first.</span>}
+        {tool === "word" && <span className="hint">Editable text, headings, columns, pictures and links. Scanned pages need text recognition first.</span>}
         {tool === "images" && <span className="hint">PNG files named “{doc.name.replace(/\.pdf$/i, "")}_p001.png”, …</span>}
       </div>
 

@@ -497,6 +497,24 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             let straightened = report.iter().filter(|r| r.action == crate::deskew::DeskewAction::Straightened).count();
             (vec![out(&c, None)], json!({ "straightened": straightened, "pages": report }))
         }
+        Operation::ConvertToDocx { input, pages, output } => {
+            let page_progress = |done: u64, total: u64| {
+                if let Some(c) = ctx {
+                    c.set_progress(done, total, "pages");
+                }
+            };
+            let (c, report, w) = crate::docx::convert_to_docx(
+                input,
+                &opts,
+                pages.as_deref(),
+                output,
+                policy,
+                &cancelled,
+                &page_progress,
+            )?;
+            warnings.extend(w);
+            (vec![out(&c, None)], serde_json::to_value(&report).unwrap_or_default())
+        }
         Operation::VerifySignatures { input, trusted } => {
             let anchors = crate::signatures::load_trusted_certificates(trusted)?;
             let report = crate::signatures::verify_signatures(input, &opts, &anchors)?;

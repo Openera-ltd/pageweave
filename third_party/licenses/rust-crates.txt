@@ -6526,6 +6526,7 @@ MIT License (MIT) — used by:
   thiserror-impl 2.0.21
   thiserror 1.0.69
   thiserror 2.0.21
+  typed-path 0.12.4
   typeid 1.0.3
   unicode-ident 1.0.27
   x11-dl 2.21.0
@@ -6762,6 +6763,7 @@ SOFTWARE.
 ==============================================================================
 MIT License (MIT) — used by:
   tracing-core 0.1.36
+  zip 8.6.0
 ==============================================================================
 The MIT License (MIT)
 

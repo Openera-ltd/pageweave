@@ -9,6 +9,8 @@ describe("batch processing", () => {
       "/out/scan-smaller.pdf",
     ]);
     expect(batchOutputs(["C:\\docs\\x.pdf"], "text", "C:\\out")).toEqual(["C:\\out\\x.txt"]);
+    expect(batchOutputs(["C:\\docs\\x.pdf"], "word", "C:\\out")).toEqual(["C:\\out\\x.docx"]);
+    expect(batchOperation("word", "/a.pdf", "/a.docx")).toEqual({ op: "convert_to_docx", input: "/a.pdf", pages: null, output: "/a.docx" });
   });
   it("builds the typed operation for each action", () => {
     expect(batchOperation("ocr", "/a.pdf", "/o.pdf")).toEqual({ op: "ocr_pages", input: "/a.pdf", pages: null, skip_text_pages: true, dpi: 200, output: "/o.pdf" });

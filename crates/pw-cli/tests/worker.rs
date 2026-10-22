@@ -127,7 +127,9 @@ fn mutated_files_through_write_operations_in_the_worker() {
             let input = dir.path().join(format!("m{case}.pdf"));
             std::fs::write(&input, &b).expect("write");
             let out = dir.path().join(format!("out{case}.pdf"));
+            let docx = dir.path().join(format!("out{case}.docx"));
             let ops = vec![
+                Operation::ConvertToDocx { input: input.clone(), pages: None, output: docx.clone() },
                 Operation::ExtractPages { input: input.clone(), pages: "1".into(), output: out.clone() },
                 Operation::Sanitize { input: input.clone(), options: SanitizeOptions::default(), output: out.clone() },
                 Operation::SetPageLabels {
@@ -151,10 +153,16 @@ fn mutated_files_through_write_operations_in_the_worker() {
             ];
             for op in ops {
                 let id = op.id();
+                let out = if id == "convert_to_docx" { docx.clone() } else { out.clone() };
                 let (_, r) = run_in_worker(&exe(), &OperationRequest::new(op), &|| false, &mut |_| {});
                 match r {
                     Ok(_) => {
-                        if lopdf::Document::load(&out).is_err() {
+                        let parses = if id == "convert_to_docx" {
+                            std::fs::File::open(&out).ok().and_then(|f| zip::ZipArchive::new(f).ok()).is_some()
+                        } else {
+                            lopdf::Document::load(&out).is_ok()
+                        };
+                        if !parses {
                             failures
                                 .push(format!("{} case {case} {id}: committed output does not parse", fx.display()));
                         }

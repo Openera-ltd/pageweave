@@ -1013,3 +1013,40 @@ fn resources_reports_each_capability() {
     let human = bin().arg("resources").output().expect("run");
     assert!(String::from_utf8_lossy(&human.stdout).contains("READY    PDF engine: Installed and verified."));
 }
+
+#[test]
+fn to_docx_writes_a_word_file_and_reports_what_was_kept() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("article.docx");
+    let r = bin()
+        .args(["--json", "to-docx", "--pages", "1-2"])
+        .arg(fixture("article.pdf"))
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stdout));
+    let v = json(&r);
+    assert_eq!(v["result"]["operation"], "convert_to_docx");
+    assert_eq!(v["result"]["data"]["pages"], 2);
+    assert_eq!(v["result"]["data"]["links"], 1);
+    assert!(v["result"]["warnings"]
+        .as_array()
+        .expect("warnings")
+        .iter()
+        .any(|w| w.as_str().unwrap_or("").contains("not carried over")));
+    let z = zip::ZipArchive::new(std::fs::File::open(&out).expect("open")).expect("a Word package");
+    assert!(z.file_names().any(|n| n == "word/document.xml"));
+    // Existing output → conflict (exit 5); wrong extension → invalid input (exit 2).
+    let again =
+        bin().args(["--json", "to-docx"]).arg(fixture("article.pdf")).arg("-o").arg(&out).output().expect("run");
+    assert_eq!(json(&again)["error"]["category"], "output_conflict");
+    let bad = bin()
+        .args(["to-docx"])
+        .arg(fixture("article.pdf"))
+        .arg("-o")
+        .arg(dir.path().join("a.doc"))
+        .output()
+        .expect("run");
+    assert_eq!(bad.status.code(), Some(2));
+}

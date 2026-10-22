@@ -16,6 +16,7 @@ mod compare;
 mod content_ops;
 pub mod deskew;
 mod document;
+mod docx;
 mod downsample;
 mod edit;
 mod exec;

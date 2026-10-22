@@ -55,10 +55,11 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - name: System libraries (WebKitGTK, WebDriver, virtual display)
+      - name: System libraries (WebKitGTK, WebDriver, virtual display; LibreOffice for the Word round trip)
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev webkit2gtk-driver xvfb
+          sudo apt-get install -y -q libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev webkit2gtk-driver xvfb \
+            libreoffice-writer-nogui fonts-dejavu-core fonts-liberation
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -153,6 +154,9 @@ jobs:
           npx vitest run
           npx vite build
       - name: Tests
+        # LibreOffice is not installed on the Windows runner; the Word round trip runs on Linux.
+        env:
+          PW_SKIP_SOFFICE: "1"
         run: cargo test --workspace --no-fail-fast
       - name: Build release CLI
         run: cargo build --release -p pw-cli

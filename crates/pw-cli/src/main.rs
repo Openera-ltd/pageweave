@@ -126,6 +126,15 @@ enum Command {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+    /// Convert to an editable Word document (.docx): paragraphs, headings, columns, pictures and
+    /// links; a report says what could not be carried over.
+    ToDocx {
+        file: PathBuf,
+        #[arg(long)]
+        pages: Option<String>,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
     /// Find text and report pages and positions.
     Search {
         file: PathBuf,
@@ -661,6 +670,9 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
         Command::Text { file, pages, output: Some(out) } => {
             Operation::ExportText { input: file.clone(), pages: pages.clone(), output: out.clone() }
         }
+        Command::ToDocx { file, pages, output } => {
+            Operation::ConvertToDocx { input: file.clone(), pages: pages.clone(), output: output.clone() }
+        }
         Command::Search { file, query, match_case, whole_word } => Operation::Search {
             input: file.clone(),
             query: query.clone(),
@@ -1096,6 +1108,16 @@ fn print_human(r: &OperationResult) {
                 println!("--- page {} ---", p["page"]);
                 println!("{}", p["text"].as_str().unwrap_or(""));
             }
+        }
+        "convert_to_docx" => {
+            let d = &r.data;
+            for o in &r.outputs {
+                println!("Wrote {} ({} bytes)", o.path.display(), o.bytes);
+            }
+            println!(
+                "Pages: {}, paragraphs: {}, headings: {}, pictures: {}, links: {}",
+                d["pages"], d["paragraphs"], d["headings"], d["pictures"], d["links"]
+            );
         }
         "ocr_pages" => {
             let d = &r.data;

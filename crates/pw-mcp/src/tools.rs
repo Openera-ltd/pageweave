@@ -268,6 +268,19 @@ pub const TOOLS: &[Tool] = &[
             )
         },
     },
+    Tool {
+        name: "convert_to_docx",
+        title: "Convert to Word",
+        description: "Convert all or chosen pages to an editable Word document (.docx): paragraphs, headings, columns, pictures and links. The result reports what could not be carried over (drawn lines and table borders, comments, form fields, pages without a text layer).",
+        effect: Effect::WritesNewFiles,
+        long: true,
+        schema: || {
+            obj(
+                json!({ "path": path_prop("Source PDF"), "pages": { "type": "string", "description": PAGES }, "output": path_prop("New .docx file (must not exist)") }),
+                &["path", "output"],
+            )
+        },
+    },
 ];
 
 pub fn find(name: &str) -> Option<&'static Tool> {
@@ -519,6 +532,14 @@ pub fn operation(tool: &Tool, a: &Value, roots: &Roots) -> PwResult<Operation> {
                 input: roots.input(&x.path)?,
                 pages: x.pages,
                 output: roots.output(&x.output, &["txt"])?,
+            }
+        }
+        "convert_to_docx" => {
+            let x: OptPagesOutArg = args(a)?;
+            Operation::ConvertToDocx {
+                input: roots.input(&x.path)?,
+                pages: x.pages,
+                output: roots.output(&x.output, &["docx"])?,
             }
         }
         other => {

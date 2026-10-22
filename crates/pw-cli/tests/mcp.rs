@@ -280,7 +280,7 @@ fn write_tools_create_verified_new_files_and_leave_sources_alone() {
     let before = std::fs::read(root.path().join("five-pages.pdf")).expect("read");
     let mut c = Client::start(&[root.path()], true);
     let names = tool_names(&mut c);
-    assert_eq!(names.len(), 18, "{names:?}");
+    assert_eq!(names.len(), 19, "{names:?}");
 
     let r = c.ok("extract_pages", json!({ "path": "five-pages.pdf", "pages": "4, 2", "output": "ex.pdf" }));
     assert_eq!(r["outputs"][0]["pages"], 2);
@@ -311,6 +311,13 @@ fn write_tools_create_verified_new_files_and_leave_sources_alone() {
     c.ok("export_text", json!({ "path": "five-pages.pdf", "pages": "3", "output": "p3.txt" }));
     assert!(std::fs::read_to_string(root.path().join("p3.txt")).expect("txt").contains("PWMARK003"));
     assert_eq!(c.err("export_text", json!({ "path": "five-pages.pdf", "output": "p3.pdf" })), "mcp.output_extension");
+    let w = c.ok("convert_to_docx", json!({ "path": "five-pages.pdf", "pages": "2-3", "output": "two.docx" }));
+    assert_eq!(w["data"]["pages"], 2, "{w}");
+    assert!(zip::ZipArchive::new(std::fs::File::open(root.path().join("two.docx")).expect("open")).is_ok());
+    assert_eq!(
+        c.err("convert_to_docx", json!({ "path": "five-pages.pdf", "output": "two.pdf" })),
+        "mcp.output_extension"
+    );
 
     assert_eq!(std::fs::read(root.path().join("five-pages.pdf")).expect("read"), before, "source unchanged");
 }

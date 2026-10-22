@@ -72,6 +72,7 @@ export type CommandId =
   | "pages.stamp"
   | "pages.exportImages"
   | "pages.exportText"
+  | "file.toWord"
   | "pages.labels"
   | "pages.deskew"
   | "pages.orient"
@@ -164,6 +165,7 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "pages.stamp", label: "Page numbers and stamps…", category: "Pages", shortcuts: [] },
   { id: "pages.exportImages", label: "Export pages as images…", category: "Pages", shortcuts: [] },
   { id: "pages.exportText", label: "Export as text…", category: "Pages", shortcuts: [] },
+  { id: "file.toWord", label: "Convert to Word…", category: "File", shortcuts: [] },
   { id: "pages.labels", label: "Page labels…", category: "Pages", shortcuts: [] },
   { id: "pages.deskew", label: "Straighten pages…", category: "Pages", shortcuts: [] },
   { id: "pages.orient", label: "Turn pages upright…", category: "Pages", shortcuts: [] },

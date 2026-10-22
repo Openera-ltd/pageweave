@@ -5,9 +5,9 @@ import { DEFAULT_SANITIZE } from "./components/SanitizeDialog";
 import { basename, join, stem } from "./paths";
 import type { Operation } from "./types";
 
-export type BatchAction = "optimize" | "optimize_images" | "ocr" | "sanitize" | "deskew" | "orient" | "text";
+export type BatchAction = "optimize" | "optimize_images" | "ocr" | "sanitize" | "deskew" | "orient" | "text" | "word";
 
-export const BATCH_ACTIONS: Array<{ id: BatchAction; label: string; suffix: string; ext: "pdf" | "txt" }> = [
+export const BATCH_ACTIONS: Array<{ id: BatchAction; label: string; suffix: string; ext: "pdf" | "txt" | "docx" }> = [
   { id: "optimize", label: "Reduce file size (lossless)", suffix: "smaller", ext: "pdf" },
   { id: "optimize_images", label: "Reduce file size, images at 150 dpi", suffix: "smaller", ext: "pdf" },
   { id: "ocr", label: "Recognize text (OCR)", suffix: "searchable", ext: "pdf" },
@@ -15,6 +15,7 @@ export const BATCH_ACTIONS: Array<{ id: BatchAction; label: string; suffix: stri
   { id: "deskew", label: "Straighten scanned pages", suffix: "straight", ext: "pdf" },
   { id: "orient", label: "Turn pages upright", suffix: "upright", ext: "pdf" },
   { id: "text", label: "Export as text", suffix: "", ext: "txt" },
+  { id: "word", label: "Convert to Word", suffix: "", ext: "docx" },
 ];
 
 /** Most files in one batch (beyond this, use the CLI in a script). */
@@ -49,6 +50,8 @@ export function batchOperation(action: BatchAction, input: string, output: strin
       return { op: "fix_orientation", input, pages: null, output };
     case "text":
       return { op: "export_text", input, pages: null, output };
+    case "word":
+      return { op: "convert_to_docx", input, pages: null, output };
   }
 }
 
