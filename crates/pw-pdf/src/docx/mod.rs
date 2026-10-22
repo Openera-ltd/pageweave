@@ -218,7 +218,7 @@ fn upright_at(angle: f32, rot: u32) -> bool {
     up((angle + rot as f32).rem_euclid(360.0)) || up((angle - rot as f32).rem_euclid(360.0))
 }
 
-fn extract_page(page: &PdfPage, doc: &PdfDocument, shared: &mut Shared) -> PwResult<Extracted> {
+fn extract_page(page: &PdfPage, doc: &PdfDocument, shared: &mut Shared, with_pictures: bool) -> PwResult<Extracted> {
     let text = page.text().map_err(|e| map_pdfium_error(&e, "text"))?;
     // Lay the page out the way its text reads: as displayed, or unturned when the page's turn
     // only turns its text sideways.
@@ -369,6 +369,7 @@ fn extract_page(page: &PdfPage, doc: &PdfDocument, shared: &mut Shared) -> PwRes
     };
     for o in page.objects().iter() {
         match &o {
+            PdfPageObject::Image(_) | PdfPageObject::XObjectForm(_) if !with_pictures => {}
             PdfPageObject::Image(img) => {
                 if let Ok(q) = o.bounds() {
                     place(img, q.to_rect(), &mut pictures, &mut pictures_left_out);
@@ -453,6 +454,30 @@ fn add_turned(layout: &mut PageLayout, turned: &[String]) {
     layout.bands.push(layout::Band { columns: vec![layout::Column { left, right, items }] });
 }
 
+/// The ruled tables of one page, as laid out for Word (cells with their paragraphs), top first.
+pub(crate) fn page_tables(page: &PdfPage, doc: &PdfDocument) -> PwResult<Vec<layout::TableItem>> {
+    let mut shared = Shared {
+        media: Vec::new(),
+        media_by_hash: HashMap::new(),
+        links: Vec::new(),
+        link_ids: HashMap::new(),
+        fonts: BTreeSet::new(),
+    };
+    let ex = extract_page(page, doc, &mut shared, false)?;
+    let lay = layout::layout_page(&ex.input);
+    let mut found = Vec::new();
+    for b in &lay.bands {
+        for c in &b.columns {
+            for it in &c.items {
+                if let layout::Item::Table { table, .. } = it {
+                    found.push(table.clone());
+                }
+            }
+        }
+    }
+    Ok(found)
+}
+
 /// Convert `input` (all pages, or `pages`) to a Word document at `output`.
 #[allow(clippy::too_many_arguments)]
 pub fn convert_to_docx(
@@ -497,7 +522,7 @@ pub fn convert_to_docx(
             return Err(PwError::cancelled());
         }
         let page = doc.pages().get(p as PdfPageIndex).map_err(|e| map_pdfium_error(&e, "page"))?;
-        let mut ex = extract_page(&page, &doc, &mut shared)?;
+        let mut ex = extract_page(&page, &doc, &mut shared, true)?;
         let has_text = ex.input.glyphs.iter().any(|g| !g.generated && !g.ch.is_whitespace()) || !ex.turned.is_empty();
         if ex.recognized_layer {
             // The scan picture would sit under (and duplicate) the recognized text.

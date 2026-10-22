@@ -5,7 +5,7 @@ import { basename, dirname, join, siblingOutput, stem } from "../paths";
 import { toPwError, type AnnotationChange, type AnnotationSpec, type BookmarkInfo, type CollisionPolicy, type FieldValue, type PageEdit, type StampPosition, type JobSnapshot, type WatermarkLayer, type OpenedDoc, type Operation, type PwError } from "../types";
 import { Dialog, useDebounced } from "./ui";
 
-export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop" | "text" | "word" | "optimize" | "deskew" | "extractImages" | "orient";
+export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop" | "text" | "word" | "tables" | "optimize" | "deskew" | "extractImages" | "orient";
 
 const TITLES: Record<PageTool, string> = {
   extract: "Extract pages",
@@ -21,6 +21,7 @@ const TITLES: Record<PageTool, string> = {
   crop: "Crop pages",
   text: "Export as text",
   word: "Convert to Word",
+  tables: "Export tables",
   optimize: "Reduce file size",
   deskew: "Straighten pages",
   extractImages: "Extract images",
@@ -28,7 +29,7 @@ const TITLES: Record<PageTool, string> = {
 };
 
 /** Start-button label (the title's first word does not fit every tool). */
-const START: Partial<Record<PageTool, string>> = { word: "Convert", ocr: "Recognize", watermark: "Add watermark", crop: "Crop", text: "Export", optimize: "Reduce size", deskew: "Straighten", extractImages: "Extract", orient: "Turn upright" };
+const START: Partial<Record<PageTool, string>> = { tables: "Export", word: "Convert", ocr: "Recognize", watermark: "Add watermark", crop: "Crop", text: "Export", optimize: "Reduce size", deskew: "Straighten", extractImages: "Extract", orient: "Turn upright" };
 
 const SUFFIX: Record<PageTool, string> = {
   extract: "extract",
@@ -44,6 +45,7 @@ const SUFFIX: Record<PageTool, string> = {
   crop: "cropped",
   text: "",
   word: "",
+  tables: "",
   optimize: "smaller",
   deskew: "straightened",
   extractImages: "",
@@ -51,7 +53,7 @@ const SUFFIX: Record<PageTool, string> = {
 };
 
 /** Tools that offer "All pages" (on by default unless pages were preselected). */
-const ALL_PAGES_TOOLS: PageTool[] = ["rotate", "stamp", "images", "ocr", "watermark", "crop", "text", "word", "deskew", "extractImages", "orient"];
+const ALL_PAGES_TOOLS: PageTool[] = ["rotate", "stamp", "images", "ocr", "watermark", "crop", "text", "word", "tables", "deskew", "extractImages", "orient"];
 
 export type CropUnit = "mm" | "in" | "pt";
 /** Points per unit. */
@@ -151,9 +153,10 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   const [includeTextPages, setIncludeTextPages] = useState(false);
   const [dpi, setDpi] = useState(150);
   const [reduceImages, setReduceImages] = useState(false);
+  const [sheetFormat, setSheetFormat] = useState<"xlsx" | "csv">("xlsx");
   const [imagePreset, setImagePreset] = useState("standard");
   /** Tools that write several files into a folder rather than one new PDF. */
-  const toFolder = tool === "split" || tool === "images" || tool === "extractImages";
+  const toFolder = tool === "split" || tool === "images" || tool === "extractImages" || (tool === "tables" && sheetFormat === "csv");
   const [stampText, setStampText] = useState("Page {page} of {total}");
   const [position, setPosition] = useState<StampPosition>("bottom_center");
   const [fontSize, setFontSize] = useState("10");
@@ -175,7 +178,9 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         ? join(dirname(doc.path), `${stem(doc.path)}.txt`)
         : tool === "word"
           ? join(dirname(doc.path), `${stem(doc.path)}.docx`)
-          : siblingOutput(doc.path, suffix),
+          : tool === "tables"
+            ? join(dirname(doc.path), `${stem(doc.path)}.xlsx`)
+            : siblingOutput(doc.path, suffix),
   );
   const [splitMode, setSplitMode] = useState<"every_n" | "ranges" | "bookmarks" | "max_size">("every_n");
   const [bmLevel, setBmLevel] = useState(1);
@@ -311,6 +316,8 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         return { op: "export_text", input: doc.path, pages: allPages ? null : pages, output };
       case "word":
         return { op: "convert_to_docx", input: doc.path, pages: allPages ? null : pages, output };
+      case "tables":
+        return { op: "export_tables", input: doc.path, pages: allPages ? null : pages, format: sheetFormat, output };
       case "crop":
         return { op: "crop_pages", input: doc.path, pages: allPages ? null : pages, margins: cropPt, output };
       case "watermark":
@@ -354,6 +361,9 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
     } else if (tool === "text") {
       const p = await api.pickSaveAnyPath(output);
       if (p) setOutput(/\.txt$/i.test(p) ? p : `${p}.txt`);
+    } else if (tool === "tables") {
+      const p = await api.pickSaveAnyPath(output);
+      if (p) setOutput(/\.xlsx$/i.test(p) ? p : `${p}.xlsx`);
     } else if (tool === "word") {
       const p = await api.pickSaveAnyPath(output);
       if (p) setOutput(/\.docx$/i.test(p) ? p : `${p}.docx`);
@@ -586,6 +596,38 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         </p>
       )}
 
+      {tool === "tables" && (
+        <div className="field">
+          <span className="label" id="sheet-format-label">Format</span>
+          <div className="segmented" role="radiogroup" aria-labelledby="sheet-format-label">
+            {(
+              [
+                ["xlsx", "Excel workbook"],
+                ["csv", "CSV files"],
+              ] as const
+            ).map(([f, l]) => (
+              <button
+                key={f}
+                type="button"
+                role="radio"
+                aria-checked={sheetFormat === f}
+                data-testid={`sheet-format-${f}`}
+                onClick={() => {
+                  if (f === sheetFormat) return;
+                  setSheetFormat(f);
+                  setOutput(f === "csv" ? dirname(doc.path) : join(dirname(doc.path), `${stem(doc.path)}.xlsx`));
+                }}
+              >
+                {l}
+              </button>
+            ))}
+          </div>
+          <span className="hint">
+            {sheetFormat === "xlsx" ? "One sheet per table; merged cells kept." : "One file per table, text only."} Tables need drawn lines to be recognized; values are kept exactly.
+          </span>
+        </div>
+      )}
+
       {tool === "optimize" && (
         <p className="hint" style={{ marginTop: 0 }}>
           Saves a smaller copy: data is packed more tightly and repeated parts are stored once. Text and drawings are never changed.
@@ -753,7 +795,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
       )}
 
       <div className="field">
-        <label htmlFor="output">{tool === "split" ? "Save parts in folder" : tool === "images" || tool === "extractImages" ? "Save images in folder" : "Save as"}</label>
+        <label htmlFor="output">{tool === "split" ? "Save parts in folder" : tool === "images" || tool === "extractImages" ? "Save images in folder" : toFolder ? "Save files in folder" : "Save as"}</label>
         <div className="row">
           <input id="output" className="input grow" value={output} onChange={(e) => setOutput(e.target.value)} spellCheck={false} />
           <button type="button" className="btn outline" onClick={browse}>

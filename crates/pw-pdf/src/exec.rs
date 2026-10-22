@@ -497,6 +497,40 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             let straightened = report.iter().filter(|r| r.action == crate::deskew::DeskewAction::Straightened).count();
             (vec![out(&c, None)], json!({ "straightened": straightened, "pages": report }))
         }
+        Operation::ExportTables { input, pages, format, output } => {
+            let page_progress = |done: u64, total: u64| {
+                if let Some(c) = ctx {
+                    c.set_progress(done, total, "pages");
+                }
+            };
+            let (outs, report) = match format {
+                pw_core::ops::TableFormat::Xlsx => {
+                    let (c, r) = crate::sheet::export_xlsx(
+                        input,
+                        &opts,
+                        pages.as_deref(),
+                        output,
+                        policy,
+                        &cancelled,
+                        &page_progress,
+                    )?;
+                    (vec![c], r)
+                }
+                pw_core::ops::TableFormat::Csv => {
+                    warnings.push("CSV keeps only the text of each cell: no formatting, merged cells or several tables in one file.".into());
+                    crate::sheet::export_csv(
+                        input,
+                        &opts,
+                        pages.as_deref(),
+                        output,
+                        policy,
+                        &cancelled,
+                        &page_progress,
+                    )?
+                }
+            };
+            (outs.iter().map(|c| out(c, None)).collect(), serde_json::to_value(&report).unwrap_or_default())
+        }
         Operation::ConvertToDocx { input, pages, output } => {
             let page_progress = |done: u64, total: u64| {
                 if let Some(c) = ctx {

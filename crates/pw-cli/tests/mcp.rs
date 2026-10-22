@@ -275,12 +275,15 @@ fn paths_outside_the_folders_and_bad_requests_are_refused() {
 #[test]
 fn write_tools_create_verified_new_files_and_leave_sources_alone() {
     let root = tempfile::tempdir().expect("tmp");
-    copy_fixtures(root.path(), &["five-pages.pdf", "twenty-pages.pdf", "form-fields.pdf", "uncompressed-report.pdf"]);
+    copy_fixtures(
+        root.path(),
+        &["five-pages.pdf", "twenty-pages.pdf", "form-fields.pdf", "uncompressed-report.pdf", "tables.pdf"],
+    );
     std::fs::create_dir(root.path().join("parts")).expect("mkdir");
     let before = std::fs::read(root.path().join("five-pages.pdf")).expect("read");
     let mut c = Client::start(&[root.path()], true);
     let names = tool_names(&mut c);
-    assert_eq!(names.len(), 19, "{names:?}");
+    assert_eq!(names.len(), 20, "{names:?}");
 
     let r = c.ok("extract_pages", json!({ "path": "five-pages.pdf", "pages": "4, 2", "output": "ex.pdf" }));
     assert_eq!(r["outputs"][0]["pages"], 2);

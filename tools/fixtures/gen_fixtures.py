@@ -621,6 +621,67 @@ def build_blank_pages_document() -> bytes:
     return w.render(catalog, w.add("<< /Title (Blank pages) >>"))
 
 
+def build_tables_document() -> bytes:
+    """Two pages of ruled tables for table export: a header cell merged across two columns,
+    values a spreadsheet could corrupt (leading zeros, long identifiers, grouped amounts, dates,
+    trailing zeros), a cell merged down two rows, and body text around the tables."""
+    w = PdfWriter()
+    catalog, pages_obj = w.reserve(), w.reserve()
+    font = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+
+    def text(x: float, y: float, s: str, size: float = 10) -> str:
+        return f"BT /F1 {size} Tf {x} {y} Td ({esc(s)}) Tj ET\n"
+
+    def grid(xs: list[float], ys: list[float], skip_v: set = frozenset(), skip_h: set = frozenset()) -> str:
+        """Lines of a grid; skip_v holds (column edge index, row) pairs left open, skip_h (row edge, column)."""
+        ops = "0.6 w 0 G\n"
+        for i, y in enumerate(ys):
+            for c in range(len(xs) - 1):
+                if (i, c) not in skip_h:
+                    ops += f"{xs[c]} {y} m {xs[c + 1]} {y} l S\n"
+        for j, x in enumerate(xs):
+            for r in range(len(ys) - 1):
+                if (j, r) not in skip_v:
+                    ops += f"{x} {ys[r]} m {x} {ys[r + 1]} l S\n"
+        return ops
+
+    page_ids = []
+    # Page 1: title, paragraph, table A (header "Account" spans columns 1-2).
+    xs = [72, 192, 282, 392, 512]
+    ys = [680, 660, 640, 620, 600]
+    ops = text(72, 740, "Account summary PWTABLES", 16) + text(72, 712, "Balances at the end of the quarter.")
+    ops += grid(xs, ys, skip_v={(1, 0)})
+    rows = [["Account", None, "Opened", "Balance"],
+            ["007", "Savings", "2026-03-12", "1,234.50"],
+            ["123456789012345678", "Current", "12/03/2026", "-4.5"],
+            ["00042", "Bonus", "2025-11-30", "12.40"]]
+    for r, cells in enumerate(rows):
+        for c, v in enumerate(cells):
+            if v is not None:
+                ops += text(xs[c] + 4, ys[r] - 14, v)
+    ops += text(72, 570, "Figures are unaudited.")
+    c1 = w.stream(ops.encode("latin-1"))
+    page_ids.append(w.add(f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] "
+                          f"/Resources << /Font << /F1 {font} 0 R >> >> /Contents {c1} 0 R >>"))
+    # Page 2: table B with "North" merged down two rows (no rule between its rows in column 0).
+    xs = [72, 200, 330]
+    ys = [700, 680, 660, 640]
+    ops = text(72, 740, "Stations", 14)
+    ops += grid(xs, ys, skip_h={(2, 0)})
+    rows = [["Region", "Station"], ["North", "N1"], [None, "N2"]]
+    for r, cells in enumerate(rows):
+        for c, v in enumerate(cells):
+            if v is not None:
+                ops += text(xs[c] + 4, ys[r] - 14, v)
+    c2 = w.stream(ops.encode("latin-1"))
+    page_ids.append(w.add(f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] "
+                          f"/Resources << /Font << /F1 {font} 0 R >> >> /Contents {c2} 0 R >>"))
+    w.set(pages_obj, f"<< /Type /Pages /Kids [{' '.join(f'{p} 0 R' for p in page_ids)}] /Count {len(page_ids)} >>")
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R >>")
+    info = w.add("<< /Title (Tables fixture) /Producer (gen_fixtures.py) >>")
+    return w.render(catalog, info)
+
+
 def main() -> int:
     if len(sys.argv) == 4 and sys.argv[1] == "--big":
         # Large document for benchmarks (not committed): gen_fixtures.py --big PAGES OUT.pdf
@@ -647,6 +708,7 @@ def main() -> int:
 
     files["form-fields.pdf"] = build_form_document()
     files["form-defaults.pdf"] = build_form_document(defaults=True)
+    files["tables.pdf"] = build_tables_document()
     files["form-nested.pdf"] = build_nested_form_document()
     files["redaction.pdf"] = build_redaction_document()
     files["redaction-hard.pdf"] = build_redaction_hard_document()

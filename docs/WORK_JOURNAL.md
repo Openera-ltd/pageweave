@@ -295,3 +295,9 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - CI: Linux job installs LibreOffice (writer, no GUI) + DejaVu/Liberation fonts for the round trip; Windows sets PW_SKIP_SOFFICE=1 (no LibreOffice there; the test says SKIPPED).
 - Not done: Word tables from ruled tables, shapes/borders, comments, form fields, Microsoft Word check, real-document benchmark.
 - Follow-up: ruled tables → Word tables (`docx/tables.rs`: rules from path segments incl. closing edges, merged collinear pieces, connected grids, merged cells by missing rules; cells' text laid out per cell). Article page 2 ink coverage 0.794 → 0.995; drawings on table grids no longer reported as left out.
+
+## 2026-10-22 — Session 2, checkpoint 13: tables to Excel and CSV (TABLE-EXPORT-001, D-017)
+- `export_tables` op (xlsx file or csv folder), `pw-pdf/src/sheet.rs` (grid from the Word layout's tables, SpreadsheetML writer/reader, CSV writer/reader, exact-number rule), CLI `tables`, MCP `export_tables` (Excel), app File ▸ Export tables to Excel or CSV….
+- New fixture `tables.pdf` (gen_fixtures.py): merged header, vertical merge, values a spreadsheet could corrupt.
+- Ran: pw-pdf tables tests 4/4 (LibreOffice reads the workbook back unchanged), sheet unit tests, CLI + MCP tests, E2E "export tables".
+- Not done: borderless tables, cell formatting, Microsoft Excel check.

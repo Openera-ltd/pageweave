@@ -533,6 +533,14 @@ pub struct AnnotationSpec {
     pub contents: Option<String>,
 }
 
+/// Spreadsheet format for exported tables.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TableFormat {
+    Xlsx,
+    Csv,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Operation {
@@ -664,6 +672,15 @@ pub enum Operation {
         input: PathBuf,
         #[serde(default)]
         pages: Option<String>,
+        output: PathBuf,
+    },
+    /// Save the ruled tables of pages (all when `pages` is absent) as an Excel workbook (one sheet
+    /// per table; `output` is the .xlsx file) or as CSV files (`output` is an existing folder).
+    ExportTables {
+        input: PathBuf,
+        #[serde(default)]
+        pages: Option<String>,
+        format: TableFormat,
         output: PathBuf,
     },
     /// Convert pages (all when `pages` is absent) into an editable Word document (.docx).
@@ -947,6 +964,7 @@ pub const OPERATION_IDS: &[&str] = &[
     "images_to_pdf",
     "export_text",
     "convert_to_docx",
+    "export_tables",
     "optimize",
     "compare",
     "verify_signatures",
@@ -1003,6 +1021,7 @@ impl Operation {
             Operation::ImagesToPdf { .. } => "images_to_pdf",
             Operation::ExportText { .. } => "export_text",
             Operation::ConvertToDocx { .. } => "convert_to_docx",
+            Operation::ExportTables { .. } => "export_tables",
             Operation::Optimize { .. } => "optimize",
             Operation::Compare { .. } => "compare",
             Operation::VerifySignatures { .. } => "verify_signatures",
@@ -1099,6 +1118,7 @@ impl Operation {
             | Operation::SetPageLabels { input, .. }
             | Operation::ExportText { input, .. }
             | Operation::ConvertToDocx { input, .. }
+            | Operation::ExportTables { input, .. }
             | Operation::Optimize { input, .. }
             | Operation::ExtractAttachment { input, .. }
             | Operation::SanitizeInspect { input }
@@ -1134,6 +1154,8 @@ impl Operation {
             | Operation::VerifySignatures { .. }
             | Operation::FindBlankPages { .. }
             | Operation::ListPageObjects { .. } => None,
+            Operation::ExportTables { format: TableFormat::Csv, output, .. } => Some(output.clone()),
+            Operation::ExportTables { output, .. } => parent(output),
             Operation::Split { output_dir, .. }
             | Operation::ExportImages { output_dir, .. }
             | Operation::ExtractImages { output_dir, .. } => Some(output_dir.clone()),
@@ -1223,6 +1245,12 @@ impl Operation {
             }
             Operation::Split { split: SplitMode::MaxSize { max_bytes }, .. } if *max_bytes < MIN_SPLIT_BYTES => {
                 return Err(PwError::invalid("split.max_size", "Choose a size limit of at least 10 KB."));
+            }
+            Operation::ExportTables { format: TableFormat::Xlsx, output, .. } => {
+                let ok = output.extension().is_some_and(|e| e.eq_ignore_ascii_case("xlsx"));
+                if !ok {
+                    return Err(PwError::invalid("tables.extension", "Save the workbook with a .xlsx name."));
+                }
             }
             Operation::ConvertToDocx { output, .. } => {
                 let ok = output.extension().is_some_and(|e| e.eq_ignore_ascii_case("docx"));

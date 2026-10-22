@@ -1046,3 +1046,32 @@ fn to_docx_writes_a_word_file_and_reports_what_was_kept() {
         .expect("run");
     assert_eq!(bad.status.code(), Some(2));
 }
+
+#[test]
+fn tables_export_to_xlsx_and_csv() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("t.xlsx");
+    let r = bin().arg("tables").arg(fixture("tables.pdf")).arg("-o").arg(&out).output().expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let text = String::from_utf8_lossy(&r.stdout);
+    assert!(
+        text.contains("Page 1 table 1: 4 rows × 4 columns") && text.contains("Page 2 table 1: 3 rows × 2 columns"),
+        "{text}"
+    );
+    let csv = bin()
+        .args(["--json", "tables", "--format", "csv"])
+        .arg(fixture("tables.pdf"))
+        .arg("-o")
+        .arg(dir.path())
+        .output()
+        .expect("run");
+    assert_eq!(json(&csv)["result"]["outputs"].as_array().map(Vec::len), Some(2));
+    let none = bin()
+        .args(["--json", "tables"])
+        .arg(fixture("five-pages.pdf"))
+        .arg("-o")
+        .arg(dir.path().join("n.xlsx"))
+        .output()
+        .expect("run");
+    assert_eq!(json(&none)["error"]["code"], "tables.none");
+}

@@ -930,6 +930,7 @@ export function App() {
     "pages.exportImages": { run: () => openTool("images"), available: all(needDoc, noDialog) },
     "pages.exportText": { run: () => openTool("text"), available: all(needDoc, noDialog) },
     "file.toWord": { run: () => openTool("word"), available: all(needDoc, noDialog) },
+    "file.exportTables": { run: () => openTool("tables"), available: all(needDoc, noDialog) },
     "pages.labels": { run: () => setDialog({ kind: "pageLabels" }), available: all(needDoc, noDialog) },
     "pages.deskew": { run: () => openTool("deskew"), available: all(needDoc, noDialog) },
     "pages.orient": { run: () => openTool("orient"), available: all(needDoc, noDialog) },
@@ -1146,7 +1147,7 @@ export function App() {
 
   const pagesMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
-    setMenu({ label: "Page tools", x: r.left, y: r.bottom + 2, items: [item("pages.organize"), "separator", item("pages.extract"), item("pages.delete"), item("pages.rotate"), item("pages.split"), item("pages.stamp"), item("pages.watermark"), item("pages.crop"), item("pages.exportImages"), item("pages.extractImages"), item("pages.exportText"), item("file.toWord"), item("pages.labels"), item("pages.ocr"), item("pages.deskew"), item("pages.orient"), item("pages.removeBlank"), "separator", item("pages.merge")] });
+    setMenu({ label: "Page tools", x: r.left, y: r.bottom + 2, items: [item("pages.organize"), "separator", item("pages.extract"), item("pages.delete"), item("pages.rotate"), item("pages.split"), item("pages.stamp"), item("pages.watermark"), item("pages.crop"), item("pages.exportImages"), item("pages.extractImages"), item("pages.exportText"), item("file.toWord"), item("file.exportTables"), item("pages.labels"), item("pages.ocr"), item("pages.deskew"), item("pages.orient"), item("pages.removeBlank"), "separator", item("pages.merge")] });
   };
 
   /* ---------- Job results ---------- */
@@ -1165,6 +1166,7 @@ export function App() {
     const turned = r.data?.turned;
     const signer = r.operation === "sign" ? r.data?.signer : undefined;
     const exported = r.operation === "export_form_data" ? r.data?.fields : undefined;
+    const tablesN = r.operation === "export_tables" ? r.data?.tables : undefined;
     const detail =
       typeof before === "number" && typeof after === "number"
         ? sizeChange(before, after)
@@ -1174,6 +1176,8 @@ export function App() {
             ? `Signed as ${signer}`
           : typeof exported === "number"
             ? `${exported} field value${exported === 1 ? "" : "s"}`
+          : typeof tablesN === "number"
+            ? `${tablesN} table${tablesN === 1 ? "" : "s"}`
             : typeof turned === "number"
             ? `${turned} page${turned === 1 ? "" : "s"} turned upright`
           : out?.pages != null && r.outputs.length === 1

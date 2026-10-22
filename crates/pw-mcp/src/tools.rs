@@ -269,6 +269,19 @@ pub const TOOLS: &[Tool] = &[
         },
     },
     Tool {
+        name: "export_tables",
+        title: "Export tables to Excel",
+        description: "Save the ruled tables (grids of drawn lines) of all or chosen pages as an Excel workbook (.xlsx), one sheet per table. Values are kept exactly: only plain exact numbers become numbers; codes, identifiers, dates and amounts with separators stay text. Tables without drawn lines are not recognized.",
+        effect: Effect::WritesNewFiles,
+        long: true,
+        schema: || {
+            obj(
+                json!({ "path": path_prop("Source PDF"), "pages": { "type": "string", "description": PAGES }, "output": path_prop("New .xlsx file (must not exist)") }),
+                &["path", "output"],
+            )
+        },
+    },
+    Tool {
         name: "convert_to_docx",
         title: "Convert to Word",
         description: "Convert all or chosen pages to an editable Word document (.docx): paragraphs, headings, columns, pictures and links. The result reports what could not be carried over (drawn lines and table borders, comments, form fields, pages without a text layer).",
@@ -532,6 +545,15 @@ pub fn operation(tool: &Tool, a: &Value, roots: &Roots) -> PwResult<Operation> {
                 input: roots.input(&x.path)?,
                 pages: x.pages,
                 output: roots.output(&x.output, &["txt"])?,
+            }
+        }
+        "export_tables" => {
+            let x: OptPagesOutArg = args(a)?;
+            Operation::ExportTables {
+                input: roots.input(&x.path)?,
+                pages: x.pages,
+                format: pw_core::ops::TableFormat::Xlsx,
+                output: roots.output(&x.output, &["xlsx"])?,
             }
         }
         "convert_to_docx" => {

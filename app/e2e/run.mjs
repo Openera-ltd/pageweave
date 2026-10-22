@@ -1386,6 +1386,54 @@ await test("convert to Word: palette and page tools; editable Word file with col
   assert(zipPart(out, "word/_rels/document.xml.rels").includes("https://rivers.example.org/data"), "link kept");
 });
 
+await test("export tables: Excel workbook with values kept and merged cells; CSV files into a folder; nothing found is said", async () => {
+  const src = join(FIX, "tables.pdf");
+  const out = join(work, "tables-export.xlsx");
+  const folder = mkdtempSync(join(work, "csv-"));
+  const open = async (s) => {
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Export tables");
+    await s.click('[role="option"][data-command="file.exportTables"]');
+    await s.waitFor("#output");
+  };
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await open(s);
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("tables.xlsx"), "default workbook name");
+    await s.click('[data-testid="sheet-format-csv"]');
+    assert(!(await s.exec("return document.querySelector('#output').value")).endsWith(".xlsx"), "CSV saves into a folder");
+    await s.click('[data-testid="sheet-format-xlsx"]');
+    await s.type("#output", out);
+    await axeCheck(s, "export-tables-dialog");
+    writeFileSync(join(ART, "export-tables.png"), await s.screenshot());
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved tables-export.xlsx") && t.includes("2 tables")), "saved notice with the table count");
+    await open(s);
+    await s.click('[data-testid="sheet-format-csv"]');
+    await s.type("#output", folder);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved 2 files")), "CSV files saved");
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("CSV keeps only the text")), "CSV loss explained");
+  });
+  const sheet = zipPart(out, "xl/worksheets/sheet1.xml");
+  assert(sheet.includes('<mergeCell ref="A1:B1"/>'), "merged header");
+  assert(sheet.includes(">007</t>") && sheet.includes(">00042</t>") && sheet.includes(">1,234.50</t>") && sheet.includes(">12.40</t>"), "values kept as text");
+  assert(sheet.includes("<v>-4.5</v>"), "plain number typed");
+  const csv = readFileSync(join(folder, "tables_p1_t1.csv"), "utf8");
+  assert(csv.includes('007,Savings,2026-03-12,"1,234.50"'), `CSV row: ${csv}`);
+  // A document without ruled tables: the dialog says so and writes nothing.
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await open(s);
+    const none = join(work, "none.xlsx");
+    await s.type("#output", none);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await s.text('[role="dialog"]')).includes("No ruled tables were found"), "reason shown in the dialog");
+    assert(!existsSync(none), "nothing written");
+  });
+});
+
 await test("reduce file size: tab menu and palette; smaller verified copy with the same text; sizes reported; second pass refused", async () => {
   const src = join(FIX, "uncompressed-report.pdf");
   const before = sha(src);

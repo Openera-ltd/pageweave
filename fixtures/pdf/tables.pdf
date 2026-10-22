@@ -1,0 +1,129 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R 7 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Length 1635 >>
+stream
+BT /F1 16 Tf 72 740 Td (Account summary PWTABLES) Tj ET
+BT /F1 10 Tf 72 712 Td (Balances at the end of the quarter.) Tj ET
+0.6 w 0 G
+72 680 m 192 680 l S
+192 680 m 282 680 l S
+282 680 m 392 680 l S
+392 680 m 512 680 l S
+72 660 m 192 660 l S
+192 660 m 282 660 l S
+282 660 m 392 660 l S
+392 660 m 512 660 l S
+72 640 m 192 640 l S
+192 640 m 282 640 l S
+282 640 m 392 640 l S
+392 640 m 512 640 l S
+72 620 m 192 620 l S
+192 620 m 282 620 l S
+282 620 m 392 620 l S
+392 620 m 512 620 l S
+72 600 m 192 600 l S
+192 600 m 282 600 l S
+282 600 m 392 600 l S
+392 600 m 512 600 l S
+72 680 m 72 660 l S
+72 660 m 72 640 l S
+72 640 m 72 620 l S
+72 620 m 72 600 l S
+192 660 m 192 640 l S
+192 640 m 192 620 l S
+192 620 m 192 600 l S
+282 680 m 282 660 l S
+282 660 m 282 640 l S
+282 640 m 282 620 l S
+282 620 m 282 600 l S
+392 680 m 392 660 l S
+392 660 m 392 640 l S
+392 640 m 392 620 l S
+392 620 m 392 600 l S
+512 680 m 512 660 l S
+512 660 m 512 640 l S
+512 640 m 512 620 l S
+512 620 m 512 600 l S
+BT /F1 10 Tf 76 666 Td (Account) Tj ET
+BT /F1 10 Tf 286 666 Td (Opened) Tj ET
+BT /F1 10 Tf 396 666 Td (Balance) Tj ET
+BT /F1 10 Tf 76 646 Td (007) Tj ET
+BT /F1 10 Tf 196 646 Td (Savings) Tj ET
+BT /F1 10 Tf 286 646 Td (2026-03-12) Tj ET
+BT /F1 10 Tf 396 646 Td (1,234.50) Tj ET
+BT /F1 10 Tf 76 626 Td (123456789012345678) Tj ET
+BT /F1 10 Tf 196 626 Td (Current) Tj ET
+BT /F1 10 Tf 286 626 Td (12/03/2026) Tj ET
+BT /F1 10 Tf 396 626 Td (-4.5) Tj ET
+BT /F1 10 Tf 76 606 Td (00042) Tj ET
+BT /F1 10 Tf 196 606 Td (Bonus) Tj ET
+BT /F1 10 Tf 286 606 Td (2025-11-30) Tj ET
+BT /F1 10 Tf 396 606 Td (12.40) Tj ET
+BT /F1 10 Tf 72 570 Td (Figures are unaudited.) Tj ET
+
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Length 578 >>
+stream
+BT /F1 14 Tf 72 740 Td (Stations) Tj ET
+0.6 w 0 G
+72 700 m 200 700 l S
+200 700 m 330 700 l S
+72 680 m 200 680 l S
+200 680 m 330 680 l S
+200 660 m 330 660 l S
+72 640 m 200 640 l S
+200 640 m 330 640 l S
+72 700 m 72 680 l S
+72 680 m 72 660 l S
+72 660 m 72 640 l S
+200 700 m 200 680 l S
+200 680 m 200 660 l S
+200 660 m 200 640 l S
+330 700 m 330 680 l S
+330 680 m 330 660 l S
+330 660 m 330 640 l S
+BT /F1 10 Tf 76 686 Td (Region) Tj ET
+BT /F1 10 Tf 204 686 Td (Station) Tj ET
+BT /F1 10 Tf 76 666 Td (North) Tj ET
+BT /F1 10 Tf 204 666 Td (N1) Tj ET
+BT /F1 10 Tf 204 646 Td (N2) Tj ET
+
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 6 0 R >>
+endobj
+8 0 obj
+<< /Title (Tables fixture) /Producer (gen_fixtures.py) >>
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000127 00000 n 
+0000000224 00000 n 
+0000001911 00000 n 
+0000002037 00000 n 
+0000002666 00000 n 
+0000002792 00000 n 
+trailer
+<< /Size 9 /Root 1 0 R /Info 8 0 R /ID [<70616765776561766566697874757265> <70616765776561766566697874757265>] >>
+startxref
+2865
+%%EOF
