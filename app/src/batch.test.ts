@@ -10,6 +10,7 @@ describe("batch processing", () => {
     ]);
     expect(batchOutputs(["C:\\docs\\x.pdf"], "text", "C:\\out")).toEqual(["C:\\out\\x.txt"]);
     expect(batchOutputs(["C:\\docs\\x.pdf"], "word", "C:\\out")).toEqual(["C:\\out\\x.docx"]);
+    expect(batchOperation("slides", "/a.pdf", "/a.pptx")).toEqual({ op: "convert_to_pptx", input: "/a.pdf", pages: null, output: "/a.pptx" });
     expect(batchOperation("word", "/a.pdf", "/a.docx")).toEqual({ op: "convert_to_docx", input: "/a.pdf", pages: null, output: "/a.docx" });
   });
   it("builds the typed operation for each action", () => {

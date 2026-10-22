@@ -531,6 +531,24 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             };
             (outs.iter().map(|c| out(c, None)).collect(), serde_json::to_value(&report).unwrap_or_default())
         }
+        Operation::ConvertToPptx { input, pages, output } => {
+            let page_progress = |done: u64, total: u64| {
+                if let Some(c) = ctx {
+                    c.set_progress(done, total, "pages");
+                }
+            };
+            let (c, report, w) = crate::slides::convert_to_pptx(
+                input,
+                &opts,
+                pages.as_deref(),
+                output,
+                policy,
+                &cancelled,
+                &page_progress,
+            )?;
+            warnings.extend(w);
+            (vec![out(&c, None)], serde_json::to_value(&report).unwrap_or_default())
+        }
         Operation::ConvertToDocx { input, pages, output } => {
             let page_progress = |done: u64, total: u64| {
                 if let Some(c) = ctx {

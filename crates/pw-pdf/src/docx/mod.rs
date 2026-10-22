@@ -447,6 +447,7 @@ fn add_turned(layout: &mut PageLayout, turned: &[String]) {
                 pitch: 12.0,
                 heading: None,
                 tabs: Vec::new(),
+                rect: Rect { left: 0.0, bottom: 0.0, right: 0.0, top: 0.0 },
             })
         })
         .collect();
@@ -478,33 +479,25 @@ pub(crate) fn page_tables(page: &PdfPage, doc: &PdfDocument) -> PwResult<Vec<lay
     Ok(found)
 }
 
-/// Convert `input` (all pages, or `pages`) to a Word document at `output`.
-#[allow(clippy::too_many_arguments)]
-pub fn convert_to_docx(
-    input: &Path,
-    opts: &OpenOptions,
-    pages: Option<&str>,
-    output: &Path,
-    policy: CollisionPolicy,
+/// What the PDF's chosen pages hold, laid out for an editable document: shared by Word and
+/// PowerPoint export.
+pub(crate) struct Analysis {
+    pub layouts: Vec<PageLayout>,
+    pub media: Vec<Media>,
+    pub links: Vec<String>,
+    /// Every character the output must hold (whitespace excluded).
+    pub expected: HashMap<char, usize>,
+    pub report: DocxReport,
+    pub placed_pictures: usize,
+    pub expected_tables: usize,
+}
+
+pub(crate) fn analyze(
+    doc: &PdfDocument,
+    idx: &[u32],
     cancelled: &dyn Fn() -> bool,
     progress: &dyn Fn(u64, u64),
-) -> PwResult<(CommittedOutput, DocxReport, Vec<String>)> {
-    let pdfium = engine()?;
-    let doc = load(&pdfium, input, opts)?;
-    let n = doc.pages().len().max(0) as u32;
-    let idx: Vec<u32> = match pages {
-        Some(spec) => parse_page_ranges(spec, n)?,
-        None => (0..n).collect(),
-    };
-    if idx.is_empty() {
-        return Err(PwError::invalid("docx.no_pages", "Choose at least one page."));
-    }
-    let title = doc
-        .metadata()
-        .get(PdfDocumentMetadataTagType::Title)
-        .map(|t| t.value().trim().to_string())
-        .filter(|t| !t.is_empty());
-
+) -> PwResult<Analysis> {
     let mut shared = Shared {
         media: Vec::new(),
         media_by_hash: HashMap::new(),
@@ -522,7 +515,7 @@ pub fn convert_to_docx(
             return Err(PwError::cancelled());
         }
         let page = doc.pages().get(p as PdfPageIndex).map_err(|e| map_pdfium_error(&e, "page"))?;
-        let mut ex = extract_page(&page, &doc, &mut shared, true)?;
+        let mut ex = extract_page(&page, doc, &mut shared, true)?;
         let has_text = ex.input.glyphs.iter().any(|g| !g.generated && !g.ch.is_whitespace()) || !ex.turned.is_empty();
         if ex.recognized_layer {
             // The scan picture would sit under (and duplicate) the recognized text.
@@ -585,47 +578,29 @@ pub fn convert_to_docx(
         }
         report.pictures_left_out += ex.pictures_left_out;
         layouts.push(lay);
-        progress(k as u64 + 1, idx.len() as u64 + 1);
+        progress(k as u64 + 1, idx.len() as u64);
     }
     report.fonts = shared.fonts.iter().filter(|f| !f.is_empty()).cloned().collect();
 
-    let input_doc = DocxInput { pages: &layouts, media: &shared.media, links: &shared.links, title: title.as_deref() };
-    let bytes = writer::write_docx(&input_doc)?;
-    let expected_sections: usize = layouts.iter().map(|l| l.bands.len().max(1)).sum();
-    let verify = |bytes: &[u8]| -> PwResult<reader::DocxCheck> {
-        let c = reader::check_docx(bytes)?;
-        if c.sections != expected_sections {
-            return Err(fail("its sections do not match the pages"));
-        }
-        if c.pictures != placed_pictures {
-            return Err(fail("a picture is missing"));
-        }
-        if c.tables != expected_tables {
-            return Err(fail("a table is missing"));
-        }
-        if c.chars != expected {
-            return Err(fail("text is missing or changed"));
-        }
-        Ok(c)
-    };
-    let check = verify(&bytes)?;
-    if cancelled() {
-        return Err(PwError::cancelled());
-    }
-    let c = write_atomic_bytes(output, policy, &[input.to_path_buf()], &bytes, |staged| {
-        let back = std::fs::read(staged).map_err(|e| PwError::from_io(&e, "output file"))?;
-        if back != bytes {
-            return Err(fail("the written file differs"));
-        }
-        verify(&back).map(|_| ())
-    })?;
-    progress(idx.len() as u64 + 1, idx.len() as u64 + 1);
-    report.paragraphs = check.paragraphs;
-    report.headings = check.headings;
-    report.pictures = check.pictures;
-    report.links = check.links;
-    report.tables = check.tables;
+    Ok(Analysis {
+        layouts,
+        media: shared.media,
+        links: shared.links,
+        expected,
+        report,
+        placed_pictures,
+        expected_tables,
+    })
+}
 
+/// Plain-language notes on what an editable export could not carry over.
+pub(crate) fn notes(
+    report: &DocxReport,
+    layouts: &[PageLayout],
+    encrypted: bool,
+    app: &str,
+    file: &str,
+) -> Vec<String> {
     let mut warnings = Vec::new();
     let list = |v: &[u32]| {
         let s: Vec<String> = v.iter().take(10).map(|p| p.to_string()).collect();
@@ -677,12 +652,83 @@ pub fn convert_to_docx(
         .collect();
     if !uncommon.is_empty() {
         warnings.push(format!(
-            "The document uses fonts Word may not have ({}); Word shows a similar font instead.",
-            uncommon.iter().take(6).map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+            "The document uses fonts {app} may not have ({}); {app} shows a similar font instead.",
+            uncommon.iter().take(6).map(|s| s.as_str()).collect::<Vec<_>>().join(", "),
+            app = app
         ));
     }
-    if crate::edit::source_encrypted(&doc) {
-        warnings.push("The original's password protection does not carry over to the Word file.".into());
+    if encrypted {
+        warnings.push(format!("The original's password protection does not carry over to {file}."));
     }
+    warnings
+}
+
+/// Convert `input` (all pages, or `pages`) to a Word document at `output`.
+#[allow(clippy::too_many_arguments)]
+pub fn convert_to_docx(
+    input: &Path,
+    opts: &OpenOptions,
+    pages: Option<&str>,
+    output: &Path,
+    policy: CollisionPolicy,
+    cancelled: &dyn Fn() -> bool,
+    progress: &dyn Fn(u64, u64),
+) -> PwResult<(CommittedOutput, DocxReport, Vec<String>)> {
+    let pdfium = engine()?;
+    let doc = load(&pdfium, input, opts)?;
+    let n = doc.pages().len().max(0) as u32;
+    let idx: Vec<u32> = match pages {
+        Some(spec) => parse_page_ranges(spec, n)?,
+        None => (0..n).collect(),
+    };
+    if idx.is_empty() {
+        return Err(PwError::invalid("docx.no_pages", "Choose at least one page."));
+    }
+    let title = doc
+        .metadata()
+        .get(PdfDocumentMetadataTagType::Title)
+        .map(|t| t.value().trim().to_string())
+        .filter(|t| !t.is_empty());
+
+    let Analysis { layouts, media, links, expected, mut report, placed_pictures, expected_tables } =
+        analyze(&doc, &idx, cancelled, &|d, t| progress(d, t + 1))?;
+    let input_doc = DocxInput { pages: &layouts, media: &media, links: &links, title: title.as_deref() };
+    let bytes = writer::write_docx(&input_doc)?;
+    let expected_sections: usize = layouts.iter().map(|l| l.bands.len().max(1)).sum();
+    let verify = |bytes: &[u8]| -> PwResult<reader::DocxCheck> {
+        let c = reader::check_docx(bytes)?;
+        if c.sections != expected_sections {
+            return Err(fail("its sections do not match the pages"));
+        }
+        if c.pictures != placed_pictures {
+            return Err(fail("a picture is missing"));
+        }
+        if c.tables != expected_tables {
+            return Err(fail("a table is missing"));
+        }
+        if c.chars != expected {
+            return Err(fail("text is missing or changed"));
+        }
+        Ok(c)
+    };
+    let check = verify(&bytes)?;
+    if cancelled() {
+        return Err(PwError::cancelled());
+    }
+    let c = write_atomic_bytes(output, policy, &[input.to_path_buf()], &bytes, |staged| {
+        let back = std::fs::read(staged).map_err(|e| PwError::from_io(&e, "output file"))?;
+        if back != bytes {
+            return Err(fail("the written file differs"));
+        }
+        verify(&back).map(|_| ())
+    })?;
+    progress(idx.len() as u64 + 1, idx.len() as u64 + 1);
+    report.paragraphs = check.paragraphs;
+    report.headings = check.headings;
+    report.pictures = check.pictures;
+    report.links = check.links;
+    report.tables = check.tables;
+
+    let warnings = notes(&report, &layouts, crate::edit::source_encrypted(&doc), "Word", "the Word file");
     Ok((c, report, warnings))
 }

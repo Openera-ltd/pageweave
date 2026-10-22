@@ -307,3 +307,9 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - Found while testing: serde_json's default float parsing is not exact (last-digit differences) → `float_roundtrip`; a process-wide env var raced between parallel tests → per-pool env; the WebDriver starts the app with its own environment → debug-only hook file.
 - Ran: reader tests 4/4 (same answers as in-process, passwords, parallel calls, crash fails one call and is remembered, hang times out, idle reader killed and replaced, speed), app crate unit tests, E2E "viewer: an engine crash …" passes.
 - CI #88: cargo-deny flagged zip 8.6.0 (RUSTSEC-2026-0367/0368/0369, archive extraction — not used here; never ignored per project rule) → zip 9.0.5 (`file_names()` now yields Results). The LibreOffice workbook check failed on CI because only Writer was installed → CI installs Calc too.
+
+## 2026-10-22 — Session 2, checkpoint 15: PDF → PowerPoint (DOC-CONV-PPTX-001)
+- `convert_to_pptx` op; `pw-pdf/src/slides.rs` (PresentationML writer: master, blank layout, theme, slides with text boxes, tables (merged cells), pictures, links; verifying reader); the Word export's page analysis was split out (`docx::analyze`, `docx::notes`) and paragraphs/pictures/tables now carry their page rectangles. CLI `to-pptx`, MCP `convert_to_pptx`, app File ▸ Convert to PowerPoint…, batch.
+- Found by looking at LibreOffice's rendering: single-line headings wrapped (synthetic bold is wider) → one-line boxes never wrap; body boxes too wide → 1.5 % slack.
+- Found while adding MCP tests: the export_tables MCP checks from checkpoint 13 had never been added (a text replacement silently missed after formatting) — added now with the PowerPoint ones; tool count 21. Edit scripts now assert that every replacement matched.
+- Ran: pptx tests 3/3 (LibreOffice Impress round trip), CLI + MCP tests, E2E "convert to PowerPoint". CI installs Impress.

@@ -283,7 +283,7 @@ fn write_tools_create_verified_new_files_and_leave_sources_alone() {
     let before = std::fs::read(root.path().join("five-pages.pdf")).expect("read");
     let mut c = Client::start(&[root.path()], true);
     let names = tool_names(&mut c);
-    assert_eq!(names.len(), 20, "{names:?}");
+    assert_eq!(names.len(), 21, "{names:?}");
 
     let r = c.ok("extract_pages", json!({ "path": "five-pages.pdf", "pages": "4, 2", "output": "ex.pdf" }));
     assert_eq!(r["outputs"][0]["pages"], 2);
@@ -321,6 +321,11 @@ fn write_tools_create_verified_new_files_and_leave_sources_alone() {
         c.err("convert_to_docx", json!({ "path": "five-pages.pdf", "output": "two.pdf" })),
         "mcp.output_extension"
     );
+    let p = c.ok("convert_to_pptx", json!({ "path": "five-pages.pdf", "pages": "1", "output": "one.pptx" }));
+    assert_eq!(p["data"]["pages"], 1, "{p}");
+    let t = c.ok("export_tables", json!({ "path": "tables.pdf", "output": "t.xlsx" }));
+    assert_eq!(t["data"]["tables"], 2, "{t}");
+    assert_eq!(c.err("export_tables", json!({ "path": "five-pages.pdf", "output": "n.xlsx" })), "tables.none");
 
     assert_eq!(std::fs::read(root.path().join("five-pages.pdf")).expect("read"), before, "source unchanged");
 }

@@ -683,6 +683,14 @@ pub enum Operation {
         format: TableFormat,
         output: PathBuf,
     },
+    /// Convert pages (all when `pages` is absent) into a PowerPoint presentation (.pptx), one
+    /// slide per page.
+    ConvertToPptx {
+        input: PathBuf,
+        #[serde(default)]
+        pages: Option<String>,
+        output: PathBuf,
+    },
     /// Convert pages (all when `pages` is absent) into an editable Word document (.docx).
     ConvertToDocx {
         input: PathBuf,
@@ -964,6 +972,7 @@ pub const OPERATION_IDS: &[&str] = &[
     "images_to_pdf",
     "export_text",
     "convert_to_docx",
+    "convert_to_pptx",
     "export_tables",
     "optimize",
     "compare",
@@ -1021,6 +1030,7 @@ impl Operation {
             Operation::ImagesToPdf { .. } => "images_to_pdf",
             Operation::ExportText { .. } => "export_text",
             Operation::ConvertToDocx { .. } => "convert_to_docx",
+            Operation::ConvertToPptx { .. } => "convert_to_pptx",
             Operation::ExportTables { .. } => "export_tables",
             Operation::Optimize { .. } => "optimize",
             Operation::Compare { .. } => "compare",
@@ -1118,6 +1128,7 @@ impl Operation {
             | Operation::SetPageLabels { input, .. }
             | Operation::ExportText { input, .. }
             | Operation::ConvertToDocx { input, .. }
+            | Operation::ConvertToPptx { input, .. }
             | Operation::ExportTables { input, .. }
             | Operation::Optimize { input, .. }
             | Operation::ExtractAttachment { input, .. }
@@ -1183,6 +1194,7 @@ impl Operation {
             | Operation::ImagesToPdf { output, .. }
             | Operation::ExportText { output, .. }
             | Operation::ConvertToDocx { output, .. }
+            | Operation::ConvertToPptx { output, .. }
             | Operation::Optimize { output, .. }
             | Operation::Deskew { output, .. }
             | Operation::FixOrientation { output, .. }
@@ -1250,6 +1262,12 @@ impl Operation {
                 let ok = output.extension().is_some_and(|e| e.eq_ignore_ascii_case("xlsx"));
                 if !ok {
                     return Err(PwError::invalid("tables.extension", "Save the workbook with a .xlsx name."));
+                }
+            }
+            Operation::ConvertToPptx { output, .. } => {
+                let ok = output.extension().is_some_and(|e| e.eq_ignore_ascii_case("pptx"));
+                if !ok {
+                    return Err(PwError::invalid("pptx.extension", "Save the presentation with a .pptx name."));
                 }
             }
             Operation::ConvertToDocx { output, .. } => {

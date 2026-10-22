@@ -42,6 +42,7 @@ pub mod service;
 mod sheet;
 mod sign;
 mod signatures;
+mod slides;
 mod unprotect;
 pub mod worker;
 

@@ -141,6 +141,15 @@ enum Command {
         #[arg(short, long)]
         output: PathBuf,
     },
+    /// Convert to a PowerPoint presentation (.pptx), one slide per page: text boxes, tables,
+    /// pictures and links; a report says what could not be carried over.
+    ToPptx {
+        file: PathBuf,
+        #[arg(long)]
+        pages: Option<String>,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
     /// Save the ruled tables as an Excel workbook (-o file.xlsx, one sheet per table) or as CSV
     /// files (--format csv, -o an existing folder). Values are kept exactly.
     Tables {
@@ -696,6 +705,9 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
             },
             output: output.clone(),
         },
+        Command::ToPptx { file, pages, output } => {
+            Operation::ConvertToPptx { input: file.clone(), pages: pages.clone(), output: output.clone() }
+        }
         Command::ToDocx { file, pages, output } => {
             Operation::ConvertToDocx { input: file.clone(), pages: pages.clone(), output: output.clone() }
         }
@@ -1144,6 +1156,16 @@ fn print_human(r: &OperationResult) {
                     println!("Page {} table {}: {} rows × {} columns", t[0], t[1], t[2], t[3]);
                 }
             }
+        }
+        "convert_to_pptx" => {
+            let d = &r.data;
+            for o in &r.outputs {
+                println!("Wrote {} ({} bytes)", o.path.display(), o.bytes);
+            }
+            println!(
+                "Slides: {}, tables: {}, pictures: {}, links: {}",
+                d["pages"], d["tables"], d["pictures"], d["links"]
+            );
         }
         "convert_to_docx" => {
             let d = &r.data;

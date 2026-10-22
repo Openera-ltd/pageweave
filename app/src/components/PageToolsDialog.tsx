@@ -5,7 +5,7 @@ import { basename, dirname, join, siblingOutput, stem } from "../paths";
 import { toPwError, type AnnotationChange, type AnnotationSpec, type BookmarkInfo, type CollisionPolicy, type FieldValue, type PageEdit, type StampPosition, type JobSnapshot, type WatermarkLayer, type OpenedDoc, type Operation, type PwError } from "../types";
 import { Dialog, useDebounced } from "./ui";
 
-export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop" | "text" | "word" | "tables" | "optimize" | "deskew" | "extractImages" | "orient";
+export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop" | "text" | "word" | "slides" | "tables" | "optimize" | "deskew" | "extractImages" | "orient";
 
 const TITLES: Record<PageTool, string> = {
   extract: "Extract pages",
@@ -21,6 +21,7 @@ const TITLES: Record<PageTool, string> = {
   crop: "Crop pages",
   text: "Export as text",
   word: "Convert to Word",
+  slides: "Convert to PowerPoint",
   tables: "Export tables",
   optimize: "Reduce file size",
   deskew: "Straighten pages",
@@ -29,7 +30,7 @@ const TITLES: Record<PageTool, string> = {
 };
 
 /** Start-button label (the title's first word does not fit every tool). */
-const START: Partial<Record<PageTool, string>> = { tables: "Export", word: "Convert", ocr: "Recognize", watermark: "Add watermark", crop: "Crop", text: "Export", optimize: "Reduce size", deskew: "Straighten", extractImages: "Extract", orient: "Turn upright" };
+const START: Partial<Record<PageTool, string>> = { slides: "Convert", tables: "Export", word: "Convert", ocr: "Recognize", watermark: "Add watermark", crop: "Crop", text: "Export", optimize: "Reduce size", deskew: "Straighten", extractImages: "Extract", orient: "Turn upright" };
 
 const SUFFIX: Record<PageTool, string> = {
   extract: "extract",
@@ -45,6 +46,7 @@ const SUFFIX: Record<PageTool, string> = {
   crop: "cropped",
   text: "",
   word: "",
+  slides: "",
   tables: "",
   optimize: "smaller",
   deskew: "straightened",
@@ -53,7 +55,7 @@ const SUFFIX: Record<PageTool, string> = {
 };
 
 /** Tools that offer "All pages" (on by default unless pages were preselected). */
-const ALL_PAGES_TOOLS: PageTool[] = ["rotate", "stamp", "images", "ocr", "watermark", "crop", "text", "word", "tables", "deskew", "extractImages", "orient"];
+const ALL_PAGES_TOOLS: PageTool[] = ["rotate", "stamp", "images", "ocr", "watermark", "crop", "text", "word", "slides", "tables", "deskew", "extractImages", "orient"];
 
 export type CropUnit = "mm" | "in" | "pt";
 /** Points per unit. */
@@ -178,6 +180,8 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         ? join(dirname(doc.path), `${stem(doc.path)}.txt`)
         : tool === "word"
           ? join(dirname(doc.path), `${stem(doc.path)}.docx`)
+          : tool === "slides"
+            ? join(dirname(doc.path), `${stem(doc.path)}.pptx`)
           : tool === "tables"
             ? join(dirname(doc.path), `${stem(doc.path)}.xlsx`)
             : siblingOutput(doc.path, suffix),
@@ -316,6 +320,8 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         return { op: "export_text", input: doc.path, pages: allPages ? null : pages, output };
       case "word":
         return { op: "convert_to_docx", input: doc.path, pages: allPages ? null : pages, output };
+      case "slides":
+        return { op: "convert_to_pptx", input: doc.path, pages: allPages ? null : pages, output };
       case "tables":
         return { op: "export_tables", input: doc.path, pages: allPages ? null : pages, format: sheetFormat, output };
       case "crop":
@@ -361,6 +367,9 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
     } else if (tool === "text") {
       const p = await api.pickSaveAnyPath(output);
       if (p) setOutput(/\.txt$/i.test(p) ? p : `${p}.txt`);
+    } else if (tool === "slides") {
+      const p = await api.pickSaveAnyPath(output);
+      if (p) setOutput(/\.pptx$/i.test(p) ? p : `${p}.pptx`);
     } else if (tool === "tables") {
       const p = await api.pickSaveAnyPath(output);
       if (p) setOutput(/\.xlsx$/i.test(p) ? p : `${p}.xlsx`);
@@ -805,6 +814,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         {tool === "split" && splitMode !== "bookmarks" && <span className="hint">Files are named “{doc.name.replace(/\.pdf$/i, "")}_part01.pdf”, …</span>}
         {tool === "extractImages" && <span className="hint">JPEG images are saved exactly as stored; others as PNG. Repeated images are saved once.</span>}
         {tool === "text" && <span className="hint">UTF-8 text, one section per page. Scanned pages need text recognition first.</span>}
+        {tool === "slides" && <span className="hint">One slide per page with editable text boxes, tables and pictures. Slides take the first page's size.</span>}
         {tool === "word" && <span className="hint">Editable text, headings, columns, pictures and links. Scanned pages need text recognition first.</span>}
         {tool === "images" && <span className="hint">PNG files named “{doc.name.replace(/\.pdf$/i, "")}_p001.png”, …</span>}
       </div>

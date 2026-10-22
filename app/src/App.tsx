@@ -930,6 +930,7 @@ export function App() {
     "pages.exportImages": { run: () => openTool("images"), available: all(needDoc, noDialog) },
     "pages.exportText": { run: () => openTool("text"), available: all(needDoc, noDialog) },
     "file.toWord": { run: () => openTool("word"), available: all(needDoc, noDialog) },
+    "file.toPowerPoint": { run: () => openTool("slides"), available: all(needDoc, noDialog) },
     "file.exportTables": { run: () => openTool("tables"), available: all(needDoc, noDialog) },
     "pages.labels": { run: () => setDialog({ kind: "pageLabels" }), available: all(needDoc, noDialog) },
     "pages.deskew": { run: () => openTool("deskew"), available: all(needDoc, noDialog) },
@@ -1147,7 +1148,7 @@ export function App() {
 
   const pagesMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
-    setMenu({ label: "Page tools", x: r.left, y: r.bottom + 2, items: [item("pages.organize"), "separator", item("pages.extract"), item("pages.delete"), item("pages.rotate"), item("pages.split"), item("pages.stamp"), item("pages.watermark"), item("pages.crop"), item("pages.exportImages"), item("pages.extractImages"), item("pages.exportText"), item("file.toWord"), item("file.exportTables"), item("pages.labels"), item("pages.ocr"), item("pages.deskew"), item("pages.orient"), item("pages.removeBlank"), "separator", item("pages.merge")] });
+    setMenu({ label: "Page tools", x: r.left, y: r.bottom + 2, items: [item("pages.organize"), "separator", item("pages.extract"), item("pages.delete"), item("pages.rotate"), item("pages.split"), item("pages.stamp"), item("pages.watermark"), item("pages.crop"), item("pages.exportImages"), item("pages.extractImages"), item("pages.exportText"), item("file.toWord"), item("file.toPowerPoint"), item("file.exportTables"), item("pages.labels"), item("pages.ocr"), item("pages.deskew"), item("pages.orient"), item("pages.removeBlank"), "separator", item("pages.merge")] });
   };
 
   /* ---------- Job results ---------- */

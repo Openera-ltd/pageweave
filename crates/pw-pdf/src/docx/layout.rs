@@ -109,10 +109,14 @@ pub struct Paragraph {
     /// Left tab stops (from the column's left edge) for pieces of a line set apart, such as
     /// table cells.
     pub tabs: Vec<f32>,
+    /// Where its lines are on the page (for slide export).
+    pub rect: Rect,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RowPicture {
+    /// Where it is on the page (for slide export).
+    pub rect: Rect,
     pub id: usize,
     pub width: f32,
     pub height: f32,
@@ -152,6 +156,8 @@ pub struct TableItem {
     /// Row heights, points (minimum: rows grow to fit their text).
     pub heights: Vec<f32>,
     pub cells: Vec<TableCell>,
+    /// Where it is on the page (for slide export).
+    pub rect: Rect,
 }
 
 /// Inner space between a cell's lines and its text, points.
@@ -609,7 +615,17 @@ fn make_paragraph(
     };
     let top = p[0].rect.top;
     let bottom = p.last().map(|l| l.rect.bottom).unwrap_or(top);
-    (Paragraph { runs: runs_of(p), align, indent, first_line, space_before: 0.0, pitch, heading, tabs }, top, bottom)
+    let rect = p.iter().skip(1).fold(p[0].rect, |a, l| Rect {
+        left: a.left.min(l.rect.left),
+        bottom: a.bottom.min(l.rect.bottom),
+        right: a.right.max(l.rect.right),
+        top: a.top.max(l.rect.top),
+    });
+    (
+        Paragraph { runs: runs_of(p), align, indent, first_line, space_before: 0.0, pitch, heading, tabs, rect },
+        top,
+        bottom,
+    )
 }
 
 /// The text of one table: each cell's glyphs (in engine order) become that cell's paragraphs.
@@ -637,7 +653,12 @@ fn table_item(t: &Table, cell_glyphs: Vec<Vec<Glyph>>, body: f32) -> TableItem {
             TableCell { row: c.row, col: c.col, row_span: c.row_span, col_span: c.col_span, paragraphs: paragraphs_out }
         })
         .collect();
-    TableItem { widths, heights, cells }
+    TableItem {
+        widths,
+        heights,
+        cells,
+        rect: Rect { left: t.left(), bottom: t.bottom(), right: t.right(), top: t.top() },
+    }
 }
 
 fn column_items(
@@ -725,7 +746,7 @@ fn column_items(
             // Never overlap the picture before; never run past the column.
             let offset = ((p.rect.left - col_left) * scale).max(x).min((col_w - w).max(0.0));
             x = offset + w;
-            items.push(RowPicture { id: p.id, width: w, height: h, offset });
+            items.push(RowPicture { rect: p.rect, id: p.id, width: w, height: h, offset });
         }
         pending.push(Pending {
             top,
@@ -1168,7 +1189,16 @@ mod tests {
         let l = layout_page(&p);
         let items = &l.bands[0].columns[0].items;
         let Item::Pictures { row, .. } = &items[1] else { panic!("{items:?}") };
-        assert_eq!(row, &[RowPicture { id: 0, width: 200.0, height: 160.0, offset: 28.0 }]);
+        assert_eq!(
+            row,
+            &[RowPicture {
+                rect: Rect { left: 100.0, bottom: 520.0, right: 300.0, top: 680.0 },
+                id: 0,
+                width: 200.0,
+                height: 160.0,
+                offset: 28.0
+            }]
+        );
         assert_eq!(l.backgrounds.len(), 1);
         assert_eq!(l.backgrounds[0].id, 1);
     }

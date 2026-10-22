@@ -1075,3 +1075,30 @@ fn tables_export_to_xlsx_and_csv() {
         .expect("run");
     assert_eq!(json(&none)["error"]["code"], "tables.none");
 }
+
+#[test]
+fn to_pptx_writes_one_slide_per_page() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("a.pptx");
+    let r = bin()
+        .args(["--json", "to-pptx", "--pages", "1-2"])
+        .arg(fixture("article.pdf"))
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stdout));
+    let v = json(&r);
+    assert_eq!(v["result"]["operation"], "convert_to_pptx");
+    assert_eq!(v["result"]["data"]["pages"], 2);
+    let z = zip::ZipArchive::new(std::fs::File::open(&out).expect("open")).expect("a package");
+    assert_eq!(z.file_names().flatten().filter(|n| n.starts_with("ppt/slides/slide")).count(), 2);
+    let bad = bin()
+        .args(["to-pptx"])
+        .arg(fixture("article.pdf"))
+        .arg("-o")
+        .arg(dir.path().join("a.ppt"))
+        .output()
+        .expect("run");
+    assert_eq!(bad.status.code(), Some(2));
+}

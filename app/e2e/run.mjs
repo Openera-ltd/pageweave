@@ -1387,6 +1387,32 @@ await test("convert to Word: palette and page tools; editable Word file with col
   assert(zipPart(out, "word/_rels/document.xml.rels").includes("https://rivers.example.org/data"), "link kept");
 });
 
+await test("convert to PowerPoint: one slide per page with text boxes, table and picture; source unchanged", async () => {
+  const src = join(FIX, "article.pdf");
+  const before = sha(src);
+  const out = join(work, "article-slides.pptx");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Convert to PowerPoint");
+    await s.click('[role="option"][data-command="file.toPowerPoint"]');
+    await s.waitFor("#output");
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("article.pptx"), "default name");
+    await s.type("#output", out);
+    await axeCheck(s, "convert-to-powerpoint-dialog");
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved article-slides.pptx")), "saved notice");
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("scaled to the slide size")), "page size note");
+  });
+  assert(sha(src) === before, "source unchanged");
+  const s1 = zipPart(out, "ppt/slides/slide1.xml");
+  const s2 = zipPart(out, "ppt/slides/slide2.xml");
+  zipPart(out, "ppt/slides/slide3.xml");
+  assert(s1.includes("1 Introduction") && s1.includes("<p:pic>") && s1.includes("hlinkClick"), "slide 1: text, picture, link");
+  assert(s2.includes("<a:tbl>") && s2.includes("Station"), "slide 2: table");
+});
+
 await test("export tables: Excel workbook with values kept and merged cells; CSV files into a folder; nothing found is said", async () => {
   const src = join(FIX, "tables.pdf");
   const out = join(work, "tables-export.xlsx");
