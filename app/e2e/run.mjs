@@ -1357,7 +1357,7 @@ function zipPart(file, name) {
   throw new Error(`${name} not in ${file}`);
 }
 
-await test("convert to Word: palette and page tools; editable Word file with columns, headings, link; losses reported; source unchanged", async () => {
+await test("convert to Word: palette and page tools; editable Word file with columns, headings, table, link; notes reported; source unchanged", async () => {
   const src = join(FIX, "article.pdf");
   const before = sha(src);
   const out = join(work, "article-converted.docx");
@@ -1374,7 +1374,7 @@ await test("convert to Word: palette and page tools; editable Word file with col
     writeFileSync(join(ART, "convert-to-word.png"), await s.screenshot());
     await s.click('[data-testid="tool-start"]');
     await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved article-converted.docx")), "saved notice");
-    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("not carried over")), "losses reported");
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("fonts Word may not have")), "font substitution reported");
     // Only PDFs open in PageWeave: the notice offers Show in folder, not Open.
     assert(await s.exec("return !!document.querySelector('.notice button[data-action=\"Show in folder\"]')"), "show in folder offered");
   });
@@ -1383,6 +1383,7 @@ await test("convert to Word: palette and page tools; editable Word file with col
   assert(xml.includes('<w:cols w:num="2"'), "two columns");
   assert((xml.match(/<w:pStyle w:val="Heading/g) ?? []).length >= 5, "headings styled");
   assert(xml.includes("1 Introduction") && xml.includes("rivers.example.org") && xml.includes("Station"), "text carried over");
+  assert(xml.includes("<w:tbl>"), "the ruled table is a Word table");
   assert(zipPart(out, "word/_rels/document.xml.rels").includes("https://rivers.example.org/data"), "link kept");
 });
 
