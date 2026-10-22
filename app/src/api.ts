@@ -79,6 +79,9 @@ export interface Api {
   listAnnotations(docId: number): Promise<{ annotations: ExistingAnnotation[]; truncated: boolean }>;
   /** JPEG and PNG images. */
   pickImageFiles(): Promise<string[]>;
+  pickOfficeFile(): Promise<string | null>;
+  /** The installed LibreOffice ("LibreOffice 24.2…"), or null. */
+  officeEngine(): Promise<string | null>;
   /** A signing certificate file (.pfx/.p12). */
   pickCertificateFile(): Promise<string | null>;
   /** Any files (no type filter), e.g. to attach. */
@@ -153,6 +156,15 @@ export const tauriApi: Api = {
     if (r === null) return [];
     return Array.isArray(r) ? r : [r];
   },
+  pickOfficeFile: async () => {
+    const r = await openDialog({
+      multiple: false,
+      directory: false,
+      filters: [{ name: "Office documents", extensions: ["docx", "doc", "odt", "rtf", "txt", "xlsx", "xls", "ods", "csv", "pptx", "ppt", "odp", "html", "htm"] }],
+    });
+    return typeof r === "string" ? r : null;
+  },
+  officeEngine: () => invoke("office_engine"),
   pickCertificateFile: async () => {
     const r = await openDialog({ multiple: false, directory: false, filters: [{ name: "Certificate files", extensions: ["pfx", "p12"] }] });
     return typeof r === "string" ? r : null;

@@ -39,6 +39,9 @@ pub struct Capability {
     pub location: Option<String>,
     /// File by file (diagnostics; not for normal UI).
     pub files: Vec<ResourceFile>,
+    /// Needed for PageWeave to be complete. Optional ones (installed separately, such as the
+    /// Office layout engine) do not make the report "not ready".
+    pub required: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -72,7 +75,7 @@ fn summarize(
     } else {
         (ResourceState::Ready, "Installed and verified.".to_string())
     };
-    Capability { id: id.into(), title: title.into(), state, detail, bytes, location, files }
+    Capability { id: id.into(), title: title.into(), state, detail, bytes, location, files, required: true }
 }
 
 fn pdf_engine() -> PwResult<Capability> {
@@ -140,10 +143,36 @@ fn text_recognition() -> PwResult<Capability> {
     ))
 }
 
+/// Opening Office documents: LibreOffice installed on this computer (not bundled, D-019).
+fn office_documents() -> Capability {
+    match crate::office::find_office() {
+        Some(e) => Capability {
+            id: "office_documents".into(),
+            title: "Office documents (optional)".into(),
+            state: ResourceState::Ready,
+            detail: format!("Word, Excel and PowerPoint files open through {} installed on this computer.", e.version),
+            bytes: 0,
+            location: e.program.parent().map(|d| d.display().to_string()),
+            files: vec![],
+            required: false,
+        },
+        None => Capability {
+            id: "office_documents".into(),
+            title: "Office documents (optional)".into(),
+            state: ResourceState::Missing,
+            detail: "To open Word, Excel and PowerPoint files, install LibreOffice (free). Everything else works without it.".into(),
+            bytes: 0,
+            location: None,
+            files: vec![],
+            required: false,
+        },
+    }
+}
+
 /// Check every installed resource against its pinned checksum.
 pub fn resource_status() -> PwResult<ResourceReport> {
-    let capabilities = vec![pdf_engine()?, text_recognition()?];
-    let all_ready = capabilities.iter().all(|c| c.state == ResourceState::Ready);
+    let capabilities = vec![pdf_engine()?, text_recognition()?, office_documents()];
+    let all_ready = capabilities.iter().filter(|c| c.required).all(|c| c.state == ResourceState::Ready);
     Ok(ResourceReport { capabilities, all_ready })
 }
 

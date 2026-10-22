@@ -73,6 +73,7 @@ export type CommandId =
   | "pages.exportImages"
   | "pages.exportText"
   | "file.toWord"
+  | "file.openOffice"
   | "file.toPowerPoint"
   | "file.exportTables"
   | "pages.labels"
@@ -168,6 +169,7 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "pages.exportImages", label: "Export pages as images…", category: "Pages", shortcuts: [] },
   { id: "pages.exportText", label: "Export as text…", category: "Pages", shortcuts: [] },
   { id: "file.toWord", label: "Convert to Word…", category: "File", shortcuts: [] },
+  { id: "file.openOffice", label: "Open a Word, Excel or PowerPoint file…", category: "File", shortcuts: [] },
   { id: "file.toPowerPoint", label: "Convert to PowerPoint…", category: "File", shortcuts: [] },
   { id: "file.exportTables", label: "Export tables to Excel or CSV…", category: "File", shortcuts: [] },
   { id: "pages.labels", label: "Page labels…", category: "Pages", shortcuts: [] },

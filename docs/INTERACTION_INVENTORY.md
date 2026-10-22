@@ -74,6 +74,7 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `pages.exportImages` | Export pages as images… | — | Exercised by tests |
 | `pages.exportText` | Export as text… | — | Exercised by tests |
 | `file.toWord` | Convert to Word… | — | Exercised by tests |
+| `file.openOffice` | Open a Word, Excel or PowerPoint file… | — | Exercised by tests |
 | `file.toPowerPoint` | Convert to PowerPoint… | — | Exercised by tests |
 | `file.exportTables` | Export tables to Excel or CSV… | — | Exercised by tests |
 | `pages.labels` | Page labels… | — | Exercised by tests |
@@ -89,4 +90,4 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `app.commandPalette` | Command palette | Ctrl+K, Ctrl+Shift+P | Exercised by tests |
 | `app.openLogs` | Show log folder | — | Exercised by tests |
 
-Coverage: 82 of 82 commands exercised by unit or real-app E2E tests.
+Coverage: 83 of 83 commands exercised by unit or real-app E2E tests.

@@ -36,6 +36,8 @@ ring.workspace = true
 # Word export: package writing and verification.
 zip.workspace = true
 quick-xml.workspace = true
+# Private temporary folders for Office conversions.
+tempfile.workspace = true
 
 [dev-dependencies]
 image.workspace = true

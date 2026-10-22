@@ -72,6 +72,7 @@ import { EditPropertiesDialog } from "./components/EditPropertiesDialog";
 import { SaveAttachmentDialog } from "./components/SaveAttachmentDialog";
 import { EditBookmarksDialog } from "./components/EditBookmarksDialog";
 import { ImagesToPdfDialog, isImagePath } from "./components/ImagesToPdfDialog";
+import { OfficeDialog, isOfficePath } from "./components/OfficeDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { NoteDialog, UnsavedDialog } from "./components/AnnotationDialogs";
 import { CommandPalette, Home, Notices, PasswordDialog, PropertiesDialog, SearchBar, StatusBar, type Notice, type NoticeAction, type SearchState } from "./components/Panels";
@@ -112,6 +113,7 @@ type DialogState =
   | { kind: "saveAttachment"; attachment: AttachmentInfo }
   | { kind: "bookmarks"; addOnOpen: boolean; page: number }
   | { kind: "images"; files: string[] }
+  | { kind: "office"; file: string | null }
   | { kind: "unsaved"; reason: "tab"; docId: number }
   | { kind: "unsaved"; reason: "quit" }
   | null;
@@ -183,6 +185,11 @@ export function App() {
   const [notices, setNotices] = useState<Notice[]>([]);
   const [jobs, setJobs] = useState<Record<string, JobSnapshot>>({});
   const [dropActive, setDropActive] = useState(false);
+  // The installed LibreOffice for opening Office files (null: not installed; checked once).
+  const [officeEngine, setOfficeEngine] = useState<string | null>(null);
+  useEffect(() => {
+    api.officeEngine().then(setOfficeEngine).catch(() => setOfficeEngine(null));
+  }, [api]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState<SearchState>(EMPTY_SEARCH);
   const [hits, setHits] = useState<SearchHit[]>([]);
@@ -321,6 +328,11 @@ export function App() {
   /* ---------- Documents ---------- */
   const openPath = useCallback(
     async (path: string, password?: string) => {
+      // Office files are converted to PDF first (Open an Office file).
+      if (isOfficePath(path)) {
+        setDialog((d) => (d ? d : { kind: "office", file: path }));
+        return;
+      }
       try {
         const doc = await api.openDocument(path, password);
         setDialog((d) => (d?.kind === "password" ? null : d));
@@ -477,10 +489,13 @@ export function App() {
         else if (e.type === "leave") setDropActive(false);
         else if (e.type === "drop") {
           setDropActive(false);
-          // Dropped images go to "Create PDF from images"; everything else is opened.
+          // Dropped images go to "Create PDF from images", an Office file to "Open an Office
+          // file"; everything else is opened.
           const images = e.paths.filter(isImagePath);
-          for (const p of e.paths.filter((p) => !isImagePath(p))) await openPath(p);
+          const office = e.paths.filter(isOfficePath);
+          for (const p of e.paths.filter((p) => !isImagePath(p) && !isOfficePath(p))) await openPath(p);
           if (images.length) setDialog((d) => (d ? d : { kind: "images", files: images }));
+          else if (office.length) setDialog((d) => (d ? d : { kind: "office", file: office[0]! }));
         }
       })
       .then((u) => (off = u))
@@ -856,6 +871,7 @@ export function App() {
     "file.trustedCertificates": { run: () => setDialog({ kind: "trustedCertificates" }), available: noDialog },
     "file.signatureMark": { run: () => setDialog({ kind: "signatureMark" }), available: all(needDoc, noDialog) },
     "file.imagesToPdf": { run: () => setDialog({ kind: "images", files: [] }), available: noDialog },
+    "file.openOffice": { run: () => setDialog({ kind: "office", file: null }), available: noDialog },
     "file.batch": { run: () => setDialog({ kind: "batch" }), available: noDialog },
     "file.editBookmarks": { run: () => setDialog({ kind: "bookmarks", addOnOpen: false, page: view.page }), available: all(needDoc, noDialog) },
     "file.attachFiles": { run: () => active && attachFiles(active), available: all(needDoc, noDialog) },
@@ -1474,6 +1490,7 @@ export function App() {
             dropActive={dropActive}
             onOpen={openDialog}
             onImagesToPdf={() => setDialog({ kind: "images", files: [] })}
+            onOpenOffice={() => setDialog({ kind: "office", file: null })}
             onBatch={() => setDialog({ kind: "batch" })}
             onOpenRecent={(p) => openPath(p)}
             onRemoveRecent={removeRecent}
@@ -1552,6 +1569,19 @@ export function App() {
       )}
       {dialog?.kind === "protect" && active && <ProtectDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "images" && <ImagesToPdfDialog initialFiles={dialog.files} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
+      {dialog?.kind === "office" && (
+        <OfficeDialog
+          initialFile={dialog.file}
+          engine={officeEngine}
+          jobs={jobs}
+          onClose={() => setDialog(null)}
+          onFinished={(job) => {
+            for (const w of job.result?.warnings ?? []) notify({ kind: "info", title: "Converted", detail: w, persistent: false });
+            const out = job.result?.outputs[0]?.path;
+            if (out) void openPath(out);
+          }}
+        />
+      )}
       {dialog?.kind === "bookmarks" && active && <EditBookmarksDialog doc={active} currentPage={dialog.page} addOnOpen={dialog.addOnOpen} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "saveAttachment" && active && <SaveAttachmentDialog doc={active} attachment={dialog.attachment} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "editProperties" && active && <EditPropertiesDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}

@@ -28,6 +28,7 @@ mod images;
 mod marks;
 pub mod objects;
 mod ocr;
+pub mod office;
 mod optimize;
 pub mod orient;
 mod outline;

@@ -313,3 +313,8 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - Found by looking at LibreOffice's rendering: single-line headings wrapped (synthetic bold is wider) → one-line boxes never wrap; body boxes too wide → 1.5 % slack.
 - Found while adding MCP tests: the export_tables MCP checks from checkpoint 13 had never been added (a text replacement silently missed after formatting) — added now with the PowerPoint ones; tool count 21. Edit scripts now assert that every replacement matched.
 - Ran: pptx tests 3/3 (LibreOffice Impress round trip), CLI + MCP tests, E2E "convert to PowerPoint". CI installs Impress.
+
+## 2026-10-22 — Session 2, checkpoint 16: open Office files (DOC-IMPORT-001, D-019)
+- `convert_office_to_pdf` op, `pw-pdf/src/office.rs` (find LibreOffice, private hardened profile, copy of the input, time limit, cancel, PDFium-verified atomic write), CLI `from-office`, MCP `convert_office_to_pdf`, app "Open a Word, Excel or PowerPoint file…" (start screen, palette, drop, launch argument, Open) with `OfficeDialog`; Settings ▸ Resources gains "Office documents (optional)" (`required: false`, not counted in `all_ready`).
+- Tried to prove the macro hardening: the test document's macro did not run even in a deliberately unsafe profile (LibreOffice 24.2 headless conversion), so the test guards but does not prove; recorded in the test and D-019.
+- Ran: office tests 3/3, OfficeDialog tests 4/4, MCP tests, E2E "open an Office file".

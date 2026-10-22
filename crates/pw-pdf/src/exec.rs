@@ -531,6 +531,20 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             };
             (outs.iter().map(|c| out(c, None)).collect(), serde_json::to_value(&report).unwrap_or_default())
         }
+        Operation::ConvertOfficeToPdf { input, output } => {
+            if let Some(c) = ctx {
+                c.set_indeterminate();
+            }
+            let (c, report, w) = crate::office::convert_office_to_pdf(
+                input,
+                output,
+                policy,
+                &cancelled,
+                crate::office::CONVERT_TIMEOUT,
+            )?;
+            warnings.extend(w);
+            (vec![out(&c, Some(report.pages))], serde_json::to_value(&report).unwrap_or_default())
+        }
         Operation::ConvertToPptx { input, pages, output } => {
             let page_progress = |done: u64, total: u64| {
                 if let Some(c) = ctx {

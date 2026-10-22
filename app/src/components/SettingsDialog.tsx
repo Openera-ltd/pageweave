@@ -298,7 +298,7 @@ function ResourcesPanel() {
         {(report?.capabilities ?? []).map((c) => (
           <li key={c.id} data-resource={c.id} data-state={c.state}>
             <div className="row" style={{ minWidth: 0 }}>
-              <span className={`a11y-status ${c.state === "ready" ? "pass" : "fail"}`}>{STATE_LABEL[c.state]}</span>
+              <span className={`a11y-status ${c.state === "ready" ? "pass" : c.required ? "fail" : "not_applicable"}`}>{!c.required && c.state === "missing" ? "Not installed" : STATE_LABEL[c.state]}</span>
               <strong className="grow">{c.title}</strong>
               {c.bytes > 0 && <span className="hint">{formatBytes(c.bytes)}</span>}
             </div>

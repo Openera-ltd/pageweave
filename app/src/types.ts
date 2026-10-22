@@ -245,6 +245,7 @@ export interface ResourceReport {
     bytes: number;
     location: string | null;
     files: Array<{ name: string; state: "ready" | "missing" | "damaged"; bytes: number }>;
+    required: boolean;
   }>;
 }
 
@@ -333,6 +334,7 @@ export type Operation =
   | { op: "export_text"; input: string; pages: string | null; output: string }
   | { op: "convert_to_docx"; input: string; pages: string | null; output: string }
   | { op: "convert_to_pptx"; input: string; pages: string | null; output: string }
+  | { op: "convert_office_to_pdf"; input: string; output: string }
   | { op: "export_tables"; input: string; pages: string | null; format: "xlsx" | "csv"; output: string }
   | { op: "crop_pages"; input: string; pages: string | null; margins: { top: number; right: number; bottom: number; left: number }; output: string }
   | { op: "watermark"; input: string; pages: string | null; watermark: WatermarkSpec; output: string }

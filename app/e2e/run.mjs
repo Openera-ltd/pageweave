@@ -115,7 +115,9 @@ async function withApp(args, fn) {
   launchFailuresInARow = 0;
   phase.create += Date.now() - t0;
   try {
-    await s.waitFor(args.length ? '.tab-label' : ".home", { timeout: 20000 });
+    // PDFs open as tabs; Office files open the convert dialog over the start screen.
+    const pdfArgs = args.filter((a) => !/\.(docx|doc|odt|rtf|txt|xlsx|xls|ods|csv|pptx|ppt|odp|html?)$/i.test(a));
+    await s.waitFor(pdfArgs.length ? ".tab-label" : ".home", { timeout: 20000 });
     return await fn(s);
   } catch (e) {
     await captureFailure(s);
@@ -1385,6 +1387,39 @@ await test("convert to Word: palette and page tools; editable Word file with col
   assert(xml.includes("1 Introduction") && xml.includes("rivers.example.org") && xml.includes("Station"), "text carried over");
   assert(xml.includes("<w:tbl>"), "the ruled table is a Word table");
   assert(zipPart(out, "word/_rels/document.xml.rels").includes("https://rivers.example.org/data"), "link kept");
+});
+
+await test("open an Office file: a Word file passed to the app opens the convert dialog; converted with LibreOffice and opened; macros off", async () => {
+  // A Word file made by PageWeave's own export of the article.
+  const docx = join(work, "office-input.docx");
+  if (CLI) execFileSync(CLI, ["to-docx", join(FIX, "article.pdf"), "-o", docx]);
+  else throw new Skip("needs the CLI to make the Word file");
+  const before = sha(docx);
+  const out = join(work, "office-input.pdf");
+  await withApp([], async (s) => {
+    const engine = await s.exec("return window.__TAURI_INTERNALS__.invoke('office_engine')");
+    if (!engine) throw new Skip("LibreOffice is not installed on this machine");
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Open a Word");
+    await s.click('[role="option"][data-command="file.openOffice"]');
+    await s.waitFor('[data-testid="office-start"]');
+    assert((await s.exec("return document.querySelector('[data-testid=office-start]').getAttribute('title')")) === "Choose a file first.", "needs a file");
+    await s.keys(["Escape"]);
+  });
+  await withApp([docx], async (s) => {
+    await s.waitFor('[data-testid="office-start"]');
+    assert((await s.text('[data-testid="office-file"]')) === "office-input.docx", "the file passed to the app");
+    assert((await s.exec("return document.querySelector('#office-output').value")).endsWith("office-input.pdf"), "PDF next to it");
+    await s.exec("document.querySelector('#office-output').value = ''");
+    await s.type("#office-output", out);
+    await axeCheck(s, "open-office-dialog");
+    writeFileSync(join(ART, "open-office.png"), await s.screenshot());
+    await s.click('[data-testid="office-start"]');
+    await s.waitUntil(async () => (await s.exec("return [...document.querySelectorAll('.tab-label')].map(t => t.textContent).join('|')")).includes("office-input.pdf"), "the converted PDF opened", 120000);
+    await pageLoaded(s, 0);
+  });
+  assert(sha(docx) === before, "the Word file is not changed");
+  assert(existsSync(out), "PDF written");
 });
 
 await test("convert to PowerPoint: one slide per page with text boxes, table and picture; source unchanged", async () => {
@@ -2751,7 +2786,8 @@ await test("settings ▸ resources: PDF engine and text recognition verified aga
     await s.waitFor("#tab-resources");
     await s.click("#tab-resources");
     const states = () => s.exec("return [...document.querySelectorAll('[data-testid=resources-list] li')].map(l => l.dataset.resource + ':' + l.dataset.state)");
-    await s.waitUntil(async () => JSON.stringify(await states()) === JSON.stringify(["pdf_engine:ready", "text_recognition:ready"]), "both ready", 30000);
+    // Office documents are optional (LibreOffice installed separately): ready or not installed.
+    await s.waitUntil(async () => /^\["pdf_engine:ready","text_recognition:ready","office_documents:(ready|missing)"\]$/.test(JSON.stringify(await states())), "required ready, optional listed", 30000);
     const text = await s.text('[data-testid="resources-list"]');
     assert(!/\.onnx|\.dll|\.so|onnxruntime|pdfium/i.test(text), `no technical file or model names in the UI: ${text}`);
     await s.click('[data-testid="resources-check"]');

@@ -683,6 +683,12 @@ pub enum Operation {
         format: TableFormat,
         output: PathBuf,
     },
+    /// Convert an Office document (Word, Excel, PowerPoint, OpenDocument, RTF, text, CSV, HTML)
+    /// to a PDF with the LibreOffice installed on this computer.
+    ConvertOfficeToPdf {
+        input: PathBuf,
+        output: PathBuf,
+    },
     /// Convert pages (all when `pages` is absent) into a PowerPoint presentation (.pptx), one
     /// slide per page.
     ConvertToPptx {
@@ -973,6 +979,7 @@ pub const OPERATION_IDS: &[&str] = &[
     "export_text",
     "convert_to_docx",
     "convert_to_pptx",
+    "convert_office_to_pdf",
     "export_tables",
     "optimize",
     "compare",
@@ -1031,6 +1038,7 @@ impl Operation {
             Operation::ExportText { .. } => "export_text",
             Operation::ConvertToDocx { .. } => "convert_to_docx",
             Operation::ConvertToPptx { .. } => "convert_to_pptx",
+            Operation::ConvertOfficeToPdf { .. } => "convert_office_to_pdf",
             Operation::ExportTables { .. } => "export_tables",
             Operation::Optimize { .. } => "optimize",
             Operation::Compare { .. } => "compare",
@@ -1129,6 +1137,7 @@ impl Operation {
             | Operation::ExportText { input, .. }
             | Operation::ConvertToDocx { input, .. }
             | Operation::ConvertToPptx { input, .. }
+            | Operation::ConvertOfficeToPdf { input, .. }
             | Operation::ExportTables { input, .. }
             | Operation::Optimize { input, .. }
             | Operation::ExtractAttachment { input, .. }
@@ -1195,6 +1204,7 @@ impl Operation {
             | Operation::ExportText { output, .. }
             | Operation::ConvertToDocx { output, .. }
             | Operation::ConvertToPptx { output, .. }
+            | Operation::ConvertOfficeToPdf { output, .. }
             | Operation::Optimize { output, .. }
             | Operation::Deskew { output, .. }
             | Operation::FixOrientation { output, .. }
@@ -1262,6 +1272,12 @@ impl Operation {
                 let ok = output.extension().is_some_and(|e| e.eq_ignore_ascii_case("xlsx"));
                 if !ok {
                     return Err(PwError::invalid("tables.extension", "Save the workbook with a .xlsx name."));
+                }
+            }
+            Operation::ConvertOfficeToPdf { output, .. } => {
+                let ok = output.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf"));
+                if !ok {
+                    return Err(PwError::invalid("office.extension", "Save the PDF with a .pdf name."));
                 }
             }
             Operation::ConvertToPptx { output, .. } => {

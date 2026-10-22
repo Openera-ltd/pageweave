@@ -282,6 +282,19 @@ pub const TOOLS: &[Tool] = &[
         },
     },
     Tool {
+        name: "convert_office_to_pdf",
+        title: "Convert an Office file to PDF",
+        description: "Convert a Word, Excel, PowerPoint, OpenDocument, RTF, text, CSV or HTML file to a PDF with the LibreOffice installed on this computer (macros never run). Fails with office.not_installed when LibreOffice is not installed.",
+        effect: Effect::WritesNewFiles,
+        long: true,
+        schema: || {
+            obj(
+                json!({ "path": path_prop("Source Office file"), "output": path_prop("New .pdf file (must not exist)") }),
+                &["path", "output"],
+            )
+        },
+    },
+    Tool {
         name: "convert_to_pptx",
         title: "Convert to PowerPoint",
         description: "Convert all or chosen pages to a PowerPoint presentation (.pptx), one slide per page with editable text boxes, tables, pictures and links. The result reports what could not be carried over.",
@@ -369,6 +382,13 @@ struct CompareArg {
 struct PagesOutArg {
     path: String,
     pages: String,
+    output: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PathOutArg {
+    path: String,
     output: String,
 }
 
@@ -568,6 +588,10 @@ pub fn operation(tool: &Tool, a: &Value, roots: &Roots) -> PwResult<Operation> {
                 format: pw_core::ops::TableFormat::Xlsx,
                 output: roots.output(&x.output, &["xlsx"])?,
             }
+        }
+        "convert_office_to_pdf" => {
+            let x: PathOutArg = args(a)?;
+            Operation::ConvertOfficeToPdf { input: roots.input(&x.path)?, output: pdf(&x.output)? }
         }
         "convert_to_pptx" => {
             let x: OptPagesOutArg = args(a)?;

@@ -141,6 +141,13 @@ enum Command {
         #[arg(short, long)]
         output: PathBuf,
     },
+    /// Convert an Office document (Word, Excel, PowerPoint, OpenDocument, RTF, text, CSV, HTML) to
+    /// PDF with the LibreOffice installed on this computer. Macros never run.
+    FromOffice {
+        file: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
     /// Convert to a PowerPoint presentation (.pptx), one slide per page: text boxes, tables,
     /// pictures and links; a report says what could not be carried over.
     ToPptx {
@@ -705,6 +712,9 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
             },
             output: output.clone(),
         },
+        Command::FromOffice { file, output } => {
+            Operation::ConvertOfficeToPdf { input: file.clone(), output: output.clone() }
+        }
         Command::ToPptx { file, pages, output } => {
             Operation::ConvertToPptx { input: file.clone(), pages: pages.clone(), output: output.clone() }
         }
@@ -1155,6 +1165,11 @@ fn print_human(r: &OperationResult) {
                 for t in found {
                     println!("Page {} table {}: {} rows × {} columns", t[0], t[1], t[2], t[3]);
                 }
+            }
+        }
+        "convert_office_to_pdf" => {
+            for o in &r.outputs {
+                println!("Wrote {} ({} bytes, {} pages)", o.path.display(), o.bytes, o.pages.unwrap_or(0));
             }
         }
         "convert_to_pptx" => {

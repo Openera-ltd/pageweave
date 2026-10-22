@@ -189,6 +189,12 @@ fn run_job(
     result
 }
 
+/// The LibreOffice installed on this computer, for opening Office files (D-019).
+#[tauri::command]
+async fn office_engine() -> CmdResult<Option<String>> {
+    blocking(|| Ok(pw_pdf::office::find_office().map(|e| e.version))).await
+}
+
 /// Installed resources checked against their pinned checksums (read-only; reads ~60 MB once).
 #[tauri::command]
 async fn resource_status() -> CmdResult<pw_pdf::resources::ResourceReport> {
@@ -564,6 +570,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_info,
+            office_engine,
             get_settings,
             save_settings,
             open_document,
