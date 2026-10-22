@@ -1520,7 +1520,7 @@ export function App() {
               scrollRequest={scrollRequest}
               hits={hits}
               currentHit={search.current}
-              reading={reader && reader.docId === active.doc_id && readMark ? { ...readMark, follow: readFollow } : null}
+              reading={reader && reader.docId === active.doc_id ? { page: readMark?.page ?? reader.page, rects: readMark?.rects ?? [], follow: readFollow } : null}
               onReadingInterrupted={stopFollowing}
               onPageContextMenu={pageMenu}
               annotations={activePending}

@@ -1492,6 +1492,12 @@ await test("read aloud: words highlighted as heard, pause/resume, next sentence,
     // Read from a page's context menu, then stop with the palette command.
     await s.exec("const p = document.querySelector('[data-page=\"1\"]'); p.scrollIntoView(); const r = p.getBoundingClientRect(); p.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: r.left + 40, clientY: r.top + 40 }))");
     await s.click('[role="menuitem"][data-command="read.aloud"]');
+    // Scrolling by hand before anything is highlighted also stops following (seen on Windows, where
+    // the first word is reported a moment after playback starts).
+    await s.waitFor('[data-testid="readbar"]');
+    await s.exec("document.querySelector('[data-testid=viewer]').dispatchEvent(new WheelEvent('wheel', { deltaY: 100, bubbles: true }))");
+    await s.waitFor('[data-testid="read-follow"]');
+    await s.click('[data-testid="read-follow"]');
     await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=readbar]')?.dataset.status")) === "playing", "reading page 2", 30000);
     assert((await s.text('[data-testid="readbar"] [role="status"]')).includes("page 2"), "reads page 2");
     await s.keys(["Control", "k"]);

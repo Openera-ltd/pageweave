@@ -177,10 +177,12 @@ export function Viewer({ doc, zoom, onZoomStep, onCurrentPage, scrollRequest, hi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reading]);
 
-  // Scrolling by hand while reading stops following (the reader offers to resume).
+  // Scrolling by hand while reading stops following (the reader offers to resume), also between
+  // highlights (before the first word is heard, or between paragraphs).
+  const readingActive = !!reading;
   useEffect(() => {
     const el = ref.current;
-    if (!el || !reading || !onReadingInterrupted) return;
+    if (!el || !readingActive || !onReadingInterrupted) return;
     const keys = new Set(["PageUp", "PageDown", "ArrowUp", "ArrowDown", "Home", "End", " "]);
     const onWheel = () => onReadingInterrupted();
     const onKey = (e: KeyboardEvent) => keys.has(e.key) && onReadingInterrupted();
@@ -194,7 +196,7 @@ export function Viewer({ doc, zoom, onZoomStep, onCurrentPage, scrollRequest, hi
       el.removeEventListener("keydown", onKey);
       el.removeEventListener("pointerdown", onDown);
     };
-  }, [reading, onReadingInterrupted]);
+  }, [readingActive, onReadingInterrupted]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if ((e.key === "F10" && e.shiftKey) || e.key === "ContextMenu") {
@@ -226,7 +228,7 @@ export function Viewer({ doc, zoom, onZoomStep, onCurrentPage, scrollRequest, hi
             root={ref}
             hits={hits}
             currentHit={currentHit}
-            readingRects={reading && reading.page === p.index ? reading.rects : NO_RECTS}
+            readingRects={reading && reading.page === p.index && reading.rects.length ? reading.rects : NO_RECTS}
             onContextMenu={onPageContextMenu}
             annotations={byPage.get(p.index) ?? NO_ANNOTATIONS}
             widgets={widgetsByPage.get(p.index) ?? NO_WIDGETS}
