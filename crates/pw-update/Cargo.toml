@@ -1,0 +1,25 @@
+[package]
+name = "pw-update"
+description = "PageWeave app updates: signed release manifest, verified download, installer hand-off (decision D-024)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+pw-core.workspace = true
+pw-net.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# Signature check of update installers (minisign, as made by `tauri signer`; MIT, pure Rust).
+minisign-verify = "=0.3.0"
+base64 = "0.22"
+semver = "1"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+sha2.workspace = true

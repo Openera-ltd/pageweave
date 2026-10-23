@@ -2,6 +2,9 @@
 
 [graph]
 all-features = false
+# Only the platforms PageWeave builds for. (rustls-platform-verifier's wasm32-only root list,
+# webpki-root-certs, is CDLA-Permissive-2.0 and never compiled for these targets.)
+targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
 
 [advisories]
 # Fail on any vulnerability or unsound advisory; unmaintained crates are reported for review.

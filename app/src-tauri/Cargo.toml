@@ -23,6 +23,7 @@ pw-core.workspace = true
 pw-pdf.workspace = true
 pw-speech.workspace = true
 pw-translate.workspace = true
+pw-update.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true

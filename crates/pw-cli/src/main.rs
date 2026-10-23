@@ -162,6 +162,24 @@ enum Command {
         to: Option<String>,
         #[arg(short, long)]
         output: Option<PathBuf>,
+        /// Download a language direction's model (e.g. en-de) into PageWeave's data folder.
+        #[arg(long, value_name = "SOURCE-TARGET")]
+        install: Option<String>,
+        /// Delete a downloaded language direction's model.
+        #[arg(long, value_name = "SOURCE-TARGET")]
+        remove: Option<String>,
+    },
+    /// Check whether a newer PageWeave version is published (reads this project's release page on
+    /// GitHub; nothing else is sent). The desktop app downloads and installs it.
+    Update {
+        /// Release check: verify an installer against its signature file and version with the key
+        /// built into this program (exit 0 only when valid).
+        #[arg(long, hide = true, value_name = "INSTALLER", requires_all = ["signature", "version"])]
+        verify: Option<PathBuf>,
+        #[arg(long, hide = true)]
+        signature: Option<PathBuf>,
+        #[arg(long, hide = true)]
+        version: Option<String>,
     },
     /// Read pages aloud with the computer's speech voice into a WAV file (-o file.wav). Without
     /// -o, list the voices.
@@ -642,7 +660,7 @@ fn capabilities() -> serde_json::Value {
 
 fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
     let op = match &cli.command {
-        Command::Capabilities | Command::Mcp { .. } | Command::Resources => return Ok(None),
+        Command::Capabilities | Command::Mcp { .. } | Command::Resources | Command::Update { .. } => return Ok(None),
         Command::Run { request } => {
             let text = if request.as_os_str() == "-" {
                 let mut s = String::new();
@@ -755,15 +773,27 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
         Command::Speak { .. } => {
             return Err(PwError::invalid("usage", "Give a PDF and -o file.wav, or nothing to list the voices."))
         }
-        Command::Translate { file: Some(file), pages, from, to: Some(to), output: Some(output) } => {
-            Operation::TranslateDocument {
-                input: file.clone(),
-                pages: pages.clone(),
-                source: from.clone(),
-                target: to.clone(),
-                output: output.clone(),
-            }
+        Command::Translate { install: Some(pair), file: None, .. } => {
+            let (source, target) = pair
+                .split_once('-')
+                .ok_or_else(|| PwError::invalid("usage", "Give the direction as SOURCE-TARGET, for example en-de."))?;
+            Operation::InstallTranslation { source: source.to_string(), target: target.to_string() }
         }
+        Command::Translate {
+            file: Some(file),
+            pages,
+            from,
+            to: Some(to),
+            output: Some(output),
+            install: None,
+            remove: None,
+        } => Operation::TranslateDocument {
+            input: file.clone(),
+            pages: pages.clone(),
+            source: from.clone(),
+            target: to.clone(),
+            output: output.clone(),
+        },
         Command::Translate { .. } => {
             return Err(PwError::invalid(
                 "usage",
@@ -1227,6 +1257,16 @@ fn print_human(r: &OperationResult) {
                 println!("Wrote {} ({} bytes, {} pages)", o.path.display(), o.bytes, o.pages.unwrap_or(0));
             }
         }
+        "install_translation" => {
+            let d = &r.data;
+            println!(
+                "{}-{} ready in {} ({} MB downloaded or repaired)",
+                d["source"].as_str().unwrap_or(""),
+                d["target"].as_str().unwrap_or(""),
+                d["folder"].as_str().unwrap_or(""),
+                d["downloaded_bytes"].as_u64().unwrap_or(0) / 1_000_000
+            );
+        }
         "translate_document" => {
             let d = &r.data;
             for o in &r.outputs {
@@ -1511,22 +1551,71 @@ fn run() -> ExitCode {
         };
     }
     let outcome = (|| -> Result<serde_json::Value, PwError> {
-        if let Command::Translate { file: None, output: None, to: None, .. } = &cli.command {
+        if let Command::Translate { remove: Some(pair), file: None, install: None, .. } = &cli.command {
+            let (source, target) = pair
+                .split_once('-')
+                .ok_or_else(|| PwError::invalid("usage", "Give the direction as SOURCE-TARGET, for example en-de."))?;
+            let removed = pw_translate::install::remove(source, target)?;
+            if !cli.json {
+                println!(
+                    "{}",
+                    if removed {
+                        "Removed."
+                    } else {
+                        "It was not downloaded (shipped or development models are never removed)."
+                    }
+                );
+            }
+            return Ok(json!({ "removed": removed }));
+        }
+        if let Command::Translate { file: None, output: None, to: None, install: None, .. } = &cli.command {
             let dirs = pw_translate::directions()?;
             if !cli.json {
                 for d in &dirs {
                     println!(
-                        "{} {} → {}  {} to {}",
-                        if d.installed { "READY  " } else { "MISSING" },
+                        "{} {}-{}  {} to {} ({} MB)",
+                        if d.installed { "READY     " } else { "DOWNLOAD  " },
                         d.source,
                         d.target,
                         pw_translate::language_name(&d.source),
-                        pw_translate::language_name(&d.target)
+                        pw_translate::language_name(&d.target),
+                        d.bytes / 1_000_000
                     );
                 }
                 println!("Other pairs of these languages are translated through English.");
+                println!("Download one with: pageweave translate --install en-de");
             }
             return Ok(json!({ "directions": dirs }));
+        }
+        if let Command::Update { verify: Some(file), signature: Some(sig), version: Some(v) } = &cli.command {
+            let key = pw_update::public_key().ok_or_else(|| {
+                PwError::new(
+                    pw_core::ErrorCategory::SecurityPolicy,
+                    "update.unsigned_build",
+                    "This build has no release key.",
+                )
+            })?;
+            let sig = std::fs::read_to_string(sig).map_err(|e| PwError::from_io(&e, "signature file"))?;
+            pw_update::verify_file(file, &sig, key, v)?;
+            if !cli.json {
+                println!("Signature valid for version {v}.");
+            }
+            return Ok(json!({ "valid": true, "version": v }));
+        }
+        if let Command::Update { .. } = &cli.command {
+            let found = pw_update::check(env!("CARGO_PKG_VERSION"))?;
+            if !cli.json {
+                match &found {
+                    Some(u) => println!(
+                        "PageWeave {} is available (you have {}; {} MB). Install it from the app: Settings ▸ Updates.",
+                        u.version,
+                        u.current,
+                        u.bytes.div_ceil(1_000_000)
+                    ),
+                    None => println!("PageWeave {} is up to date.", env!("CARGO_PKG_VERSION")),
+                }
+            }
+            return Ok(json!({ "current": env!("CARGO_PKG_VERSION"), "update": found }));
         }
         if let Command::Speak { file: None, output: None, .. } = &cli.command {
             let info = pw_speech::engine_info()?;

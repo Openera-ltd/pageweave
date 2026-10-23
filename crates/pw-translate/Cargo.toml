@@ -16,6 +16,8 @@ sha2.workspace = true
 # NFKC normalization as the models' SentencePiece setup does (already in the graph via url/idna).
 unicode-normalization = "=0.1.25"
 ort = { version = "=2.0.0-rc.14", default-features = false, features = ["std", "load-dynamic", "api-31"] }
+# Model downloads (D-023).
+pw-net.workspace = true
 
 [lints]
 workspace = true

@@ -169,13 +169,10 @@ fn office_documents() -> Capability {
     }
 }
 
-/// Translation: the pinned OPUS-MT models (D-022), every file checked against its hash.
+/// Translation: OPUS-MT models (D-022), downloaded per language when first used (D-023); every
+/// downloaded file is checked against its pinned hash. None downloaded yet is not a fault.
 fn translation() -> PwResult<Capability> {
-    const MISSING: &str = "Translation is not installed. Reinstall PageWeave to add it.";
-    let Some(dir) = pw_translate::default_resource_dir() else {
-        return Ok(summarize("translation", "Translation", vec![], None, MISSING));
-    };
-    let files = pw_translate::check_files(&dir)?
+    let files: Vec<ResourceFile> = pw_translate::check_files()?
         .into_iter()
         .map(|f| ResourceFile {
             name: f.name,
@@ -187,13 +184,30 @@ fn translation() -> PwResult<Capability> {
             bytes: f.bytes,
         })
         .collect();
-    let mut c = summarize("translation", "Translation", files, Some(dir.display().to_string()), MISSING);
+    let dirs = pw_translate::directions()?;
+    let installed = dirs.iter().filter(|d| d.installed).count();
+    let location = pw_translate::install::user_dir().map(|d| d.display().to_string());
+    let mut c = if files.is_empty() {
+        Capability {
+            id: "translation".into(),
+            title: "Translation".into(),
+            state: ResourceState::Ready,
+            detail: String::new(),
+            bytes: 0,
+            location,
+            files: vec![],
+            required: true,
+        }
+    } else {
+        summarize("translation", "Translation", files, location, "")
+    };
     if c.state == ResourceState::Ready {
-        let dirs = pw_translate::directions()?;
         c.detail = format!(
-            "{} language directions installed and verified (English with German, French, Spanish and Italian; other pairs through English).",
+            "{installed} of {} language directions downloaded and verified; the others download when first used.",
             dirs.len()
         );
+    } else {
+        c.detail = "A downloaded translation model is damaged: remove it and download it again (pageweave translate --remove / --install).".into();
     }
     Ok(c)
 }

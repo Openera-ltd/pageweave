@@ -189,6 +189,24 @@ fn run_job(
     result
 }
 
+/// The language of the open document's first pages, from its reading-order text (None: unclear).
+#[tauri::command]
+async fn detect_language(state: State<'_, AppState>, doc_id: DocId) -> CmdResult<Option<String>> {
+    let doc = state.doc(doc_id)?;
+    let st = state.inner().clone();
+    let pages = doc.info.page_count.min(3);
+    blocking(move || {
+        let mut text = String::new();
+        for page in 0..pages {
+            let v = st.read_json(&ReadCall::ReadingText { path: doc.path.clone(), page }, doc.password.as_deref())?;
+            text.push_str(v["text"].as_str().unwrap_or(""));
+            text.push('\n');
+        }
+        Ok(pw_translate::detect::detect(&text).map(|(l, _)| l.to_string()))
+    })
+    .await
+}
+
 /// Translation directions and whether each model is installed (D-022).
 #[tauri::command]
 async fn translation_directions() -> CmdResult<Vec<pw_translate::Direction>> {
@@ -519,6 +537,86 @@ fn mark_timing(state: State<'_, AppState>, name: String) -> CmdResult<Option<u64
     Ok(Some(ms))
 }
 
+#[derive(Serialize)]
+pub struct UpdateInfo {
+    current: &'static str,
+    /// This build carries the release key, so it can install updates itself.
+    can_install: bool,
+    /// Updates install on Windows; elsewhere the app only reports them.
+    platform_supported: bool,
+}
+
+#[tauri::command]
+fn update_info() -> UpdateInfo {
+    UpdateInfo {
+        current: env!("CARGO_PKG_VERSION"),
+        can_install: pw_update::can_install(),
+        platform_supported: cfg!(windows),
+    }
+}
+
+/// Read this project's latest release information (nothing about the user is sent).
+#[tauri::command]
+async fn check_for_update(state: State<'_, AppState>) -> CmdResult<Option<pw_update::Update>> {
+    let logger = state.logger.clone();
+    blocking(move || {
+        let r = pw_update::check(env!("CARGO_PKG_VERSION"));
+        match &r {
+            Ok(u) => logger.log(
+                pw_core::log::Level::Info,
+                "update",
+                "checked",
+                None,
+                fields! {"available" => u.as_ref().map(|u| u.version.clone()).unwrap_or_default()},
+            ),
+            Err(e) => logger.log(
+                pw_core::log::Level::Warn,
+                "update",
+                "check_failed",
+                None,
+                fields! {"code" => e.code.clone()},
+            ),
+        }
+        r
+    })
+    .await
+}
+
+/// Run the downloaded, verified installer for `version` as an update and close PageWeave; the
+/// installer starts it again. Refused while there are unsaved edits.
+#[tauri::command]
+async fn install_update(state: State<'_, AppState>, app: tauri::AppHandle, version: String) -> CmdResult<()> {
+    if state.unsaved() > 0 {
+        return Err(PwError::new(
+            pw_core::ErrorCategory::OutputConflict,
+            "update.unsaved",
+            "Save or discard your unsaved changes before updating.",
+        ));
+    }
+    if !cfg!(windows) {
+        return Err(PwError::new(
+            pw_core::ErrorCategory::UnsupportedOperation,
+            "update.platform",
+            "Updates install on Windows only.",
+        ));
+    }
+    let v = version.clone();
+    let (exe, args) = blocking(move || pw_update::prepared_installer(&v)).await?;
+    state.logger.log(pw_core::log::Level::Info, "update", "install", None, fields! {"version" => version});
+    std::process::Command::new(&exe).args(&args).spawn().map_err(|e| PwError::from_io(&e, "update installer"))?;
+    app.exit(0);
+    Ok(())
+}
+
+/// Open this project's releases page in the browser (a fixed address).
+#[tauri::command]
+fn open_releases_page(app: tauri::AppHandle) -> CmdResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_url("https://github.com/kuyamcliff/pageweave/releases/latest", None::<&str>)
+        .map_err(|_| PwError::internal("open.url", "The releases page could not be opened."))
+}
+
 /// The UI reports how many unsaved edits exist so the window-close guard can hold back a close.
 #[tauri::command]
 fn set_unsaved_changes(state: State<'_, AppState>, count: u32) {
@@ -593,6 +691,8 @@ pub fn run() {
                 fields! {"version" => env!("CARGO_PKG_VERSION"), "launch_files" => launch_count},
             );
             app.manage(state);
+            // Installers left from an update that has finished are removed.
+            std::thread::spawn(|| pw_update::clean(env!("CARGO_PKG_VERSION")));
             // The main window is created here (config has `create: false`) so WebView2 arguments
             // can be supplied; everything else comes from tauri.conf.json.
             let config = app
@@ -616,9 +716,14 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_info,
+            update_info,
+            check_for_update,
+            install_update,
+            open_releases_page,
             office_engine,
             speech_info,
             translation_directions,
+            detect_language,
             reading_text,
             speak_text,
             get_settings,

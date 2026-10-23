@@ -1475,6 +1475,17 @@ await test("translate: page to German as Word (layout kept), language detected; 
     await s.waitUntil(async () => (await s.text("#pages-msg")) === "1 page selected", "page 1 chosen");
     await s.type("#output", out);
     await axeCheck(s, "translate-dialog");
+    // Installed copies have no models until first use (D-023): the dialog offers the one-time
+    // download, which runs for real here (Windows CI); development builds use the fetched models.
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=tool-start]').title")) !== "Recognizing the document's language…", "language recognized", 60000);
+    if (await s.exec("return !!document.querySelector('[data-testid=translate-download]')")) {
+      assert(/one-time download/.test(await s.text('[data-testid="translate-download"]')), "download offered with its size");
+      assert((await s.exec("return document.querySelector('[data-testid=tool-start]').title")) === "Download the language first.", "start waits for the download");
+      await s.click('[data-testid="translate-download-start"]');
+      await s.waitFor('[data-testid="translate-download-cancel"]');
+      await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=translate-download]')")), "language downloaded", 600000);
+      console.log("  note: the English → German model was downloaded and verified in the app");
+    }
     await s.click('[data-testid="tool-start"]');
     await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved five-pages-de.docx")), "saved notice", 180000);
     await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Machine translation from English to German")), "review note");
@@ -2906,12 +2917,38 @@ await test("settings ▸ resources: PDF engine and text recognition verified aga
     await s.click("#tab-resources");
     const states = () => s.exec("return [...document.querySelectorAll('[data-testid=resources-list] li')].map(l => l.dataset.resource + ':' + l.dataset.state)");
     // Office documents are optional (LibreOffice installed separately): ready or not installed.
-    await s.waitUntil(async () => /^\["pdf_engine:ready","text_recognition:ready","translation:ready","read_aloud:ready","office_documents:(ready|missing)"\]$/.test(JSON.stringify(await states())), "required ready, optional listed", 30000);
+    await s.waitUntil(async () => /^\["pdf_engine:ready","text_recognition:ready","translation:ready","read_aloud:ready","office_documents:(ready|missing)"\]$/.test(JSON.stringify(await states())), "required ready, optional listed", 240000);
     const text = await s.text('[data-testid="resources-list"]');
     assert(!/\.onnx|\.dll|\.so|onnxruntime|pdfium/i.test(text), `no technical file or model names in the UI: ${text}`);
     await s.click('[data-testid="resources-check"]');
-    await s.waitUntil(async () => (await s.text('[data-testid="resources-check"]')) === "Check again", "check finished", 30000);
+    // Every installed file (about 1 GB with the translation models) is hashed; debug builds are slow at it.
+    await s.waitUntil(async () => (await s.text('[data-testid="resources-check"]')) === "Check again", "check finished", 240000);
     await axeCheck(s, "settings-resources");
+  });
+});
+
+await test("settings ▸ updates: check now reads the release page; the startup check setting is saved", async () => {
+  await withApp([], async (s) => {
+    await s.keys(["Control", ","]);
+    await s.waitFor("#tab-updates");
+    await s.click("#tab-updates");
+    await s.waitUntil(async () => /PageWeave \d+\.\d+\.\d+/.test(await s.text('[data-testid="updates-panel"] strong')), "version shown");
+    await s.click('[data-testid="updates-check"]');
+    // Up to date, or (when this build is older than the newest release) an offer; never an error.
+    await s.waitUntil(async () => /up to date|is available/.test(await s.text('[data-testid="updates-status"]')), "check answered", 60000);
+    assert(!(await s.exec("return !!document.querySelector('[data-testid=updates-status] [role=alert]')")), "no error");
+    assert((await s.exec("return document.querySelector('[data-testid=updates-auto]').checked")) === true, "on by default");
+    await s.click('[data-testid="updates-auto"]');
+    await axeCheck(s, "settings-updates");
+    await s.click('[role="dialog"] .btn.primary');
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('#tab-updates')")), "saved and closed");
+    await s.keys(["Control", ","]);
+    await s.waitFor("#tab-updates");
+    await s.click("#tab-updates");
+    await s.waitFor('[data-testid="updates-auto"]');
+    assert((await s.exec("return document.querySelector('[data-testid=updates-auto]').checked")) === false, "setting kept");
+    await s.click('[data-testid="updates-auto"]');
+    await s.click('[role="dialog"] .btn.primary');
   });
 });
 
