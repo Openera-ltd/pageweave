@@ -1,16 +1,56 @@
+<div align="center">
+
+<img src="docs/assets/pageweave-logo-512.png" alt="PageWeave logo: a white page with text lines, wrapped in blue and violet layers" width="160">
+
 # PageWeave
 
-PageWeave is a free/open-source, local-first Windows desktop document studio (see `prd/00_MASTER_PRD.md`
-for the full product scope).
+**A free, open-source document studio for Windows that works on your computer — no account, no cloud, no AI subscription.**
 
-## Status — early development, not production ready
+[![CI](https://img.shields.io/github/actions/workflow/status/kuyamcliff/pageweave/ci.yml?branch=main&style=flat&logo=githubactions&logoColor=white&label=CI)](https://github.com/kuyamcliff/pageweave/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-4c9a2a?style=flat)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Windows-0078D4?style=flat&logo=windows&logoColor=white)](#install-and-build)
+[![Status](https://img.shields.io/badge/status-early%20development-e8710a?style=flat)](#status)
 
-Release status: **BLOCKED**. What exists today is a first vertical slice; most of the product scope in
-`prd/` (conversion, form authoring, sanitization, translation, read-aloud, design reconstruction,
-resource installer, API/MCP, …) is **not implemented**. `docs/FEATURE_PARITY_MATRIX.md` is the
-authoritative per-capability ledger with evidence and limitations.
+[![Works offline](https://img.shields.io/badge/works-offline-2f6fde?style=flat)](#privacy)
+[![Rust](https://img.shields.io/badge/core-Rust-b7410e?style=flat&logo=rust&logoColor=white)](#how-it-is-built)
+[![Tauri 2](https://img.shields.io/badge/app-Tauri%202-24c8db?style=flat&logo=tauri&logoColor=white)](#how-it-is-built)
+[![React](https://img.shields.io/badge/UI-React%20%2B%20TypeScript-3178c6?style=flat&logo=react&logoColor=white)](#how-it-is-built)
+[![MCP](https://img.shields.io/badge/AI%20agents-MCP-6b4fbb?style=flat)](#use-with-an-ai-agent-mcp)
+[![PDF engine](https://img.shields.io/badge/PDF%20engine-PDFium-555555?style=flat)](THIRD_PARTY_NOTICES.md)
 
-Implemented and tested:
+[Features](#what-you-can-do) · [Status](#status) · [Install and build](#install-and-build) · [Command line](#command-line) · [AI agents](#use-with-an-ai-agent-mcp) · [Privacy](#privacy) · [License](#license)
+
+</div>
+
+---
+
+## What is PageWeave?
+
+PageWeave opens, edits, converts and checks PDF files on your own computer. Everything runs locally:
+your documents never leave the machine, and every feature works without an internet connection or an
+outside AI service. Your original files are never changed — every edit is saved as a **new** file that
+PageWeave checks before it is kept.
+
+## What you can do
+
+| | |
+|---|---|
+| **View and find** | Tabs, smooth scrolling, thumbnails, bookmarks, zoom, find with highlights, select and copy text |
+| **Organize pages** | Reorder, rotate, delete, extract, insert, split, combine, crop, page numbers, stamps and watermarks |
+| **Edit** | Change text in place, move and replace pictures, add text, highlight, underline, sticky notes |
+| **Forms** | Fill in forms on the page, clear or reset them, export and import the answers |
+| **Convert** | PDF → Word, PowerPoint, Excel/CSV tables, text and images; images → PDF; open Word, Excel and PowerPoint files (with LibreOffice installed) |
+| **Translate** | Translate pages between English, German, French, Spanish and Italian into a Word file that keeps the layout |
+| **Read aloud** | Hear the document with your computer's voices, the spoken word highlighted; save it as audio |
+| **Scans** | Make scans searchable (OCR), straighten them, turn them upright, remove blank pages |
+| **Protect and clean** | Passwords, permanent redaction, remove hidden information, find sensitive text |
+| **Sign and check** | Sign with a certificate, verify signatures, compare two versions, check accessibility |
+| **Automate** | Process many files at once, script everything with the `pageweave` command line, or let an AI agent use it through MCP |
+
+<details>
+<summary><b>Every feature in detail, with how it is tested</b></summary>
+
+<br>
 
 | Area | What works | Evidence |
 |---|---|---|
@@ -41,7 +81,21 @@ Implemented and tested:
 | Edit text and pictures | Change the wording of a text line in place, move lines and pictures, turn, replace or delete pictures, add new text; the engine renders an exact preview; undo/redo; saved into a **new** copy together with annotations and form fields (CLI: `pageweave objects`, `pageweave edit`) | engine tests reopen every saved copy and check its text, fonts and pictures; E2E edits in the real app and checks the copy with the CLI |
 | Annotations | Highlight, underline, strikethrough and sticky notes from a text selection or a right-click; undo/redo; saved into a **new** PDF (verified by reopening); closing a tab or the window with unsaved annotations asks first | engine tests (independent parser + rendered pixels); E2E checks the saved file and the real window-close request |
 
-Known limitations (selection):
+</details>
+
+## Status
+
+> [!WARNING]
+> **Early development — not production ready yet.** The features above are built and tested
+> automatically on Linux and Windows, but a release still needs measured performance on real Windows
+> PCs, screen-reader checks with Narrator and NVDA, code signing, and checks in Microsoft Office.
+> The full list lives in [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md); every feature's
+> evidence and limits are in [`docs/FEATURE_PARITY_MATRIX.md`](docs/FEATURE_PARITY_MATRIX.md).
+
+<details>
+<summary><b>Known limitations</b></summary>
+
+<br>
 
 - Combining PDFs does not carry over bookmarks or document metadata (the app says so).
 - Outputs made by extract/delete/split/combine from a password-protected PDF are **not** protected (the app warns); rotate keeps the protection.
@@ -59,33 +113,60 @@ Known limitations (selection):
 - Crash containment: jobs run in worker processes and the viewer's pages and reads in reader processes, so an engine crash on a damaged file fails that job or that page ("could not be displayed"), not the app. Measured on Linux; the crash test runs on debug builds only.
 - Accessibility check: automated structure checks plus a list of what to review by hand; it does not edit or add tags and is not a PDF/UA or WCAG conformance verdict.
 
-## Architecture
+</details>
 
-- `crates/pw-core` — engine-independent foundation: typed operation schema, error taxonomy, page-range
-  parser, atomic output writer, bounded job manager with cancellation, privacy-safe JSONL logging,
-  versioned settings.
-- `crates/pw-pdf` — adapter over PDFium (`chromium/7881`, JavaScript and XFA disabled), pinned by SHA-256
-  in `resources/pdfium.lock.json`.
-- `crates/pw-cli` — `pageweave` command-line interface over the same typed operations.
-- `app/` — Tauri 2 desktop app: Rust host (`app/src-tauri`) and React/TypeScript UI (`app/src`).
+## Install and build
 
-All interfaces call one dispatcher (`pw_pdf::execute`). Decisions are recorded in `docs/DECISIONS.md`.
+There is no signed installer to download yet. To build PageWeave yourself:
 
-## Build and test
-
-Prerequisites: Rust (stable), Node.js 22, Python 3. On Linux also `libwebkit2gtk-4.1-dev`, `librsvg2-dev`.
+**You need:** Rust (stable), Node.js 22 and Python 3. On Linux also `libwebkit2gtk-4.1-dev` and `librsvg2-dev`.
 
 ```sh
-python3 -I tools/fetch_pdfium.py          # download + verify the pinned PDF engine
+# 1. Download and verify the pinned engines and models (checksums are checked)
+python3 -I tools/fetch_pdfium.py
+python3 -I tools/fetch_ocr.py
+python3 -I tools/fetch_translate.py
+
+# 2. Build the interface and run the tests
 cd app && npm ci && npx vite build && cd ..
-cargo test --workspace                    # Rust unit + integration tests
-(cd app && npx vitest run)                # UI unit tests
-cd app && npx tauri build --debug --no-bundle
-./e2e/run.sh ../target/debug/pageweave-app ../e2e-artifacts   # real-app E2E (Linux: needs xvfb, webkit2gtk-driver, tauri-driver)
-npx tauri build                           # Windows installers (NSIS + MSI)
+cargo test --workspace            # engine, CLI and app tests
+(cd app && npx vitest run)        # interface tests
+
+# 3. Build the app
+cd app && npx tauri build         # Windows installers (NSIS + MSI)
 ```
 
-CLI examples:
+<details>
+<summary><b>Run the real-app tests</b></summary>
+
+<br>
+
+```sh
+cd app && npx tauri build --debug --no-bundle
+./e2e/run.sh ../target/debug/pageweave-app ../e2e-artifacts
+```
+
+On Linux this needs `xvfb`, `webkit2gtk-driver` and `tauri-driver`; read aloud also needs `flite` and a
+sound device (CI uses a PulseAudio null sink).
+
+</details>
+
+## Command line
+
+Everything the app does is also available as `pageweave`, with JSON output (`--json`) and stable exit codes.
+
+```sh
+pageweave inspect report.pdf
+pageweave extract --pages "1-3, 5" -o excerpt.pdf report.pdf
+pageweave to-docx -o report.docx report.pdf
+pageweave translate --to de -o report-de.docx report.pdf
+pageweave ocr -o searchable.pdf scan.pdf
+```
+
+<details>
+<summary><b>More examples</b></summary>
+
+<br>
 
 ```sh
 pageweave inspect report.pdf
@@ -121,6 +202,8 @@ pageweave sanitize --inspect report.pdf
 pageweave sanitize --remove-web-links -o report-clean.pdf report.pdf
 ```
 
+</details>
+
 ## Use with an AI agent (MCP)
 
 `pageweave mcp` lets an AI agent that supports the Model Context Protocol (for example Claude Desktop or
@@ -150,13 +233,31 @@ the network — and only touches files inside the folders you name:
 
 ## Privacy
 
-PageWeave's own code makes no network requests while you work with documents (this has not yet been
-verified with network monitoring on Windows, where the WebView2 runtime is a separate Microsoft component). Logs record operation names, timings,
-page counts and error codes — never document text, file names (paths are replaced by a short hash) or
-passwords. Passwords are held in memory only while a document is open. Logs live in the app's local data
-folder; open it with the command palette (Ctrl+K) → "Show log folder".
+- **Nothing is uploaded.** PageWeave's own code makes no network requests while you work with documents
+  (not yet confirmed with network monitoring on Windows, where the WebView2 runtime is a separate
+  Microsoft component).
+- **Logs stay private.** They record operation names, timings, page counts and error codes — never
+  document text, file names (paths are replaced by a short hash) or passwords. Open them with the command
+  palette (Ctrl+K) → "Show log folder".
+- **Passwords** are held in memory only while a document is open.
+
+## How it is built
+
+| Part | What it does |
+|---|---|
+| [`crates/pw-core`](crates/pw-core) | Shared foundation: operation types, errors, page ranges, safe file writing, jobs, settings, logging |
+| [`crates/pw-pdf`](crates/pw-pdf) | The document engine, built on PDFium (JavaScript and XFA disabled), pinned by checksum |
+| [`crates/pw-ocr`](crates/pw-ocr) | Text recognition (PP-OCRv6 models on ONNX Runtime) |
+| [`crates/pw-translate`](crates/pw-translate) | Translation (OPUS-MT models on the same runtime) |
+| [`crates/pw-speech`](crates/pw-speech) | Read aloud with the computer's voices |
+| [`crates/pw-cli`](crates/pw-cli), [`crates/pw-mcp`](crates/pw-mcp) | The `pageweave` command line and the MCP server for AI agents |
+| [`app/`](app) | The Tauri 2 desktop app: Rust host and React/TypeScript interface |
+
+The app, the command line and the MCP server all run the same operations through one engine
+(`pw_pdf::execute`). Design decisions are recorded in [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
 ## License
 
-MIT — see `LICENSE`. Redistributed third-party components and their licenses: `THIRD_PARTY_NOTICES.md`
-and `third_party/licenses/`.
+PageWeave is released under the [MIT License](LICENSE). Bundled third-party components and models, and
+their licenses, are listed in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and
+[`third_party/licenses/`](third_party/licenses).

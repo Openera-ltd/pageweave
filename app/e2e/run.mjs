@@ -2906,11 +2906,12 @@ await test("settings ▸ resources: PDF engine and text recognition verified aga
     await s.click("#tab-resources");
     const states = () => s.exec("return [...document.querySelectorAll('[data-testid=resources-list] li')].map(l => l.dataset.resource + ':' + l.dataset.state)");
     // Office documents are optional (LibreOffice installed separately): ready or not installed.
-    await s.waitUntil(async () => /^\["pdf_engine:ready","text_recognition:ready","translation:ready","read_aloud:ready","office_documents:(ready|missing)"\]$/.test(JSON.stringify(await states())), "required ready, optional listed", 30000);
+    await s.waitUntil(async () => /^\["pdf_engine:ready","text_recognition:ready","translation:ready","read_aloud:ready","office_documents:(ready|missing)"\]$/.test(JSON.stringify(await states())), "required ready, optional listed", 240000);
     const text = await s.text('[data-testid="resources-list"]');
     assert(!/\.onnx|\.dll|\.so|onnxruntime|pdfium/i.test(text), `no technical file or model names in the UI: ${text}`);
     await s.click('[data-testid="resources-check"]');
-    await s.waitUntil(async () => (await s.text('[data-testid="resources-check"]')) === "Check again", "check finished", 30000);
+    // Every installed file (about 1 GB with the translation models) is hashed; debug builds are slow at it.
+    await s.waitUntil(async () => (await s.text('[data-testid="resources-check"]')) === "Check again", "check finished", 240000);
     await axeCheck(s, "settings-resources");
   });
 });

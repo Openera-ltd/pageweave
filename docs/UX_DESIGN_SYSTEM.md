@@ -55,3 +55,12 @@ Support light, dark, and system modes; configurable accent color; compact and co
 ## Visual QA
 
 Capture screenshots of key screens/states at representative resolutions and display scales. Compare for layout regressions, clipping, overlap, inconsistent spacing, contrast failures, and text wrapping. Screenshot snapshots are evidence, not a replacement for interaction testing. Review both normal and error/disabled/loading states.
+
+## Brand identity
+
+- Official logo: `docs/assets/pageweave-logo.png` (master, 1254 × 1254) and `docs/assets/pageweave-logo-512.png`
+  (README). A white page with text lines wrapped in blue-to-violet layers on a near-black background.
+- App and installer icons (`app/src-tauri/icons/`) are generated from the logo cut to a rounded square:
+  `npx tauri icon <rounded-square.png> -o src-tauri/icons` (run in `app/`; delete the android/ios folders,
+  which PageWeave does not ship).
+- The interface accent (`#2f6fde`) stays the default; the logo's blues and violet are its brand range.
