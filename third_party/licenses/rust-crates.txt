@@ -6347,16 +6347,16 @@ SOFTWARE.
 
 ==============================================================================
 MIT License (MIT) — used by:
-  pageweave-app 0.1.0
-  pw-cli 0.1.0
-  pw-core 0.1.0
-  pw-mcp 0.1.0
-  pw-net 0.1.0
-  pw-ocr 0.1.0
-  pw-pdf 0.1.0
-  pw-speech 0.1.0
-  pw-translate 0.1.0
-  pw-update 0.1.0
+  pageweave-app 0.1.1
+  pw-cli 0.1.1
+  pw-core 0.1.1
+  pw-mcp 0.1.1
+  pw-net 0.1.1
+  pw-ocr 0.1.1
+  pw-pdf 0.1.1
+  pw-speech 0.1.1
+  pw-translate 0.1.1
+  pw-update 0.1.1
   asn1-rs-impl 0.2.0
   brotli-decompressor 5.0.3
   brotli-decompressor 6.0.1

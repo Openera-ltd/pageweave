@@ -13,6 +13,11 @@
       "../../third_party/licenses/onnxruntime/": "licenses/onnxruntime/",
       "../../third_party/licenses/ppocr/": "licenses/ppocr/",
       "../../third_party/licenses/opus-mt/": "licenses/opus-mt/"
+    },
+    "windows": {
+      "nsis": {
+        "installerHooks": "windows/hooks.nsh"
+      }
     }
   }
 }
