@@ -13,6 +13,13 @@ name: Release
 on:
   push:
     tags: ["v*.*.*"]
+  # Or start it from the Actions tab / API with a version: the release creates tag v<version> on
+  # the commit it built.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 0.1.0); must match the app, crate and UI versions"
+        required: true
 
 permissions:
   contents: read
@@ -41,9 +48,17 @@ jobs:
       - name: Tag, app and crate versions agree; signing is configured
         env:
           HAS_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          V="${GITHUB_REF_NAME#v}"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            test "$GITHUB_REF_NAME" = "main" || { echo "::error::Run releases from main"; exit 1; }
+            V="${INPUT_VERSION#v}"
+            if git ls-remote --exit-code --tags origin "refs/tags/v$V" >/dev/null; then echo "::error::Tag v$V already exists"; exit 1; fi
+          else
+            V="${GITHUB_REF_NAME#v}"
+          fi
+          [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Not a version: $V"; exit 1; }
           APP=$(python -I -c "import json; print(json.load(open('app/src-tauri/tauri.conf.json'))['version'])")
           CRATE=$(python -I -c "import tomllib; print(tomllib.load(open('Cargo.toml','rb'))['workspace']['package']['version'])")
           NPM=$(python -I -c "import json; print(json.load(open('app/package.json'))['version'])")
@@ -156,5 +171,5 @@ jobs:
         run: |
           set -euo pipefail
           SETUP="target/release/bundle/nsis/PageWeave_${VERSION}_x64-setup.exe"
-          gh release create "$GITHUB_REF_NAME" --title "PageWeave $VERSION" --notes-file "docs/releases/v${VERSION}.md" \
+          gh release create "v${VERSION}" --target "$GITHUB_SHA" --title "PageWeave $VERSION" --notes-file "docs/releases/v${VERSION}.md" \
             "$SETUP" "$SETUP.sig" latest.json "dist/pageweave-cli-${VERSION}-windows-x64.zip"
