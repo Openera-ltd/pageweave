@@ -1475,6 +1475,17 @@ await test("translate: page to German as Word (layout kept), language detected; 
     await s.waitUntil(async () => (await s.text("#pages-msg")) === "1 page selected", "page 1 chosen");
     await s.type("#output", out);
     await axeCheck(s, "translate-dialog");
+    // Installed copies have no models until first use (D-023): the dialog offers the one-time
+    // download, which runs for real here (Windows CI); development builds use the fetched models.
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=tool-start]').title")) !== "Recognizing the document's language…", "language recognized", 60000);
+    if (await s.exec("return !!document.querySelector('[data-testid=translate-download]')")) {
+      assert(/one-time download/.test(await s.text('[data-testid="translate-download"]')), "download offered with its size");
+      assert((await s.exec("return document.querySelector('[data-testid=tool-start]').title")) === "Download the language first.", "start waits for the download");
+      await s.click('[data-testid="translate-download-start"]');
+      await s.waitFor('[data-testid="translate-download-cancel"]');
+      await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=translate-download]')")), "language downloaded", 600000);
+      console.log("  note: the English → German model was downloaded and verified in the app");
+    }
     await s.click('[data-testid="tool-start"]');
     await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved five-pages-de.docx")), "saved notice", 180000);
     await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Machine translation from English to German")), "review note");

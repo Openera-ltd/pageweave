@@ -245,6 +245,7 @@ jobs:
         working-directory: app
         run: npx tauri build
       - name: Install silently, launch, verify, uninstall
+        timeout-minutes: 15
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -276,7 +277,9 @@ jobs:
           $models = "$env:LOCALAPPDATA\io.github.kuyamcliff.pageweave\translate\keep-me"
           New-Item -ItemType Directory -Force $models | Out-Null
           Set-Content (Join-Path $models "marker.txt") "kept"
-          $u = Start-Process -FilePath $setup.FullName -ArgumentList "/P", "/UPDATE", "/R", "/D=$dir" -Wait -PassThru
+          # Wait for the installer only: `-Wait` would also wait for the app it restarts.
+          $u = Start-Process -FilePath $setup.FullName -ArgumentList "/P", "/UPDATE", "/R", "/D=$dir" -PassThru
+          if (-not $u.WaitForExit(300000)) { throw "update-mode installer did not finish in 5 minutes" }
           if ($u.ExitCode -ne 0) { throw "update-mode installer exit $($u.ExitCode)" }
           if (-not $app.HasExited) { throw "the running app was not closed by the update" }
           $restarted = $null
