@@ -1,10 +1,13 @@
 name: Release
 
 # Builds, checks, signs and publishes a Windows release when a version tag (v1.2.3) is pushed.
-# Only the NSIS installer is published: in-app updates run it, and an MSI (per-machine) install next
-# to it would give users two copies. CI keeps building the MSI.
-# The installer is signed with the update key (decision D-024); `latest.json` tells installed copies
-# about it, and they download only the new installer — downloaded languages and settings are kept.
+# Two NSIS installers are published (no MSI: a per-machine copy next to the per-user one would give
+# users two copies; CI keeps building the MSI):
+#   PageWeave_<v>_x64-setup.exe         full download, all translation languages included (~1 GB);
+#                                       the installer moves them to the user's data folder (D-023)
+#   PageWeave_<v>_x64-update-setup.exe  the program only (~40 MB), signed with the update key
+#                                       (D-024); `latest.json` points installed copies at it, so an
+#                                       update never downloads the languages again
 #
 # One-time setup (repository settings):
 #   secret   TAURI_SIGNING_PRIVATE_KEY           the private key from `npx @tauri-apps/cli signer generate`
@@ -77,14 +80,32 @@ jobs:
         run: python -I tools/fetch_pdfium.py --platform win-x64
       - name: Fetch pinned OCR runtime and models (checksum verified)
         run: python -I tools/fetch_ocr.py --platform win-x64
+      - name: Cache pinned translation models
+        uses: actions/cache@v4
+        with:
+          path: third_party/translate
+          key: translate-${{ hashFiles('resources/translate.lock.json') }}
+      - name: Fetch pinned translation models (checksum verified)
+        run: python -I tools/fetch_translate.py
       - name: UI install, tests and build
         working-directory: app
         run: |
           npm ci --no-audit --no-fund
           npx vitest run
-      - name: Build the installer (NSIS) with the update key built in
+      - name: Build the update installer (program only) with the update key built in
         working-directory: app
-        run: npx tauri build --bundles nsis
+        run: |
+          set -euo pipefail
+          npx tauri build --bundles nsis
+          mkdir -p ../dist
+          mv "../target/release/bundle/nsis/PageWeave_${VERSION}_x64-setup.exe" "../dist/PageWeave_${VERSION}_x64-update-setup.exe"
+      - name: Build the full installer (with every translation language)
+        working-directory: app
+        run: |
+          set -euo pipefail
+          npx tauri build --bundles nsis --config src-tauri/tauri.full.conf.json
+          mv "../target/release/bundle/nsis/PageWeave_${VERSION}_x64-setup.exe" "../dist/PageWeave_${VERSION}_x64-setup.exe"
+          ls -la ../dist
       - name: Build the release CLI (same key)
         run: cargo build --release -p pw-cli
       - name: Sign the installer for this version
@@ -93,26 +114,41 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          SETUP="target/release/bundle/nsis/PageWeave_${VERSION}_x64-setup.exe"
-          test -f "$SETUP" || { ls target/release/bundle/nsis; echo "::error::$SETUP not built"; exit 1; }
-          rm -f "$SETUP.sig"
-          (cd app && npx tauri signer sign --app-version "$VERSION" "../$SETUP")
-          test -s "$SETUP.sig"
+          for SETUP in "dist/PageWeave_${VERSION}_x64-update-setup.exe" "dist/PageWeave_${VERSION}_x64-setup.exe"; do
+            test -f "$SETUP" || { ls dist; echo "::error::$SETUP not built"; exit 1; }
+            rm -f "$SETUP.sig"
+            (cd app && npx tauri signer sign --app-version "$VERSION" "../$SETUP")
+            test -s "$SETUP.sig"
+          done
       - name: The app's own check accepts the signature; a wrong version is refused
         run: |
           set -euo pipefail
-          SETUP="target/release/bundle/nsis/PageWeave_${VERSION}_x64-setup.exe"
+          SETUP="dist/PageWeave_${VERSION}_x64-update-setup.exe"
           ./target/release/pageweave.exe update --verify "$SETUP" --signature "$SETUP.sig" --version "$VERSION"
           set +e; ./target/release/pageweave.exe update --verify "$SETUP" --signature "$SETUP.sig" --version "0.0.0-not-this"; code=$?; set -e
           test "$code" != 0 || { echo "::error::a signature for $VERSION was accepted as another version"; exit 1; }
-      - name: Install silently, launch, open a document, uninstall
+      - name: Install the full download, check the languages moved to the user folder, open a document, update over it, uninstall
+        timeout-minutes: 20
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $setup = "target/release/bundle/nsis/PageWeave_$($env:VERSION)_x64-setup.exe"
+          $setup = "dist/PageWeave_$($env:VERSION)_x64-setup.exe"
+          $update = "dist/PageWeave_$($env:VERSION)_x64-update-setup.exe"
           $dir = Join-Path $env:RUNNER_TEMP "PageWeave Install"
+          $langs = "$env:LOCALAPPDATA\io.github.kuyamcliff.pageweave\translate"
           $p = Start-Process -FilePath $setup -ArgumentList "/S", "/D=$dir" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "installer exit $($p.ExitCode)" }
+          if (Test-Path (Join-Path $dir "translate")) { throw "languages were left in the install folder" }
+          $pairs = (Get-Content resources/translate.lock.json | ConvertFrom-Json).pairs
+          foreach ($pair in $pairs) {
+            foreach ($f in $pair.files.PSObject.Properties) {
+              $path = Join-Path $langs "$($pair.source)-$($pair.target)\$($f.Name)"
+              if (-not (Test-Path $path)) { throw "missing after install: $path" }
+              if ((Get-Item $path).Length -ne $f.Value.bytes) { throw "wrong size after install: $path" }
+              if ((Get-FileHash $path -Algorithm SHA256).Hash.ToLower() -ne $f.Value.sha256) { throw "wrong checksum after install: $path" }
+            }
+          }
+          Write-Host "all $($pairs.Count) language directions are in the user folder and match their checksums"
           $exe = Get-ChildItem $dir -Filter *.exe | Where-Object { $_.Name -notlike "uninstall*" } | Select-Object -First 1
           $fixture = Join-Path $env:RUNNER_TEMP "smoke input.pdf"
           Copy-Item fixtures/pdf/five-pages.pdf $fixture
@@ -122,11 +158,18 @@ jobs:
           $log = Get-ChildItem -Recurse "$env:LOCALAPPDATA\io.github.kuyamcliff.pageweave" -Filter pageweave.jsonl | Select-Object -First 1
           $lines = Get-Content $log.FullName
           if (-not ($lines | Select-String '"event":"open".*"ok":true.*"pages":5')) { $lines | Write-Host; throw "document did not open in the installed app" }
-          Stop-Process -Id $app.Id -Force
+          # The small installer, as the app runs it for an update, over the full install: the program
+          # is replaced, the languages stay.
+          $u = Start-Process -FilePath $update -ArgumentList "/P", "/UPDATE", "/D=$dir" -PassThru
+          if (-not $u.WaitForExit(300000)) { throw "update installer did not finish in 5 minutes" }
+          if ($u.ExitCode -ne 0) { throw "update installer exit $($u.ExitCode)" }
+          if ($app.HasExited -eq $false) { throw "the running app was not closed by the update" }
+          if (-not (Test-Path (Join-Path $langs "en-de\encoder.onnx"))) { throw "the update removed the languages" }
+          Get-Process pageweave-app -ErrorAction SilentlyContinue | Stop-Process -Force
           Start-Sleep -Seconds 2
           $un = Get-ChildItem $dir -Filter "uninstall*.exe" | Select-Object -First 1
           Start-Process -FilePath $un.FullName -ArgumentList "/S" -Wait | Out-Null
-          Write-Host "installed release opens documents"
+          Write-Host "full install, languages, document open and update over it all passed"
       - name: Portable command-line package
         run: |
           set -euo pipefail
@@ -139,7 +182,7 @@ jobs:
       - name: Update manifest (latest.json) and release notes
         run: |
           set -euo pipefail
-          SETUP="target/release/bundle/nsis/PageWeave_${VERSION}_x64-setup.exe"
+          SETUP="dist/PageWeave_${VERSION}_x64-update-setup.exe"
           NOTES="docs/releases/v${VERSION}.md"
           test -f "$NOTES" || { echo "::error::$NOTES is missing"; exit 1; }
           python -I - "$SETUP" "$NOTES" <<'PY'
@@ -170,6 +213,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          SETUP="target/release/bundle/nsis/PageWeave_${VERSION}_x64-setup.exe"
+          FULL="dist/PageWeave_${VERSION}_x64-setup.exe"
+          SMALL="dist/PageWeave_${VERSION}_x64-update-setup.exe"
           gh release create "v${VERSION}" --target "$GITHUB_SHA" --title "PageWeave $VERSION" --notes-file "docs/releases/v${VERSION}.md" \
-            "$SETUP" "$SETUP.sig" latest.json "dist/pageweave-cli-${VERSION}-windows-x64.zip"
+            "$FULL" "$FULL.sig" "$SMALL" "$SMALL.sig" latest.json "dist/pageweave-cli-${VERSION}-windows-x64.zip"
