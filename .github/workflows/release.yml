@@ -1,0 +1,159 @@
+name: Release
+
+# Builds, checks, signs and publishes a Windows release when a version tag (v1.2.3) is pushed.
+# The installer is signed with the update key (decision D-024); `latest.json` tells installed copies
+# about it, and they download only the new installer — downloaded languages and settings are kept.
+#
+# One-time setup (repository settings):
+#   secret   TAURI_SIGNING_PRIVATE_KEY           the private key from `npx @tauri-apps/cli signer generate`
+#   secret   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  its password
+#   variable TAURI_UPDATER_PUBKEY                the matching public key (built into the app)
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: Build, verify, sign and publish (Windows x64)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      PAGEWEAVE_UPDATE_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag, app and crate versions agree; signing is configured
+        env:
+          HAS_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+        run: |
+          set -euo pipefail
+          V="${GITHUB_REF_NAME#v}"
+          APP=$(python -I -c "import json; print(json.load(open('app/src-tauri/tauri.conf.json'))['version'])")
+          CRATE=$(python -I -c "import tomllib; print(tomllib.load(open('Cargo.toml','rb'))['workspace']['package']['version'])")
+          NPM=$(python -I -c "import json; print(json.load(open('app/package.json'))['version'])")
+          echo "tag $V, app $APP, crates $CRATE, ui $NPM"
+          test "$V" = "$APP" && test "$V" = "$CRATE" && test "$V" = "$NPM" || { echo "::error::Version mismatch: set $V everywhere before tagging"; exit 1; }
+          test "$HAS_KEY" = "true" || { echo "::error::Secret TAURI_SIGNING_PRIVATE_KEY is not set"; exit 1; }
+          test -n "$PAGEWEAVE_UPDATE_PUBKEY" || { echo "::error::Variable TAURI_UPDATER_PUBKEY is not set"; exit 1; }
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Fetch pinned PDFium (checksum verified)
+        run: python -I tools/fetch_pdfium.py --platform win-x64
+      - name: Fetch pinned OCR runtime and models (checksum verified)
+        run: python -I tools/fetch_ocr.py --platform win-x64
+      - name: UI install, tests and build
+        working-directory: app
+        run: |
+          npm ci --no-audit --no-fund
+          npx vitest run
+      - name: Build the installers (NSIS + MSI) with the update key built in
+        working-directory: app
+        run: npx tauri build
+      - name: Build the release CLI (same key)
+        run: cargo build --release -p pw-cli
+      - name: Sign the installer for this version
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          SETUP="target/release/bundle/nsis/PageWeave_${VERSION}_x64-setup.exe"
+          test -f "$SETUP" || { ls target/release/bundle/nsis; echo "::error::$SETUP not built"; exit 1; }
+          rm -f "$SETUP.sig"
+          (cd app && npx tauri signer sign --app-version "$VERSION" "../$SETUP")
+          test -s "$SETUP.sig"
+      - name: The app's own check accepts the signature; a wrong version is refused
+        run: |
+          set -euo pipefail
+          SETUP="target/release/bundle/nsis/PageWeave_${VERSION}_x64-setup.exe"
+          ./target/release/pageweave.exe update --verify "$SETUP" --signature "$SETUP.sig" --version "$VERSION"
+          set +e; ./target/release/pageweave.exe update --verify "$SETUP" --signature "$SETUP.sig" --version "0.0.0-not-this"; code=$?; set -e
+          test "$code" != 0 || { echo "::error::a signature for $VERSION was accepted as another version"; exit 1; }
+      - name: Install silently, launch, open a document, uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $setup = "target/release/bundle/nsis/PageWeave_$($env:VERSION)_x64-setup.exe"
+          $dir = Join-Path $env:RUNNER_TEMP "PageWeave Install"
+          $p = Start-Process -FilePath $setup -ArgumentList "/S", "/D=$dir" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "installer exit $($p.ExitCode)" }
+          $exe = Get-ChildItem $dir -Filter *.exe | Where-Object { $_.Name -notlike "uninstall*" } | Select-Object -First 1
+          $fixture = Join-Path $env:RUNNER_TEMP "smoke input.pdf"
+          Copy-Item fixtures/pdf/five-pages.pdf $fixture
+          $app = Start-Process -FilePath $exe.FullName -ArgumentList "`"$fixture`"" -PassThru
+          Start-Sleep -Seconds 20
+          if ($app.HasExited) { throw "app exited early with code $($app.ExitCode)" }
+          $log = Get-ChildItem -Recurse "$env:LOCALAPPDATA\io.github.kuyamcliff.pageweave" -Filter pageweave.jsonl | Select-Object -First 1
+          $lines = Get-Content $log.FullName
+          if (-not ($lines | Select-String '"event":"open".*"ok":true.*"pages":5')) { $lines | Write-Host; throw "document did not open in the installed app" }
+          Stop-Process -Id $app.Id -Force
+          Start-Sleep -Seconds 2
+          $un = Get-ChildItem $dir -Filter "uninstall*.exe" | Select-Object -First 1
+          Start-Process -FilePath $un.FullName -ArgumentList "/S" -Wait | Out-Null
+          Write-Host "installed release opens documents"
+      - name: Portable command-line package
+        run: |
+          set -euo pipefail
+          PKG="dist/pageweave-cli-${VERSION}-windows-x64"
+          mkdir -p "$PKG/licenses" "$PKG/ocr"
+          cp target/release/pageweave.exe third_party/pdfium/win-x64/bin/pdfium.dll LICENSE THIRD_PARTY_NOTICES.md "$PKG/"
+          cp third_party/ocr/win-x64/{onnxruntime.dll,det.onnx,rec.onnx,rec_dict.txt} "$PKG/ocr/"
+          cp -r third_party/licenses/pdfium third_party/licenses/onnxruntime third_party/licenses/ppocr third_party/licenses/opus-mt "$PKG/licenses/"
+          (cd dist && 7z a -tzip -bso0 "pageweave-cli-${VERSION}-windows-x64.zip" "pageweave-cli-${VERSION}-windows-x64")
+      - name: Update manifest (latest.json) and release notes
+        run: |
+          set -euo pipefail
+          SETUP="target/release/bundle/nsis/PageWeave_${VERSION}_x64-setup.exe"
+          NOTES="docs/releases/v${VERSION}.md"
+          test -f "$NOTES" || { echo "::error::$NOTES is missing"; exit 1; }
+          python -I - "$SETUP" "$NOTES" <<'PY'
+          import hashlib, json, os, sys, datetime
+          setup, notes_path = sys.argv[1], sys.argv[2]
+          v = os.environ["VERSION"]
+          data = open(setup, "rb").read()
+          notes = open(notes_path, encoding="utf-8").read().strip()
+          name = os.path.basename(setup)
+          manifest = {
+              "version": v,
+              "notes": notes,
+              "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "platforms": {
+                  "windows-x86_64": {
+                      "url": f"https://github.com/kuyamcliff/pageweave/releases/download/v{v}/{name}",
+                      "signature": open(setup + ".sig", encoding="utf-8").read().strip(),
+                      "size": len(data),
+                      "sha256": hashlib.sha256(data).hexdigest(),
+                  }
+              },
+          }
+          open("latest.json", "w", encoding="utf-8").write(json.dumps(manifest, indent=2))
+          print(json.dumps({k: manifest[k] for k in ("version", "pub_date")}), len(data), "bytes")
+          PY
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SETUP="target/release/bundle/nsis/PageWeave_${VERSION}_x64-setup.exe"
+          MSI=$(ls target/release/bundle/msi/*.msi | head -n 1)
+          gh release create "$GITHUB_REF_NAME" --title "PageWeave $VERSION" --notes-file "docs/releases/v${VERSION}.md" \
+            "$SETUP" "$SETUP.sig" "$MSI" latest.json "dist/pageweave-cli-${VERSION}-windows-x64.zip"

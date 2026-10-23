@@ -2916,6 +2916,31 @@ await test("settings ▸ resources: PDF engine and text recognition verified aga
   });
 });
 
+await test("settings ▸ updates: check now reads the release page; the startup check setting is saved", async () => {
+  await withApp([], async (s) => {
+    await s.keys(["Control", ","]);
+    await s.waitFor("#tab-updates");
+    await s.click("#tab-updates");
+    await s.waitUntil(async () => /PageWeave \d+\.\d+\.\d+/.test(await s.text('[data-testid="updates-panel"] strong')), "version shown");
+    await s.click('[data-testid="updates-check"]');
+    // Up to date, or (when this build is older than the newest release) an offer; never an error.
+    await s.waitUntil(async () => /up to date|is available/.test(await s.text('[data-testid="updates-status"]')), "check answered", 60000);
+    assert(!(await s.exec("return !!document.querySelector('[data-testid=updates-status] [role=alert]')")), "no error");
+    assert((await s.exec("return document.querySelector('[data-testid=updates-auto]').checked")) === true, "on by default");
+    await s.click('[data-testid="updates-auto"]');
+    await axeCheck(s, "settings-updates");
+    await s.click('[role="dialog"] .btn.primary');
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('#tab-updates')")), "saved and closed");
+    await s.keys(["Control", ","]);
+    await s.waitFor("#tab-updates");
+    await s.click("#tab-updates");
+    await s.waitFor('[data-testid="updates-auto"]');
+    assert((await s.exec("return document.querySelector('[data-testid=updates-auto]').checked")) === false, "setting kept");
+    await s.click('[data-testid="updates-auto"]');
+    await s.click('[role="dialog"] .btn.primary');
+  });
+});
+
 await test("engine crash on a damaged file fails the job with a reason; the app stays open and keeps working", async () => {
   const src = join(FIX, "..", "hostile", "redact-generate-content-crash.pdf");
   const out = join(work, "crash-redacted.pdf");

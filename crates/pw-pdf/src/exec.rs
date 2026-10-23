@@ -545,6 +545,28 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(w);
             (vec![out(&c, Some(report.pages))], serde_json::to_value(&report).unwrap_or_default())
         }
+        Operation::InstallTranslation { source, target } => {
+            let byte_progress = |done: u64, total: u64| {
+                if let Some(c) = ctx {
+                    c.set_progress(done, total, "bytes");
+                }
+            };
+            let bytes = pw_translate::install::download_size(source, target)?;
+            let dir = pw_translate::install::install(source, target, &cancelled, &byte_progress)?;
+            (
+                vec![],
+                serde_json::json!({ "source": source, "target": target, "downloaded_bytes": bytes, "folder": dir }),
+            )
+        }
+        Operation::DownloadUpdate { version } => {
+            let byte_progress = |done: u64, total: u64| {
+                if let Some(c) = ctx {
+                    c.set_progress(done, total, "bytes");
+                }
+            };
+            let path = pw_update::download(env!("CARGO_PKG_VERSION"), version, &cancelled, &byte_progress)?;
+            (vec![], serde_json::json!({ "version": version, "installer": path }))
+        }
         Operation::TranslateDocument { input, pages, source, target, output } => {
             let page_progress = |done: u64, total: u64| {
                 if let Some(c) = ctx {

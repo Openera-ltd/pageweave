@@ -22,6 +22,8 @@ import type {
   ReadingPage,
   SpeechInfo,
   TranslationDirection,
+  UpdateInfo,
+  AvailableUpdate,
   Spoken,
   RecoveredJob,
   SanitizeFindings,
@@ -86,8 +88,18 @@ export interface Api {
   pickOfficeFile(): Promise<string | null>;
   /** The installed LibreOffice ("LibreOffice 24.2…"), or null. */
   officeEngine(): Promise<string | null>;
+  /** This version and whether it can install updates itself. */
+  updateInfo(): Promise<UpdateInfo>;
+  /** A newer published version, or null when this is the newest. */
+  checkForUpdate(): Promise<AvailableUpdate | null>;
+  /** Run the downloaded update's installer and close PageWeave (it starts again afterwards). */
+  installUpdate(version: string): Promise<void>;
+  /** Open the project's releases page in the browser. */
+  openReleasesPage(): Promise<void>;
   /** Translation directions and whether each model is installed. */
   translationDirections(): Promise<TranslationDirection[]>;
+  /** The language of a document's first pages (null when unclear). */
+  detectLanguage(docId: number): Promise<string | null>;
   /** The speech engine and its voices (fails with speech.unavailable when there is none). */
   speechInfo(): Promise<SpeechInfo>;
   /** One page's text in reading order with word positions. */
@@ -178,7 +190,12 @@ export const tauriApi: Api = {
   },
   officeEngine: () => invoke("office_engine"),
   speechInfo: () => invoke("speech_info"),
+  updateInfo: () => invoke("update_info"),
+  checkForUpdate: () => invoke("check_for_update"),
+  installUpdate: (version) => invoke("install_update", { version }),
+  openReleasesPage: () => invoke("open_releases_page"),
   translationDirections: () => invoke("translation_directions"),
+  detectLanguage: (docId) => invoke("detect_language", { docId }),
   readingText: (docId, page) => invoke("reading_text", { docId, page }),
   speakText: (text, voice, rate) => invoke("speak_text", { text, voice, rate }),
   pickCertificateFile: async () => {

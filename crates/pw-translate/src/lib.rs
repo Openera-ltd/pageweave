@@ -7,6 +7,7 @@
 //! cap ends a sentence); line breaks are kept. Nothing leaves the computer.
 
 pub mod detect;
+pub mod install;
 pub mod tokenizer;
 
 use ort::session::Session;
@@ -31,6 +32,7 @@ pub const MAX_TEXT_CHARS: usize = 500_000;
 
 #[derive(Debug, Clone, Deserialize)]
 struct LockFile {
+    from: String,
     sha256: String,
     bytes: u64,
 }
@@ -39,6 +41,8 @@ struct LockFile {
 struct LockPair {
     source: String,
     target: String,
+    repository: String,
+    commit: String,
     files: HashMap<String, LockFile>,
 }
 
@@ -59,6 +63,8 @@ pub struct Direction {
     pub source: String,
     pub target: String,
     pub installed: bool,
+    /// Size of the model download (bytes).
+    pub bytes: u64,
 }
 
 fn engine_err(e: impl std::fmt::Display) -> PwError {
@@ -71,7 +77,9 @@ fn missing(pair: &str) -> PwError {
         "translate.missing",
         format!("The translation model for {pair} is not installed."),
     )
-    .with_action("Reinstall PageWeave to add it.")
+    .with_action(
+        "Download it when translating (File ▸ Translate…), or run `pageweave translate --install SOURCE-TARGET`.",
+    )
 }
 
 fn corrupt(pair: &str, file: &str) -> PwError {
@@ -80,7 +88,29 @@ fn corrupt(pair: &str, file: &str) -> PwError {
         "translate.corrupt",
         format!("The translation model for {pair} is damaged ({file})."),
     )
-    .with_action("Reinstall PageWeave to repair it.")
+    .with_action("Download it again (File ▸ Translate…, or `pageweave translate --install SOURCE-TARGET`).")
+}
+
+/// Folders that may hold one folder per direction (`en-de/`, …), searched in order: models shipped
+/// next to the executable, the development install (debug builds), and the user's downloads.
+pub fn roots() -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = default_resource_dir().into_iter().collect();
+    if let Some(u) = install::user_dir() {
+        if !v.contains(&u) {
+            v.push(u);
+        }
+    }
+    v
+}
+
+/// The folder of an installed direction (every pinned file present at its pinned size; the full
+/// checksum is verified when the model is loaded).
+pub fn pair_dir(source: &str, target: &str) -> Option<PathBuf> {
+    let p = lock().ok()?.pairs.into_iter().find(|p| p.source == source && p.target == target)?;
+    roots()
+        .into_iter()
+        .map(|r| r.join(format!("{source}-{target}")))
+        .find(|d| p.files.iter().all(|(n, f)| std::fs::metadata(d.join(n)).is_ok_and(|m| m.len() == f.bytes)))
 }
 
 /// The folder holding one folder per direction (`en-de/`, …): `translate/` next to the executable
@@ -121,15 +151,20 @@ pub struct FileCheck {
     pub bytes: u64,
 }
 
-/// Check every file of every pinned direction in `dir` (reads each file once; loads nothing).
-pub fn check_files(dir: &Path) -> PwResult<Vec<FileCheck>> {
+/// Check every file of every installed direction (reads each file once; loads nothing). Directions
+/// not downloaded are not listed.
+pub fn check_files() -> PwResult<Vec<FileCheck>> {
     let mut out = Vec::new();
     for p in lock()?.pairs {
         let pair = format!("{}-{}", p.source, p.target);
+        // Only complete downloads: an interrupted one is "not downloaded yet", not damage.
+        let Some(dir) = pair_dir(&p.source, &p.target) else {
+            continue;
+        };
         let mut names: Vec<&String> = p.files.keys().collect();
         names.sort();
         for name in names {
-            let path = dir.join(&pair).join(name);
+            let path = dir.join(name);
             let Ok(meta) = std::fs::metadata(&path) else {
                 out.push(FileCheck { name: format!("{pair}/{name}"), matches: None, bytes: 0 });
                 continue;
@@ -142,21 +177,15 @@ pub fn check_files(dir: &Path) -> PwResult<Vec<FileCheck>> {
     Ok(out)
 }
 
-/// The directions PageWeave offers, with whether each one's files are present (sizes only; the
-/// full check happens before a model is first used).
+/// The directions PageWeave offers, with whether each one is installed and its download size.
 pub fn directions() -> PwResult<Vec<Direction>> {
-    let dir = default_resource_dir();
     Ok(lock()?
         .pairs
         .into_iter()
         .map(|p| {
-            let installed = dir.as_ref().is_some_and(|d| {
-                p.files.iter().all(|(n, f)| {
-                    std::fs::metadata(d.join(format!("{}-{}", p.source, p.target)).join(n))
-                        .is_ok_and(|m| m.len() == f.bytes)
-                })
-            });
-            Direction { source: p.source, target: p.target, installed }
+            let installed = pair_dir(&p.source, &p.target).is_some();
+            let bytes = p.files.values().map(|f| f.bytes).sum();
+            Direction { source: p.source, target: p.target, installed, bytes }
         })
         .collect())
 }
@@ -404,7 +433,8 @@ pub fn with_translator<T>(source: &str, target: &str, f: impl FnOnce(&mut Transl
     let mut guard = cell.lock().unwrap_or_else(|p| p.into_inner());
     if guard.as_ref().map(|(p, _)| p != &pair).unwrap_or(true) {
         *guard = None;
-        let dir = default_resource_dir().ok_or_else(|| missing(&pair))?;
+        let dir =
+            pair_dir(source, target).and_then(|d| d.parent().map(Path::to_path_buf)).ok_or_else(|| missing(&pair))?;
         *guard = Some((pair.clone(), Translator::load(&dir, source, target)?));
     }
     match guard.as_mut() {

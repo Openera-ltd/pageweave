@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/pw-core", "crates/pw-pdf", "crates/pw-ocr", "crates/pw-speech", "crates/pw-translate", "crates/pw-cli", "crates/pw-mcp", "app/src-tauri"]
+members = ["crates/pw-core", "crates/pw-pdf", "crates/pw-ocr", "crates/pw-speech", "crates/pw-translate", "crates/pw-net", "crates/pw-update", "crates/pw-cli", "crates/pw-mcp", "app/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
@@ -55,6 +55,8 @@ pw-pdf = { path = "crates/pw-pdf" }
 pw-ocr = { path = "crates/pw-ocr" }
 pw-speech = { path = "crates/pw-speech" }
 pw-translate = { path = "crates/pw-translate" }
+pw-net = { path = "crates/pw-net" }
+pw-update = { path = "crates/pw-update" }
 pw-mcp = { path = "crates/pw-mcp" }
 
 [workspace.lints.rust]

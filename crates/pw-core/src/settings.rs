@@ -63,6 +63,13 @@ pub struct Settings {
     /// Read aloud speed, 0.5–2.0.
     #[serde(default = "normal_rate")]
     pub read_rate: f64,
+    /// Look for a newer version when the app starts (D-024; reads this project's release page).
+    #[serde(default = "yes")]
+    pub check_updates: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 fn normal_rate() -> f64 {
@@ -85,6 +92,7 @@ impl Default for Settings {
             restore_session: true,
             read_voice: None,
             read_rate: 1.0,
+            check_updates: true,
         }
     }
 }
@@ -190,6 +198,9 @@ impl Settings {
             } else {
                 bad.push("read_rate".into());
             }
+        }
+        if let Some(x) = field(obj, "check_updates", &mut bad) {
+            s.check_updates = x;
         }
         (s, bad)
     }

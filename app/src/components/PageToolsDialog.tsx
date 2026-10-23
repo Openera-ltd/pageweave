@@ -4,7 +4,8 @@ import { useApi } from "../api";
 import { basename, dirname, join, siblingOutput, stem } from "../paths";
 import { toPwError, type AnnotationChange, type AnnotationSpec, type BookmarkInfo, type CollisionPolicy, type FieldValue, type PageEdit, type StampPosition, type JobSnapshot, type WatermarkLayer, type OpenedDoc, type Operation, type PwError, type TranslationDirection } from "../types";
 import { Dialog, useDebounced } from "./ui";
-import { availability, languageName, languages } from "../translate";
+import { languageName, languages, route } from "../translate";
+import { TranslationDownload } from "./TranslationDownload";
 
 export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop" | "text" | "word" | "slides" | "audio" | "translate" | "tables" | "optimize" | "deskew" | "extractImages" | "orient";
 
@@ -170,6 +171,8 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   const [trFormat, setTrFormat] = useState<"docx" | "txt">("docx");
   const [trDirs, setTrDirs] = useState<TranslationDirection[] | null>(null);
   const [trDirsError, setTrDirsError] = useState<string | null>(null);
+  const [trDetected, setTrDetected] = useState<string | null | undefined>(undefined);
+  const [trDirsNonce, setTrDirsNonce] = useState(0);
   useEffect(() => {
     if (tool !== "translate") return;
     let live = true;
@@ -180,7 +183,21 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
     return () => {
       live = false;
     };
-  }, [api, tool]);
+  }, [api, tool, trDirsNonce]);
+  // The document's language, for "Detect automatically" (null: could not tell).
+  useEffect(() => {
+    if (tool !== "translate") return;
+    let live = true;
+    api.detectLanguage(doc.doc_id).then(
+      (l) => live && setTrDetected(l),
+      () => live && setTrDetected(null),
+    );
+    return () => {
+      live = false;
+    };
+  }, [api, tool, doc.doc_id]);
+  const trSource = trFrom ?? trDetected ?? null;
+  const trRoute = trDirs && trSource ? route(trDirs, trSource, trTo) : null;
   const [imagePreset, setImagePreset] = useState("standard");
   /** Tools that write several files into a folder rather than one new PDF. */
   const toFolder = tool === "split" || tool === "images" || tool === "extractImages" || (tool === "tables" && sheetFormat === "csv");
@@ -296,8 +313,10 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
     if (tool === "translate") {
       if (trDirsError) return trDirsError;
       if (!trDirs) return "Checking the installed languages…";
-      const a = availability(trDirs, trFrom, trTo);
-      if (a !== true && a !== "via-english") return a;
+      if (!trFrom && trDetected === undefined) return "Recognizing the document's language…";
+      if (!trSource) return "The document's language could not be recognized: choose it under From.";
+      if (typeof trRoute === "string") return trRoute;
+      if (trRoute && trRoute.needs.length) return "Download the language first.";
     }
     if (!output.trim()) return toFolder ? "Choose an output folder." : "Choose where to save the new file.";
     return null;
@@ -663,7 +682,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
                 disabled={!trDirs}
                 onChange={(e) => setTrFrom(e.target.value || null)}
               >
-                <option value="">Detect automatically</option>
+                <option value="">{trDetected ? `Detect automatically (${languageName(trDetected)})` : "Detect automatically"}</option>
                 {languages(trDirs ?? []).map((l) => (
                   <option key={l} value={l}>
                     {languageName(l)}
@@ -692,8 +711,11 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
               </select>
             </label>
           </div>
-          {trDirs && trFrom && availability(trDirs, trFrom, trTo) === "via-english" && (
+          {trRoute && typeof trRoute !== "string" && trRoute.viaEnglish && (
             <span className="hint" data-testid="translate-via">Translated through English (no direct model for this pair).</span>
+          )}
+          {trRoute && typeof trRoute !== "string" && trRoute.needs.length > 0 && (
+            <TranslationDownload key={trRoute.needs.map((d) => `${d.source}-${d.target}`).join(",")} needs={trRoute.needs} jobs={jobs} onDone={() => setTrDirsNonce((n) => n + 1)} />
           )}
           <div className="field">
             <span className="label" id="translate-format-label">Save as</span>

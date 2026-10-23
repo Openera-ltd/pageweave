@@ -3,8 +3,9 @@ import { useApi } from "../api";
 import { formatBytes } from "../format";
 import { COMMANDS, bindingConflicts, effectiveBindings, type CommandId } from "../commands";
 import { eventToShortcut, validateShortcut } from "../shortcuts";
-import { toPwError, type Density, type Motion, type PwError, type ResourceReport, type Settings, type Theme } from "../types";
+import { toPwError, type AvailableUpdate, type Density, type Motion, type PwError, type ResourceReport, type Settings, type Theme } from "../types";
 import { Dialog } from "./ui";
+import { UpdatesPanel } from "./UpdatesPanel";
 
 export const ACCENTS = ["#2f6fde", "#0f7b8a", "#1c7c3d", "#7a4ddb", "#c2410c", "#b42318", "#4b5563"];
 
@@ -18,7 +19,9 @@ export const DEFAULT_APPEARANCE: Pick<Settings, "theme" | "accent" | "density" |
 
 interface Props {
   initial: Settings;
-  initialTab?: "appearance" | "shortcuts" | "resources";
+  initialTab?: "appearance" | "shortcuts" | "resources" | "updates";
+  /** An update found at startup. */
+  knownUpdate?: AvailableUpdate | null;
   /** Live preview: apply without saving. */
   onPreview: (s: Settings) => void;
   onSave: (s: Settings) => Promise<void>;
@@ -44,7 +47,7 @@ function Segmented<T extends string>({ label, value, options, onChange }: { labe
   );
 }
 
-export function SettingsDialog({ initial, initialTab = "appearance", onPreview, onSave, onCancel }: Props) {
+export function SettingsDialog({ initial, initialTab = "appearance", knownUpdate, onPreview, onSave, onCancel }: Props) {
   const [s, setS] = useState<Settings>(initial);
   const [tab, setTab] = useState(initialTab);
   const [customAccent, setCustomAccent] = useState(ACCENTS.includes(initial.accent) ? "" : initial.accent);
@@ -100,6 +103,9 @@ export function SettingsDialog({ initial, initialTab = "appearance", onPreview, 
         <button type="button" role="tab" id="tab-resources" aria-controls="panel-resources" aria-selected={tab === "resources"} onClick={() => setTab("resources")}>
           Resources
         </button>
+        <button type="button" role="tab" id="tab-updates" aria-controls="panel-updates" aria-selected={tab === "updates"} onClick={() => setTab("updates")}>
+          Updates
+        </button>
       </div>
 
       {tab === "appearance" && (
@@ -143,6 +149,12 @@ export function SettingsDialog({ initial, initialTab = "appearance", onPreview, 
       {tab === "resources" && (
         <div role="tabpanel" id="panel-resources" aria-labelledby="tab-resources">
           <ResourcesPanel />
+        </div>
+      )}
+
+      {tab === "updates" && (
+        <div role="tabpanel" id="panel-updates" aria-labelledby="tab-updates">
+          <UpdatesPanel checkOnStart={s.check_updates} onCheckOnStart={(check_updates) => update({ check_updates })} known={knownUpdate} />
         </div>
       )}
 
@@ -316,7 +328,7 @@ function ResourcesPanel() {
         <button type="button" className="btn outline" data-testid="resources-check" aria-disabled={checking ? true : undefined} onClick={() => !checking && check()}>
           {checking ? "Checking…" : "Check again"}
         </button>
-        <span className="hint">These run on this computer; nothing is downloaded.</span>
+        <span className="hint">These run on this computer. Translation languages download once, when first used.</span>
       </div>
     </div>
   );

@@ -174,6 +174,7 @@ export interface Settings {
   /** Read aloud voice id (system default when null) and speed (0.5–2). */
   read_voice: string | null;
   read_rate: number;
+  check_updates: boolean;
 }
 
 export type CollisionPolicy = "fail" | "rename" | "replace";
@@ -336,6 +337,8 @@ export type Operation =
   | { op: "optimize"; input: string; images: { max_dpi: number; quality: number } | null; output: string }
   | { op: "export_text"; input: string; pages: string | null; output: string }
   | { op: "convert_to_docx"; input: string; pages: string | null; output: string }
+  | { op: "install_translation"; source: string; target: string }
+  | { op: "download_update"; version: string }
   | { op: "translate_document"; input: string; pages: string | null; source: string | null; target: string; output: string }
   | { op: "read_aloud_to_wav"; input: string; pages: string | null; voice: string | null; rate: number; output: string }
   | { op: "convert_to_pptx"; input: string; pages: string | null; output: string }
@@ -470,6 +473,24 @@ export interface JobSnapshot {
   elapsed_ms: number;
 }
 
+export interface UpdateInfo {
+  current: string;
+  /** This build carries the release key. */
+  can_install: boolean;
+  /** Updates install on Windows only. */
+  platform_supported: boolean;
+}
+
+export interface AvailableUpdate {
+  version: string;
+  current: string;
+  notes: string;
+  pub_date: string | null;
+  bytes: number;
+  /** Already downloaded and verified. */
+  downloaded: boolean;
+}
+
 export interface AppInfo {
   version: string;
   engine: string;
@@ -587,4 +608,6 @@ export interface TranslationDirection {
   source: string;
   target: string;
   installed: boolean;
+  /** Download size (bytes). */
+  bytes: number;
 }

@@ -690,6 +690,18 @@ pub enum Operation {
         input: PathBuf,
         output: PathBuf,
     },
+    /// Download and verify the translation model for `source` → `target` into the user's data
+    /// folder (writes no document; nothing is run).
+    InstallTranslation {
+        source: String,
+        target: String,
+    },
+    /// Download and verify the installer of a newer PageWeave version into the user's data folder
+    /// (decision D-024). `version` must be the newest published one. Nothing is run; installing
+    /// is a separate step in the desktop app.
+    DownloadUpdate {
+        version: String,
+    },
     /// Translate pages (all when `pages` is absent) with the local translation models into a Word
     /// document (`output` .docx, layout kept) or a text file (.txt). `source` is detected when
     /// absent; language codes are BCP 47 ("en", "de", …).
@@ -1007,6 +1019,8 @@ pub const OPERATION_IDS: &[&str] = &[
     "convert_to_pptx",
     "read_aloud_to_wav",
     "translate_document",
+    "install_translation",
+    "download_update",
     "convert_office_to_pdf",
     "export_tables",
     "optimize",
@@ -1068,6 +1082,8 @@ impl Operation {
             Operation::ConvertToPptx { .. } => "convert_to_pptx",
             Operation::ReadAloudToWav { .. } => "read_aloud_to_wav",
             Operation::TranslateDocument { .. } => "translate_document",
+            Operation::InstallTranslation { .. } => "install_translation",
+            Operation::DownloadUpdate { .. } => "download_update",
             Operation::ConvertOfficeToPdf { .. } => "convert_office_to_pdf",
             Operation::ExportTables { .. } => "export_tables",
             Operation::Optimize { .. } => "optimize",
@@ -1109,12 +1125,15 @@ impl Operation {
                 | Operation::VerifySignatures { .. }
                 | Operation::FindBlankPages { .. }
                 | Operation::ListPageObjects { .. }
+                | Operation::InstallTranslation { .. }
+                | Operation::DownloadUpdate { .. }
         )
     }
 
     /// All input paths, used to protect sources from being overwritten.
     pub fn inputs(&self) -> Vec<PathBuf> {
         match self {
+            Operation::InstallTranslation { .. } | Operation::DownloadUpdate { .. } => Vec::new(),
             Operation::Merge { inputs, .. } | Operation::ImagesToPdf { inputs, .. } => inputs.clone(),
             Operation::Compare { old, new } => vec![old.clone(), new.clone()],
             // The data file is an input too: never overwritten by the output.
@@ -1205,7 +1224,9 @@ impl Operation {
             | Operation::Compare { .. }
             | Operation::VerifySignatures { .. }
             | Operation::FindBlankPages { .. }
-            | Operation::ListPageObjects { .. } => None,
+            | Operation::ListPageObjects { .. }
+            | Operation::InstallTranslation { .. }
+            | Operation::DownloadUpdate { .. } => None,
             Operation::ExportTables { format: TableFormat::Csv, output, .. } => Some(output.clone()),
             Operation::ExportTables { output, .. } => parent(output),
             Operation::Split { output_dir, .. }
@@ -1328,6 +1349,14 @@ impl Operation {
                 };
                 if !code(target) || source.as_deref().is_some_and(|s| !code(s)) {
                     return Err(PwError::invalid("translate.language", "Choose the languages from the list."));
+                }
+            }
+            Operation::DownloadUpdate { version } => {
+                let ok = !version.is_empty()
+                    && version.len() <= 40
+                    && version.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+'));
+                if !ok {
+                    return Err(PwError::invalid("update.version", "The version to download is not valid."));
                 }
             }
             Operation::ReadAloudToWav { output, rate, .. } => {

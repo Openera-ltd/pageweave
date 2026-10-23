@@ -46,7 +46,7 @@ import { signatureSummary } from "./signatures";
 import { EMPTY_HISTORY as NO_OBJ_EDITS, push as pushObjEdit, redoLast, toPageEdits, undoLast, type ObjEntry, type ObjHistory } from "./objectEdits";
 import { eventToShortcut, isTextEntry } from "./shortcuts";
 import { applyAppearance } from "./theme";
-import { toPwError, type AppInfo, type AttachmentInfo, type CollisionPolicy, type FormField, type FormInfo, type FormValue, type JobSnapshot, type OpenedDoc, type Operation, type PwError, type RecoveredJob, type RedactArea, type SearchHit, type SearchRect, type Settings, type SignatureReport } from "./types";
+import { toPwError, type AppInfo, type AttachmentInfo, type AvailableUpdate, type CollisionPolicy, type FormField, type FormInfo, type FormValue, type JobSnapshot, type OpenedDoc, type Operation, type PwError, type RecoveredJob, type RedactArea, type SearchHit, type SearchRect, type Settings, type SignatureReport } from "./types";
 import { CommandButton, Menu, type MenuItemOrSeparator } from "./components/ui";
 import { Viewer, type ScrollRequest } from "./components/Viewer";
 import { ReadAloudBar, type ReadStart } from "./components/ReadAloudBar";
@@ -88,7 +88,7 @@ interface ViewState {
 
 type DialogState =
   | { kind: "tool"; tool: PageTool; initialPages?: string }
-  | { kind: "settings"; tab: "appearance" | "shortcuts"; original: Settings }
+  | { kind: "settings"; tab: "appearance" | "shortcuts" | "updates"; original: Settings }
   | { kind: "palette" }
   | { kind: "properties" }
   | { kind: "password"; path: string; error: PwError | null }
@@ -128,6 +128,7 @@ const NO_EDITS: FormEdits = {};
 const NO_ANNOT_CHANGES: AnnotChanges = {};
 
 const OPERATION_TITLES: Partial<Record<Operation["op"], string>> = {
+  download_update: "Download update",
   extract_pages: "Extract pages",
   delete_pages: "Delete pages",
   rotate_pages: "Rotate pages",
@@ -298,6 +299,30 @@ export function App() {
     api.appInfo().then(setInfo).catch((e) => notifyError("PageWeave could not start correctly", e));
     api.getSettings().then(setSettings).catch((e) => notifyError("Settings could not be loaded", e));
   }, [api, notifyError]);
+
+  // Look for a newer version once at startup when allowed (D-024). A failed check stays quiet:
+  // Settings ▸ Updates shows errors when the user checks there.
+  const [foundUpdate, setFoundUpdate] = useState<AvailableUpdate | null>(null);
+  const updateChecked = useRef(false);
+  useEffect(() => {
+    if (!settings || updateChecked.current) return;
+    updateChecked.current = true;
+    if (!settings.check_updates) return;
+    api
+      .checkForUpdate()
+      .then((u) => {
+        if (!u) return;
+        setFoundUpdate(u);
+        notify({
+          kind: "info",
+          title: `PageWeave ${u.version} is available`,
+          detail: `You have ${u.current}.`,
+          actions: [{ label: "View update", run: () => setDialog({ kind: "settings", tab: "updates", original: settings }) }],
+          persistent: true,
+        });
+      })
+      .catch(() => undefined);
+  }, [api, settings, notify]);
 
   // Tasks cut off when PageWeave last closed: say so, say what was cleaned up, offer to run again.
   useEffect(() => {
@@ -1600,6 +1625,7 @@ export function App() {
         <SettingsDialog
           initial={dialog.original}
           initialTab={dialog.tab}
+          knownUpdate={foundUpdate}
           onPreview={setPreview}
           onCancel={() => {
             setPreview(null);
