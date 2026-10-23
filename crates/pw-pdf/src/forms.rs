@@ -69,6 +69,9 @@ pub struct FormField {
     pub multiline: bool,
     /// Combo box that also accepts typed text.
     pub editable: bool,
+    /// The value "Reset form" restores (`/DV`), when the document sets one.
+    #[serde(default)]
+    pub default_value: Option<String>,
     pub widgets: Vec<FormWidget>,
 }
 
@@ -458,6 +461,7 @@ impl<'a> FormDoc<'a> {
                     required: flags & FLAG_REQUIRED != 0,
                     multiline: kind == FieldKind::Text && flags & FLAG_MULTILINE != 0,
                     editable: kind == FieldKind::Combo && flags & FLAG_EDIT != 0,
+                    default_value: None,
                     widgets: Vec::new(),
                 }
             });
@@ -547,8 +551,16 @@ pub fn form_fields(path: &Path, password: Option<&str>) -> PwResult<FormInfo> {
     let (_exclusive, lib) = engine_exclusive()?;
     let api = api(lib)?;
     let fd = FormDoc::open(api, path, password)?;
-    let (fields, truncated) = fd.fields()?;
-    Ok(FormInfo { fields, has_xfa: fd.has_xfa(), truncated })
+    let (mut fields, truncated) = fd.fields()?;
+    let has_xfa = fd.has_xfa();
+    drop(fd);
+    if !fields.is_empty() {
+        let mut defaults = crate::formdefaults::field_defaults(path, password);
+        for f in &mut fields {
+            f.default_value = defaults.remove(&f.name);
+        }
+    }
+    Ok(FormInfo { fields, has_xfa, truncated })
 }
 
 /// Fill the form in memory (exclusive engine access, released before returning) and return the
@@ -642,6 +654,20 @@ pub fn apply_edits(
     output: &Path,
     policy: CollisionPolicy,
 ) -> PwResult<(CommittedOutput, Vec<String>)> {
+    apply_edits_protecting(input, password, values, annotations, output, policy, &[input.to_path_buf()])
+}
+
+/// [`apply_edits`] where `protected` lists every file the output may never replace (the input and
+/// any other file the operation read, such as a form data file).
+pub(crate) fn apply_edits_protecting(
+    input: &Path,
+    password: Option<&str>,
+    values: &[FieldValue],
+    annotations: &[AnnotationSpec],
+    output: &Path,
+    policy: CollisionPolicy,
+    protected: &[std::path::PathBuf],
+) -> PwResult<(CommittedOutput, Vec<String>)> {
     let filled = if values.is_empty() { None } else { Some(fill_bytes(input, password, values)?) };
     let (bytes, expected) = if annotations.is_empty() {
         match filled {
@@ -659,7 +685,7 @@ pub fn apply_edits(
     };
 
     let mut out_encrypted = false;
-    let committed = write_atomic_bytes(output, policy, &[input.to_path_buf()], &bytes, |staged| {
+    let committed = write_atomic_bytes(output, policy, protected, &bytes, |staged| {
         // Form check first: it needs exclusive engine access, so no shared access may be held here.
         if !values.is_empty() {
             let info = match form_fields(staged, None) {

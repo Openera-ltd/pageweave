@@ -10,12 +10,16 @@
     "linux-x64": {
       "url": "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7881/pdfium-linux-x64.tgz",
       "sha256": "1470e21b8b4a3b4ad7f85684e2da11d94f3b69a86d81dee11b9b6709d927ac1d",
-      "library": "lib/libpdfium.so"
+      "library": "lib/libpdfium.so",
+      "library_sha256": "f728930966f503652b92acc89b9374a2eeca00ce42e26dccd3e4b5c5161b2d64",
+      "library_bytes": 7645184
     },
     "win-x64": {
       "url": "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7881/pdfium-win-x64.tgz",
       "sha256": "73cc0de638ac2095e7445bf56a38200a5b7c7ca0e9f4ba144598f2457377ac08",
-      "library": "bin/pdfium.dll"
+      "library": "bin/pdfium.dll",
+      "library_sha256": "79d4676b656cfb1abcea88f9ade3b4b0826c5200382db5f4ec72a636c598c118",
+      "library_bytes": 7211520
     }
   }
 }

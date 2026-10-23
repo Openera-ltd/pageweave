@@ -51,7 +51,30 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def download(url: str, target: Path) -> None:
+def download(url: str, target: Path, attempts: int = 4, wait=None) -> None:
+    """Download with retries on network errors and server errors (2, 4, 8 s apart); a client
+    error (4xx) or a size-limit breach fails at once. The checksum is verified afterwards."""
+    import time
+    import urllib.error
+
+    sleep = wait or time.sleep
+    for attempt in range(1, attempts + 1):
+        try:
+            _download_once(url, target)
+            return
+        except urllib.error.HTTPError as e:
+            if e.code < 500 or attempt == attempts:
+                raise
+            err: Exception = e
+        except OSError as e:  # timeouts, refused or reset connections
+            if attempt == attempts:
+                raise
+            err = e
+        print(f"download attempt {attempt} failed ({err}); retrying", file=sys.stderr)
+        sleep(2 ** attempt)
+
+
+def _download_once(url: str, target: Path) -> None:
     req = urllib.request.Request(url, headers={"User-Agent": "pageweave-fetch-pdfium"})
     total = 0
     with urllib.request.urlopen(req, timeout=120) as resp, target.open("wb") as out:
@@ -129,6 +152,10 @@ def main() -> int:
         if not (staging / art["library"]).is_file():
             print(f"error: archive missing {art['library']}", file=sys.stderr)
             return 5
+        lib_sha = sha256_file(staging / art["library"])
+        if "library_sha256" in art and lib_sha != art["library_sha256"]:
+            print(f"error: extracted library checksum mismatch (expected {art['library_sha256']}, got {lib_sha})", file=sys.stderr)
+            return 4
         (staging / ".verified-sha256").write_text(art["sha256"])
         try:
             old = None

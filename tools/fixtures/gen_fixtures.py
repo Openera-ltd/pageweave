@@ -104,9 +104,11 @@ def build_document(pages: list[dict], title: str | None = None, outline: bool = 
     return w.render(catalog, info)
 
 
-def build_form_document() -> bytes:
+def build_form_document(defaults: bool = False) -> bytes:
     """One page with an AcroForm: text, multiline text, checkbox (on-state named /On, not /Yes),
-    a two-button radio group and a combo box, each with appearance streams."""
+    a two-button radio group and a combo box, each with appearance streams. With `defaults`, the
+    same form with default values (/DV) for every field except the comments, for Reset form."""
+    dv = (lambda v: f" /DV {v}") if defaults else (lambda v: "")
     w = PdfWriter()
     catalog, pages_obj, page = w.reserve(), w.reserve(), w.reserve()
     font = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
@@ -127,13 +129,13 @@ def build_form_document() -> bytes:
 
     # Text field
     name_ap = xobj(250, 20, box(250, 20))
-    name = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Tx /T (full_name) /TU (Full name) /Rect [150 666 400 686] "
+    name = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Tx /T (full_name) /TU (Full name) /Rect [150 666 400 686]{dv('(Jane Doe)')} "
                  f"/F 4 /P {page} 0 R /DA (/Helv 12 Tf 0 g) /V () /AP << /N {name_ap} 0 R >> /MK << /BC [0.4 0.4 0.4] >> >>")
     annots.append(name); fields.append(name)
 
     # Checkbox, on-state "On"
     cb_on, cb_off = xobj(14, 14, box(14, 14) + " " + cross), xobj(14, 14, box(14, 14))
-    cb = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Btn /T (subscribe) /TU (Subscribe) /Rect [150 628 164 642] "
+    cb = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Btn /T (subscribe) /TU (Subscribe) /Rect [150 628 164 642]{dv('/On')} "
                f"/F 4 /P {page} 0 R /V /Off /AS /Off /AP << /N << /On {cb_on} 0 R /Off {cb_off} 0 R >> >> /MK << /CA (8) >> >>")
     annots.append(cb); fields.append(cb)
 
@@ -146,13 +148,13 @@ def build_form_document() -> bytes:
         kid = w.add(f"<< /Type /Annot /Subtype /Widget /Parent {plan} 0 R /Rect [{x} 588 {x + 14} 602] /F 4 /P {page} 0 R "
                     f"/AS /Off /AP << /N << /{opt} {on} 0 R /Off {off} 0 R >> >> /MK << /CA (l) >> >>")
         kids.append(kid); annots.append(kid)
-    w.set(plan, f"<< /FT /Btn /Ff 49152 /T (plan) /TU (Plan) /V /Off /Kids [{' '.join(f'{k} 0 R' for k in kids)}] >>")
+    w.set(plan, f"<< /FT /Btn /Ff 49152 /T (plan) /TU (Plan) /V /Off{dv('/pro')} /Kids [{' '.join(f'{k} 0 R' for k in kids)}] >>")
     fields.append(plan)
 
     # Combo box
     combo_ap = xobj(150, 20, box(150, 20) + " /Tx BMC BT /Helv 12 Tf 0 g 4 5 Td (Canada) Tj ET EMC")
     combo = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Ch /Ff 131072 /T (country) /TU (Country) /Rect [150 546 300 566] "
-                  f"/F 4 /P {page} 0 R /Opt [(Canada) (Germany) (Japan)] /V (Canada) /DA (/Helv 12 Tf 0 g) "
+                  f"/F 4 /P {page} 0 R /Opt [(Canada) (Germany) (Japan)] /V (Canada){dv('(Japan)')} /DA (/Helv 12 Tf 0 g) "
                   f"/AP << /N {combo_ap} 0 R >> >>")
     annots.append(combo); fields.append(combo)
 
@@ -168,6 +170,66 @@ def build_form_document() -> bytes:
     acro = f"<< /Fields [{' '.join(f'{f} 0 R' for f in fields)}] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv {font} 0 R >> >> >>"
     w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R /AcroForm {acro} >>")
     info = w.add("<< /Title (Form fixture) /Author (PageWeave fixtures) /Producer (gen_fixtures.py) >>")
+    return w.render(catalog, info)
+
+
+def build_nested_form_document() -> bytes:
+    """One page with a hierarchical AcroForm for form data import/export: applicant.name and
+    applicant.address.city (terminal fields under non-terminal parents), a read-only text field
+    holding R-1001, a list box (Red/Green/Blue), a checkbox whose on-state is /Yes and a push button."""
+    w = PdfWriter()
+    catalog, pages_obj, page = w.reserve(), w.reserve(), w.reserve()
+    font = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    labels = text_page_content(["Nested form fixture PWNESTFORM", "", "Name", "", "City", "", "Reference",
+                                "", "Colour", "", "", "", "Agree"], size=12, x=40, y=740, leading=20)
+    content = w.stream(labels)
+
+    def xobj(width: float, height: float, ops: str) -> int:
+        data = ops.encode("latin-1")
+        return w.add(b"<< /Type /XObject /Subtype /Form /BBox [0 0 %g %g] /Resources << /Font << /Helv %d 0 R >> >> /Length %d >>\nstream\n"
+                     % (width, height, font, len(data)) + data + b"\nendstream")
+
+    box = lambda width, height: f"0.4 0.4 0.4 RG 1 w 0.5 0.5 {width - 1} {height - 1} re S"
+    annots = []
+
+    applicant, address = w.reserve(), w.reserve()
+    name_ap = xobj(250, 20, box(250, 20))
+    name = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Tx /Parent {applicant} 0 R /T (name) /TU (Applicant name) "
+                 f"/Rect [150 706 400 726] /F 4 /P {page} 0 R /DA (/Helv 12 Tf 0 g) /V () /AP << /N {name_ap} 0 R >> >>")
+    city_ap = xobj(250, 20, box(250, 20))
+    city = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Tx /Parent {address} 0 R /T (city) /TU (City) "
+                 f"/Rect [150 666 400 686] /F 4 /P {page} 0 R /DA (/Helv 12 Tf 0 g) /V () /AP << /N {city_ap} 0 R >> >>")
+    w.set(address, f"<< /T (address) /Parent {applicant} 0 R /Kids [{city} 0 R] >>")
+    w.set(applicant, f"<< /T (applicant) /Kids [{name} 0 R {address} 0 R] >>")
+    annots += [name, city]
+
+    ref_ap = xobj(150, 20, box(150, 20) + " /Tx BMC BT /Helv 12 Tf 0 g 4 5 Td (R-1001) Tj ET EMC")
+    ref = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Tx /Ff 1 /T (ref_no) /TU (Reference) /Rect [150 626 300 646] "
+                f"/F 4 /P {page} 0 R /DA (/Helv 12 Tf 0 g) /V (R-1001) /AP << /N {ref_ap} 0 R >> >>")
+    annots.append(ref)
+
+    list_ap = xobj(150, 60, box(150, 60))
+    colours = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Ch /T (colour) /TU (Colour) /Rect [150 546 300 606] "
+                    f"/F 4 /P {page} 0 R /Opt [(Red) (Green) (Blue)] /DA (/Helv 12 Tf 0 g) /AP << /N {list_ap} 0 R >> >>")
+    annots.append(colours)
+
+    on, off = xobj(14, 14, box(14, 14) + " 0 0 0 RG 1.5 w 3 3 m 11 11 l S 3 11 m 11 3 l S"), xobj(14, 14, box(14, 14))
+    agree = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Btn /T (agree) /TU (Agree) /Rect [150 488 164 502] "
+                  f"/F 4 /P {page} 0 R /V /Off /AS /Off /AP << /N << /Yes {on} 0 R /Off {off} 0 R >> >> >>")
+    annots.append(agree)
+
+    button_ap = xobj(80, 20, box(80, 20))
+    button = w.add(f"<< /Type /Annot /Subtype /Widget /FT /Btn /Ff 65536 /T (submit) /Rect [150 440 230 460] "
+                   f"/F 4 /P {page} 0 R /AP << /N {button_ap} 0 R >> >>")
+    annots.append(button)
+
+    w.set(page, f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 {font} 0 R >> >> "
+                f"/Contents {content} 0 R /Annots [{' '.join(f'{a} 0 R' for a in annots)}] >>")
+    w.set(pages_obj, f"<< /Type /Pages /Kids [{page} 0 R] /Count 1 >>")
+    fields = [applicant, ref, colours, agree, button]
+    acro = f"<< /Fields [{' '.join(f'{f} 0 R' for f in fields)}] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv {font} 0 R >> >> >>"
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R /AcroForm {acro} >>")
+    info = w.add("<< /Title (Nested form fixture) /Author (PageWeave fixtures) /Producer (gen_fixtures.py) >>")
     return w.render(catalog, info)
 
 
@@ -559,6 +621,121 @@ def build_blank_pages_document() -> bytes:
     return w.render(catalog, w.add("<< /Title (Blank pages) >>"))
 
 
+def build_tables_document() -> bytes:
+    """Two pages of ruled tables for table export: a header cell merged across two columns,
+    values a spreadsheet could corrupt (leading zeros, long identifiers, grouped amounts, dates,
+    trailing zeros), a cell merged down two rows, and body text around the tables."""
+    w = PdfWriter()
+    catalog, pages_obj = w.reserve(), w.reserve()
+    font = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+
+    def text(x: float, y: float, s: str, size: float = 10) -> str:
+        return f"BT /F1 {size} Tf {x} {y} Td ({esc(s)}) Tj ET\n"
+
+    def grid(xs: list[float], ys: list[float], skip_v: set = frozenset(), skip_h: set = frozenset()) -> str:
+        """Lines of a grid; skip_v holds (column edge index, row) pairs left open, skip_h (row edge, column)."""
+        ops = "0.6 w 0 G\n"
+        for i, y in enumerate(ys):
+            for c in range(len(xs) - 1):
+                if (i, c) not in skip_h:
+                    ops += f"{xs[c]} {y} m {xs[c + 1]} {y} l S\n"
+        for j, x in enumerate(xs):
+            for r in range(len(ys) - 1):
+                if (j, r) not in skip_v:
+                    ops += f"{x} {ys[r]} m {x} {ys[r + 1]} l S\n"
+        return ops
+
+    page_ids = []
+    # Page 1: title, paragraph, table A (header "Account" spans columns 1-2).
+    xs = [72, 192, 282, 392, 512]
+    ys = [680, 660, 640, 620, 600]
+    ops = text(72, 740, "Account summary PWTABLES", 16) + text(72, 712, "Balances at the end of the quarter.")
+    ops += grid(xs, ys, skip_v={(1, 0)})
+    rows = [["Account", None, "Opened", "Balance"],
+            ["007", "Savings", "2026-03-12", "1,234.50"],
+            ["123456789012345678", "Current", "12/03/2026", "-4.5"],
+            ["00042", "Bonus", "2025-11-30", "12.40"]]
+    for r, cells in enumerate(rows):
+        for c, v in enumerate(cells):
+            if v is not None:
+                ops += text(xs[c] + 4, ys[r] - 14, v)
+    ops += text(72, 570, "Figures are unaudited.")
+    c1 = w.stream(ops.encode("latin-1"))
+    page_ids.append(w.add(f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] "
+                          f"/Resources << /Font << /F1 {font} 0 R >> >> /Contents {c1} 0 R >>"))
+    # Page 2: table B with "North" merged down two rows (no rule between its rows in column 0).
+    xs = [72, 200, 330]
+    ys = [700, 680, 660, 640]
+    ops = text(72, 740, "Stations", 14)
+    ops += grid(xs, ys, skip_h={(2, 0)})
+    rows = [["Region", "Station"], ["North", "N1"], [None, "N2"]]
+    for r, cells in enumerate(rows):
+        for c, v in enumerate(cells):
+            if v is not None:
+                ops += text(xs[c] + 4, ys[r] - 14, v)
+    c2 = w.stream(ops.encode("latin-1"))
+    page_ids.append(w.add(f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] "
+                          f"/Resources << /Font << /F1 {font} 0 R >> >> /Contents {c2} 0 R >>"))
+    w.set(pages_obj, f"<< /Type /Pages /Kids [{' '.join(f'{p} 0 R' for p in page_ids)}] /Count {len(page_ids)} >>")
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R >>")
+    info = w.add("<< /Title (Tables fixture) /Producer (gen_fixtures.py) >>")
+    return w.render(catalog, info)
+
+
+def build_borderless_tables_document() -> bytes:
+    """Tables without drawn grids for table export (D-020): page 1 has a table of aligned columns
+    with no lines at all and a table with only horizontal rules above and below its header and at
+    its end, with body text around both; page 2 is two columns of prose (not a table)."""
+    w = PdfWriter()
+    catalog, pages_obj = w.reserve(), w.reserve()
+    font = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+
+    def text(x: float, y: float, s: str, size: float = 10) -> str:
+        return f"BT /F1 {size} Tf {x} {y} Td ({esc(s)}) Tj ET\n"
+
+    page_ids = []
+    ops = text(72, 740, "Harvest report PWBORDERLESS", 16)
+    ops += text(72, 712, "Crops picked this season are listed below without any lines.")
+    xs = [72, 220, 320, 420]
+    rows = [["Crop", "Rows", "Yield", "Grade"],
+            ["Apples", "120", "0.50", "A"],
+            ["Pears", "80", "0.75", "B"],
+            ["Plums and damsons", "007", "1,250.00", "A"],
+            ["Quince", "12", "3.10", "C"]]
+    for r, cells in enumerate(rows):
+        for c, v in enumerate(cells):
+            ops += text(xs[c], 684 - 16 * r, v)
+    ops += text(72, 590, "Yields are in tonnes per row and were measured at the packing house.")
+    # A table with horizontal rules only.
+    ops += "0.6 w 0 G\n72 552 m 480 552 l S\n72 532 m 480 532 l S\n72 470 m 480 470 l S\n"
+    xs = [76, 260, 380]
+    rows = [["Station", "Rain mm", "Days"], ["Upper farm", "412", "61"], ["Lower farm", "388", "58"],
+            ["River field", "455", "64"]]
+    for r, cells in enumerate(rows):
+        for c, v in enumerate(cells):
+            ops += text(xs[c], 538 - 18 * r - (4 if r else 0), v)
+    ops += text(72, 440, "Rain was recorded each morning.")
+    c1 = w.stream(ops.encode("latin-1"))
+    page_ids.append(w.add(f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] "
+                          f"/Resources << /Font << /F1 {font} 0 R >> >> /Contents {c1} 0 R >>"))
+    left = ["The river rose slowly through the wet spring and the", "lower fields stayed under water for most of April while",
+            "the upper farm dried out early enough to plant beans", "and the first of the summer barley before the rains",
+            "returned in May and kept the soil soft until harvest", "began in the last week of the long and warm summer"]
+    right = ["Wetlands along the bank stored the floods and let", "them go again over the dry months so the streams",
+             "never ran empty and the cattle had water all year", "which the farmers counted as the best outcome of the",
+             "work done on the ditches and hedges in the winter", "before the season when the new plan came into use"]
+    ops = text(72, 740, "Notes", 14)
+    for i, (a, b) in enumerate(zip(left, right)):
+        ops += text(72, 712 - 13 * i, a, 9) + text(320, 712 - 13 * i, b, 9)
+    c2 = w.stream(ops.encode("latin-1"))
+    page_ids.append(w.add(f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] "
+                          f"/Resources << /Font << /F1 {font} 0 R >> >> /Contents {c2} 0 R >>"))
+    w.set(pages_obj, f"<< /Type /Pages /Kids [{' '.join(f'{p} 0 R' for p in page_ids)}] /Count {len(page_ids)} >>")
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R >>")
+    info = w.add("<< /Title (Borderless tables fixture) /Producer (gen_fixtures.py) >>")
+    return w.render(catalog, info)
+
+
 def main() -> int:
     if len(sys.argv) == 4 and sys.argv[1] == "--big":
         # Large document for benchmarks (not committed): gen_fixtures.py --big PAGES OUT.pdf
@@ -584,6 +761,10 @@ def main() -> int:
     files["search-terms.pdf"] = build_document(search, title="Search terms")
 
     files["form-fields.pdf"] = build_form_document()
+    files["form-defaults.pdf"] = build_form_document(defaults=True)
+    files["tables.pdf"] = build_tables_document()
+    files["borderless-tables.pdf"] = build_borderless_tables_document()
+    files["form-nested.pdf"] = build_nested_form_document()
     files["redaction.pdf"] = build_redaction_document()
     files["redaction-hard.pdf"] = build_redaction_hard_document()
     files["hidden-info.pdf"] = build_hidden_info_document()
@@ -591,6 +772,13 @@ def main() -> int:
     files["uncompressed-report.pdf"] = build_uncompressed_report()
     files["compare-old.pdf"], files["compare-new.pdf"] = compare_pair()
     files["blank-pages.pdf"] = build_blank_pages_document()
+    sensitive = [
+        {"lines": ["Customer record PWSENS", "Email: ada.lovelace@example.org", "Phone: +44 20 7946 0958",
+                   "Card: 4111 1111 1111 1111", "IBAN: GB82 WEST 1234 5698 7654 32", "SSN: 123-45-6789",
+                   "Not sensitive: order 2026-10-21, invoice 12345, card 4111 1111 1111 1112"]},
+        {"lines": ["Turned page PWSENS2", "Contact: grace@example.com"], "rotate": 90},
+    ]
+    files["sensitive-info.pdf"] = build_document(sensitive, title="Sensitive info")
 
     good = files["five-pages.pdf"]
     files["corrupt-truncated.pdf"] = good[: len(good) // 2]

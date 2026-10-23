@@ -48,6 +48,9 @@ pub struct AppState {
     pub trust_dir: PathBuf,
     /// Durable record of running file-writing jobs; None if its folder could not be used (logged).
     pub journal: Option<Arc<Journal>>,
+    /// Reader processes for page images and read-only calls (D-018); None runs them in this
+    /// process (unit tests, where this binary is not the app).
+    pub readers: Option<Arc<pw_pdf::service::ReaderPool>>,
 }
 
 struct Inner {
@@ -121,6 +124,39 @@ impl AppState {
             log_dir,
             trust_dir: config_dir.join("trusted-certificates"),
             journal,
+            readers: None,
+        }
+    }
+
+    /// Run a read-only engine call in a reader process (or here when there are none).
+    pub fn read(
+        &self,
+        call: &pw_pdf::service::ReadCall,
+        password: Option<&str>,
+    ) -> PwResult<pw_pdf::service::ReadReply> {
+        match &self.readers {
+            Some(pool) => pool.call(call, password),
+            None => pw_pdf::service::run_call(call, password),
+        }
+    }
+
+    /// A read-only call whose answer is JSON.
+    pub fn read_json(&self, call: &pw_pdf::service::ReadCall, password: Option<&str>) -> PwResult<serde_json::Value> {
+        match self.read(call, password)? {
+            pw_pdf::service::ReadReply::Json(v) => Ok(v),
+            pw_pdf::service::ReadReply::Bytes(_) => {
+                Err(PwError::internal("reader.reply", "Unexpected reply from the document reader."))
+            }
+        }
+    }
+
+    /// A read-only call whose answer is bytes (an image).
+    pub fn read_bytes(&self, call: &pw_pdf::service::ReadCall, password: Option<&str>) -> PwResult<Vec<u8>> {
+        match self.read(call, password)? {
+            pw_pdf::service::ReadReply::Bytes(b) => Ok(b),
+            pw_pdf::service::ReadReply::Json(_) => {
+                Err(PwError::internal("reader.reply", "Unexpected reply from the document reader."))
+            }
         }
     }
 
@@ -193,7 +229,12 @@ impl AppState {
             }
         }
         let started = std::time::Instant::now();
-        let info = pw_pdf::open_document(&canonical, &pw_pdf::OpenOptions { password: password.as_deref() });
+        let info = self
+            .read_json(&pw_pdf::service::ReadCall::Open { path: canonical.clone() }, password.as_deref())
+            .and_then(|v| {
+                serde_json::from_value::<pw_pdf::DocumentInfo>(v)
+                    .map_err(|_| PwError::internal("reader.reply", "The document information could not be read."))
+            });
         self.logger.log(
             Level::Info,
             "doc",

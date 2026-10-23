@@ -8,32 +8,48 @@
 //! so multi-call sequences over PDFium's global state are atomic. The form module calls a few
 //! PDFium functions directly (pdfium-render does not expose its form-fill handle) under the same lock.
 
+mod accessibility;
+mod annots;
 mod attachments;
 mod blank;
 mod compare;
 mod content_ops;
 pub mod deskew;
 mod document;
+mod docx;
 mod downsample;
 mod edit;
 mod exec;
 mod extract;
+mod formdata;
+mod formdefaults;
 mod forms;
 mod images;
 mod marks;
 pub mod objects;
 mod ocr;
+pub mod office;
 mod optimize;
 pub mod orient;
 mod outline;
+mod pagelabels;
+mod patterns;
 mod properties;
 mod protect;
+pub mod reading;
 mod redact;
+pub mod resources;
 mod sanitize;
+pub mod service;
+mod sheet;
 mod sign;
 mod signatures;
+mod slides;
 mod unprotect;
+pub mod worker;
 
+pub use accessibility::{check_accessibility, AccessibilityCheck, AccessibilityReport, CheckStatus};
+pub use annots::{list_annotations, AnnotationList, ExistingAnnotation};
 pub use attachments::{add_attachments, clean_name, extract_attachment, list_attachments, AttachmentInfo};
 pub use blank::{find_blank_pages, PageInk};
 pub use compare::{compare, ChangeKind, CompareReport, PairStatus, MAX_COMPARE_PAGES};
@@ -46,11 +62,16 @@ pub use edit::{
 };
 pub use exec::execute;
 pub use extract::{extract_images, ExtractedImage};
+pub use formdata::{
+    current_value, export_entries, export_form_data, import_form_data, match_entries, read_form_data, FormDataMatch,
+    MatchedValue, SkippedEntry,
+};
 pub use forms::{apply_edits, fill_form, form_fields, FieldKind, FormField, FormInfo, FormWidget};
 pub use images::images_to_pdf;
 pub use ocr::{ocr_pages, OcrSummary};
 pub use optimize::{optimize, OptimizeSummary};
 pub use outline::set_bookmarks;
+pub use patterns::{find_patterns, PatternHit, PatternReport};
 pub use properties::{set_properties, PropertyChanges};
 pub use protect::protect;
 pub use redact::{redact, redaction_preview, AreaPreview};

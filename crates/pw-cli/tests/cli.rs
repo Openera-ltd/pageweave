@@ -154,7 +154,7 @@ fn capabilities_lists_operations() {
     assert!(v["result"]["operations"].as_array().expect("ops").iter().any(|o| o == "annotate"));
     assert_eq!(v["result"]["network"], "none");
     let ops = v["result"]["operations"].as_array().expect("ops");
-    for id in ["set_bookmarks", "export_text", "redact"] {
+    for id in ["set_bookmarks", "export_text", "redact", "export_form_data", "read_form_data", "import_form_data"] {
         assert!(ops.iter().any(|o| o == id), "{id} listed");
     }
 }
@@ -794,4 +794,376 @@ fn images_to_pdf_command() {
         .output()
         .expect("run");
     assert_eq!(bad.status.code(), Some(4), "damaged input exit code: {}", String::from_utf8_lossy(&bad.stderr));
+}
+
+#[test]
+fn form_export_and_import_round_trip_through_files() {
+    let dir = tempfile::tempdir().expect("tmp");
+    // A .json name picks JSON without --format.
+    let data = dir.path().join("data.json");
+    let r =
+        bin().args(["--json", "form-export", "-o"]).arg(&data).arg(fixture("form-nested.pdf")).output().expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert_eq!(json(&r)["result"]["data"]["format"], "json");
+    let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(&data).expect("read")).expect("json");
+    v["fields"][0]["value"] = "Ada".into();
+    v["fields"][1]["value"] = "Paris".into();
+    std::fs::write(&data, serde_json::to_vec(&v).expect("ser")).expect("write");
+
+    let r = bin()
+        .args(["--json", "form-import", "--preview"])
+        .arg(fixture("form-nested.pdf"))
+        .arg(&data)
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let p = json(&r);
+    assert_eq!(p["result"]["operation"], "read_form_data");
+    let changed: Vec<&str> = p["result"]["data"]["matched"]
+        .as_array()
+        .expect("matched")
+        .iter()
+        .filter(|m| m["changed"] == true)
+        .map(|m| m["name"].as_str().unwrap_or(""))
+        .collect();
+    assert_eq!(changed, ["applicant.name", "applicant.address.city"]);
+
+    let out = dir.path().join("filled.pdf");
+    let r = bin()
+        .args(["--json", "form-import", "-o"])
+        .arg(&out)
+        .arg(fixture("form-nested.pdf"))
+        .arg(&data)
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert_eq!(json(&r)["result"]["data"]["filled"], 2);
+    let fields = bin().args(["--json", "fields"]).arg(&out).output().expect("run");
+    let f = json(&fields);
+    let names: Vec<(&str, &str)> = f["result"]["data"]["fields"]
+        .as_array()
+        .expect("fields")
+        .iter()
+        .take(2)
+        .map(|x| (x["name"].as_str().unwrap_or(""), x["value"].as_str().unwrap_or("")))
+        .collect();
+    assert_eq!(names, [("applicant.name", "Ada"), ("applicant.address.city", "Paris")]);
+
+    // XFDF by default; neither -o nor --preview is a usage error.
+    let x = dir.path().join("data.xfdf");
+    let r = bin().args(["form-export", "-o"]).arg(&x).arg(&out).output().expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert!(std::fs::read_to_string(&x).expect("read").contains("<value>Paris</value>"));
+    let r = bin().arg("form-import").arg(fixture("form-nested.pdf")).arg(&x).output().expect("run");
+    assert_eq!(r.status.code(), Some(1), "usage error");
+    // A document without a form is refused with invalid input (exit 2).
+    let r = bin()
+        .args(["form-export", "-o"])
+        .arg(dir.path().join("n.xfdf"))
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert_eq!(r.status.code(), Some(2), "{}", String::from_utf8_lossy(&r.stderr));
+}
+
+#[test]
+fn split_by_size_and_by_bookmarks_from_the_cli() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let r = bin()
+        .args(["--json", "split", "--max-size", "300KB", "--out-dir"])
+        .arg(dir.path())
+        .arg(fixture("photo-heavy.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let v = json(&r);
+    let outs = v["result"]["outputs"].as_array().expect("outputs");
+    assert!(outs.len() >= 2);
+    for o in outs {
+        let path = o["path"].as_str().expect("path");
+        let size = std::fs::metadata(path).expect("meta").len();
+        assert!(size <= 300 * 1024 || o["pages"] == 1, "{path}: {size}");
+    }
+    let bm = tempfile::tempdir().expect("tmp");
+    let r = bin()
+        .args(["split", "--by-bookmarks", "1", "--out-dir"])
+        .arg(bm.path())
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert!(bm.path().join("five-pages_03_Chapter 3.pdf").exists());
+    let r = bin()
+        .args(["split", "--max-size", "lots", "--out-dir"])
+        .arg(bm.path())
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert_eq!(r.status.code(), Some(2), "bad size is invalid input");
+}
+
+#[test]
+fn patterns_lists_sensitive_text_with_positions() {
+    let r =
+        bin().args(["patterns", "--kinds", "email,card,ssn"]).arg(fixture("sensitive-info.pdf")).output().expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let out = String::from_utf8_lossy(&r.stdout);
+    assert!(out.contains("page 1  email        ada.lovelace@example.org"), "{out}");
+    assert!(out.contains("4111 1111 1111 1111") && !out.contains("1112"), "{out}");
+    assert!(out.contains("page 2  email") && out.contains("4 match(es)"), "{out}");
+    let r = bin()
+        .args(["--json", "patterns", "--custom", r"invoice \d+"])
+        .arg(fixture("sensitive-info.pdf"))
+        .output()
+        .expect("run");
+    let v = json(&r);
+    assert_eq!(v["result"]["data"]["hits"][0]["kind"], "custom");
+    assert!(v["result"]["data"]["hits"][0]["rects"][0]["left"].is_number());
+    let r = bin().args(["patterns"]).arg(fixture("sensitive-info.pdf")).output().expect("run");
+    assert_eq!(r.status.code(), Some(2), "nothing to look for is invalid input");
+}
+
+#[test]
+fn accessibility_reports_checks_and_review_items() {
+    let r = bin().args(["accessibility"]).arg(fixture("tagged-issues.pdf")).output().expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let out = String::from_utf8_lossy(&r.stdout);
+    assert!(out.contains("FAIL    Document language"), "{out}");
+    assert!(out.contains("FAIL    Pictures have alternate text") && out.contains("pages: 1"), "{out}");
+    assert!(out.contains("REVIEW  Reading order"), "{out}");
+    assert!(out.contains("not a PDF/UA or WCAG verdict"), "{out}");
+    let r = bin().args(["--json", "accessibility"]).arg(fixture("tagged-accessible.pdf")).output().expect("run");
+    assert_eq!(json(&r)["result"]["data"]["failed"], 0);
+}
+
+#[test]
+fn labels_set_and_remove() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("l.pdf");
+    let r = bin()
+        .args(["labels", "--range", "1:roman-lower", "--range", "3:decimal:1:Ch-", "-o"])
+        .arg(&out)
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let info = json(&bin().args(["--json", "inspect"]).arg(&out).output().expect("run"));
+    let labels: Vec<&str> = info["result"]["data"]["pages"]
+        .as_array()
+        .expect("pages")
+        .iter()
+        .map(|p| p["label"].as_str().unwrap_or(""))
+        .collect();
+    assert_eq!(labels, ["i", "ii", "Ch-1", "Ch-2", "Ch-3"]);
+    let out2 = dir.path().join("n.pdf");
+    let r = bin().args(["labels", "--remove", "-o"]).arg(&out2).arg(&out).output().expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let r = bin()
+        .args(["labels", "--range", "0:decimal", "-o"])
+        .arg(dir.path().join("x.pdf"))
+        .arg(&out)
+        .output()
+        .expect("run");
+    assert_eq!(r.status.code(), Some(2), "page 0 is invalid input");
+}
+
+#[test]
+fn annotations_list_delete_and_retext() {
+    let r = bin().args(["annotations"]).arg(fixture("hidden-info.pdf")).output().expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let out = String::from_utf8_lossy(&r.stdout);
+    assert!(
+        out.contains("page 1  #0   Text") && out.contains("Reviewer note PWCOMMENT") && out.contains("4 annotation(s)"),
+        "{out}"
+    );
+    let dir = tempfile::tempdir().expect("tmp");
+    let copy = dir.path().join("c.pdf");
+    let r = bin()
+        .args(["annotations", "--delete", "1:0:Text", "--set-text", "1:2:Highlight=Seen", "-o"])
+        .arg(&copy)
+        .arg(fixture("hidden-info.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let r = bin().args(["annotations"]).arg(&copy).output().expect("run");
+    let out = String::from_utf8_lossy(&r.stdout);
+    assert!(
+        !out.contains("PWCOMMENT") && out.contains("Highlight       Seen") && out.contains("3 annotation(s)"),
+        "{out}"
+    );
+    let r = bin()
+        .args(["annotations", "--delete", "1:0", "-o"])
+        .arg(dir.path().join("x.pdf"))
+        .arg(fixture("hidden-info.pdf"))
+        .output()
+        .expect("run");
+    assert_eq!(r.status.code(), Some(2), "missing type is invalid input");
+}
+
+#[test]
+fn resources_reports_each_capability() {
+    let r = bin().args(["--json", "resources"]).output().expect("run");
+    let v = json(&r);
+    let caps = v["result"]["capabilities"].as_array().expect("caps");
+    assert_eq!(caps[0]["id"], "pdf_engine");
+    assert_eq!(caps[0]["state"], "ready", "{v}");
+    assert_eq!(caps[1]["id"], "text_recognition");
+    let ready = v["result"]["all_ready"] == true;
+    assert_eq!(r.status.success(), ready, "exit code follows readiness of required capabilities: {v}");
+    // Office documents are optional: whether LibreOffice is installed never changes the exit code.
+    let office = caps.iter().find(|c| c["id"] == "office_documents").expect("office entry");
+    assert_eq!(office["required"], false);
+    let hidden = bin().args(["--json", "resources"]).env("PAGEWEAVE_SOFFICE", "").output().expect("run");
+    assert_eq!(hidden.status.success(), ready, "no LibreOffice: {}", json(&hidden));
+    let human = bin().arg("resources").output().expect("run");
+    assert!(String::from_utf8_lossy(&human.stdout).contains("READY    PDF engine: Installed and verified."));
+}
+
+#[test]
+fn to_docx_writes_a_word_file_and_reports_what_was_kept() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("article.docx");
+    let r = bin()
+        .args(["--json", "to-docx", "--pages", "1-2"])
+        .arg(fixture("article.pdf"))
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stdout));
+    let v = json(&r);
+    assert_eq!(v["result"]["operation"], "convert_to_docx");
+    assert_eq!(v["result"]["data"]["pages"], 2);
+    assert_eq!(v["result"]["data"]["links"], 1);
+    assert_eq!(v["result"]["data"]["tables"], 1, "the ruled table on page 2");
+    let z = zip::ZipArchive::new(std::fs::File::open(&out).expect("open")).expect("a Word package");
+    assert!(z.file_names().flatten().any(|n| n == "word/document.xml"));
+    // Existing output → conflict (exit 5); wrong extension → invalid input (exit 2).
+    let again =
+        bin().args(["--json", "to-docx"]).arg(fixture("article.pdf")).arg("-o").arg(&out).output().expect("run");
+    assert_eq!(json(&again)["error"]["category"], "output_conflict");
+    let bad = bin()
+        .args(["to-docx"])
+        .arg(fixture("article.pdf"))
+        .arg("-o")
+        .arg(dir.path().join("a.doc"))
+        .output()
+        .expect("run");
+    assert_eq!(bad.status.code(), Some(2));
+}
+
+#[test]
+fn tables_export_to_xlsx_and_csv() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("t.xlsx");
+    let r = bin().arg("tables").arg(fixture("tables.pdf")).arg("-o").arg(&out).output().expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let text = String::from_utf8_lossy(&r.stdout);
+    assert!(
+        text.contains("Page 1 table 1: 4 rows × 4 columns") && text.contains("Page 2 table 1: 3 rows × 2 columns"),
+        "{text}"
+    );
+    let csv = bin()
+        .args(["--json", "tables", "--format", "csv"])
+        .arg(fixture("tables.pdf"))
+        .arg("-o")
+        .arg(dir.path())
+        .output()
+        .expect("run");
+    assert_eq!(json(&csv)["result"]["outputs"].as_array().map(Vec::len), Some(2));
+    let none = bin()
+        .args(["--json", "tables"])
+        .arg(fixture("five-pages.pdf"))
+        .arg("-o")
+        .arg(dir.path().join("n.xlsx"))
+        .output()
+        .expect("run");
+    assert_eq!(json(&none)["error"]["code"], "tables.none");
+}
+
+#[test]
+fn translate_lists_directions_and_translates_pages() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let r = bin().args(["--json", "translate"]).output().expect("run");
+    let v = json(&r);
+    assert!(r.status.success(), "{v}");
+    assert_eq!(v["result"]["directions"].as_array().expect("dirs").len(), 8);
+    let out = dir.path().join("p1-it.txt");
+    let r = bin()
+        .args(["--json", "translate", "--pages", "1", "--to", "it", "-o"])
+        .arg(&out)
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    let v = json(&r);
+    assert!(r.status.success(), "{v}");
+    assert_eq!(v["result"]["data"]["source"], "en");
+    assert!(std::fs::read_to_string(&out).expect("txt").contains("PWMARK001"));
+    let r = bin().args(["--json", "translate", "--to", "it"]).arg(fixture("five-pages.pdf")).output().expect("run");
+    assert_eq!(r.status.code(), Some(2), "missing -o is a usage error");
+}
+
+#[test]
+fn speak_lists_voices_and_reads_pages_into_a_wav() {
+    let dir = tempfile::tempdir().expect("tmp");
+    if pw_speech::engine_info().is_err() {
+        assert!(std::env::var("PW_SKIP_SPEECH").as_deref() == Ok("1"), "a speech engine is required for this test");
+        let r = bin().args(["--json", "speak"]).output().expect("run");
+        assert_eq!(json(&r)["error"]["code"], "speech.unavailable");
+        return;
+    }
+    let voices = bin().args(["--json", "speak"]).output().expect("run");
+    let v = json(&voices);
+    assert!(voices.status.success(), "{v}");
+    let list = v["result"]["voices"].as_array().expect("voices");
+    assert!(list.iter().filter(|x| x["default"] == true).count() == 1, "{v}");
+    let out = dir.path().join("p1.wav");
+    let r = bin()
+        .args(["--json", "speak", "--pages", "1", "--rate", "1.25", "-o"])
+        .arg(&out)
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    let v = json(&r);
+    assert!(r.status.success(), "{v}");
+    assert_eq!(v["result"]["operation"], "read_aloud_to_wav");
+    assert_eq!(v["result"]["data"]["sentences"], 3, "{v}");
+    assert!(std::fs::read(&out).expect("wav").starts_with(b"RIFF"));
+    // A PDF without -o is a usage error; a bad speed is refused.
+    let r = bin().args(["--json", "speak"]).arg(fixture("five-pages.pdf")).output().expect("run");
+    assert_eq!(r.status.code(), Some(2));
+    let r = bin()
+        .args(["--json", "speak", "--rate", "9", "-o"])
+        .arg(dir.path().join("x.wav"))
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert_eq!(json(&r)["error"]["code"], "speech.rate");
+}
+
+#[test]
+fn to_pptx_writes_one_slide_per_page() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("a.pptx");
+    let r = bin()
+        .args(["--json", "to-pptx", "--pages", "1-2"])
+        .arg(fixture("article.pdf"))
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stdout));
+    let v = json(&r);
+    assert_eq!(v["result"]["operation"], "convert_to_pptx");
+    assert_eq!(v["result"]["data"]["pages"], 2);
+    let z = zip::ZipArchive::new(std::fs::File::open(&out).expect("open")).expect("a package");
+    assert_eq!(z.file_names().flatten().filter(|n| n.starts_with("ppt/slides/slide")).count(), 2);
+    let bad = bin()
+        .args(["to-pptx"])
+        .arg(fixture("article.pdf"))
+        .arg("-o")
+        .arg(dir.path().join("a.ppt"))
+        .output()
+        .expect("run");
+    assert_eq!(bad.status.code(), Some(2));
 }

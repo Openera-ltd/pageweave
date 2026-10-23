@@ -1,7 +1,9 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useApi } from "../api";
+import { formatBytes } from "../format";
 import { COMMANDS, bindingConflicts, effectiveBindings, type CommandId } from "../commands";
 import { eventToShortcut, validateShortcut } from "../shortcuts";
-import { toPwError, type Density, type Motion, type PwError, type Settings, type Theme } from "../types";
+import { toPwError, type Density, type Motion, type PwError, type ResourceReport, type Settings, type Theme } from "../types";
 import { Dialog } from "./ui";
 
 export const ACCENTS = ["#2f6fde", "#0f7b8a", "#1c7c3d", "#7a4ddb", "#c2410c", "#b42318", "#4b5563"];
@@ -16,7 +18,7 @@ export const DEFAULT_APPEARANCE: Pick<Settings, "theme" | "accent" | "density" |
 
 interface Props {
   initial: Settings;
-  initialTab?: "appearance" | "shortcuts";
+  initialTab?: "appearance" | "shortcuts" | "resources";
   /** Live preview: apply without saving. */
   onPreview: (s: Settings) => void;
   onSave: (s: Settings) => Promise<void>;
@@ -95,6 +97,9 @@ export function SettingsDialog({ initial, initialTab = "appearance", onPreview, 
         <button type="button" role="tab" id="tab-shortcuts" aria-controls="panel-shortcuts" aria-selected={tab === "shortcuts"} onClick={() => setTab("shortcuts")}>
           Keyboard shortcuts
         </button>
+        <button type="button" role="tab" id="tab-resources" aria-controls="panel-resources" aria-selected={tab === "resources"} onClick={() => setTab("resources")}>
+          Resources
+        </button>
       </div>
 
       {tab === "appearance" && (
@@ -132,6 +137,12 @@ export function SettingsDialog({ initial, initialTab = "appearance", onPreview, 
           <button type="button" className="btn outline" onClick={() => { setCustomAccent(""); update({ ...DEFAULT_APPEARANCE }); }}>
             Restore default appearance
           </button>
+        </div>
+      )}
+
+      {tab === "resources" && (
+        <div role="tabpanel" id="panel-resources" aria-labelledby="tab-resources">
+          <ResourcesPanel />
         </div>
       )}
 
@@ -259,5 +270,54 @@ function ShortcutEditor({ overrides, conflicts, onChange }: { overrides: Record<
         </tbody>
       </table>
     </>
+  );
+}
+
+const STATE_LABEL = { ready: "Ready", missing: "Missing", damaged: "Damaged" } as const;
+
+/** What is installed for each local capability, verified against the pinned checksums. */
+function ResourcesPanel() {
+  const api = useApi();
+  const [report, setReport] = useState<ResourceReport | null>(null);
+  const [error, setError] = useState<PwError | null>(null);
+  const [checking, setChecking] = useState(false);
+  const check = () => {
+    setChecking(true);
+    setError(null);
+    api
+      .resourceStatus()
+      .then((r) => setReport(r))
+      .catch((e) => setError(toPwError(e)))
+      .finally(() => setChecking(false));
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(check, []);
+  return (
+    <div className="field">
+      <ul className="a11y-list" aria-label="Installed resources" aria-busy={checking} data-testid="resources-list">
+        {(report?.capabilities ?? []).map((c) => (
+          <li key={c.id} data-resource={c.id} data-state={c.state}>
+            <div className="row" style={{ minWidth: 0 }}>
+              <span className={`a11y-status ${c.state === "ready" ? "pass" : c.required ? "fail" : "not_applicable"}`}>{!c.required && c.state === "missing" ? "Not installed" : STATE_LABEL[c.state]}</span>
+              <strong className="grow">{c.title}</strong>
+              {c.bytes > 0 && <span className="hint">{formatBytes(c.bytes)}</span>}
+            </div>
+            <div className="hint">{c.detail}</div>
+          </li>
+        ))}
+      </ul>
+      {!report && !error && <span className="hint">Checking…</span>}
+      {error && (
+        <p className="error" role="alert">
+          {error.message}
+        </p>
+      )}
+      <div className="row">
+        <button type="button" className="btn outline" data-testid="resources-check" aria-disabled={checking ? true : undefined} onClick={() => !checking && check()}>
+          {checking ? "Checking…" : "Check again"}
+        </button>
+        <span className="hint">These run on this computer; nothing is downloaded.</span>
+      </div>
+    </div>
   );
 }

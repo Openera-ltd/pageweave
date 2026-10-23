@@ -1,0 +1,101 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R 7 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Length 1584 >>
+stream
+BT /F1 16 Tf 72 740 Td (Harvest report PWBORDERLESS) Tj ET
+BT /F1 10 Tf 72 712 Td (Crops picked this season are listed below without any lines.) Tj ET
+BT /F1 10 Tf 72 684 Td (Crop) Tj ET
+BT /F1 10 Tf 220 684 Td (Rows) Tj ET
+BT /F1 10 Tf 320 684 Td (Yield) Tj ET
+BT /F1 10 Tf 420 684 Td (Grade) Tj ET
+BT /F1 10 Tf 72 668 Td (Apples) Tj ET
+BT /F1 10 Tf 220 668 Td (120) Tj ET
+BT /F1 10 Tf 320 668 Td (0.50) Tj ET
+BT /F1 10 Tf 420 668 Td (A) Tj ET
+BT /F1 10 Tf 72 652 Td (Pears) Tj ET
+BT /F1 10 Tf 220 652 Td (80) Tj ET
+BT /F1 10 Tf 320 652 Td (0.75) Tj ET
+BT /F1 10 Tf 420 652 Td (B) Tj ET
+BT /F1 10 Tf 72 636 Td (Plums and damsons) Tj ET
+BT /F1 10 Tf 220 636 Td (007) Tj ET
+BT /F1 10 Tf 320 636 Td (1,250.00) Tj ET
+BT /F1 10 Tf 420 636 Td (A) Tj ET
+BT /F1 10 Tf 72 620 Td (Quince) Tj ET
+BT /F1 10 Tf 220 620 Td (12) Tj ET
+BT /F1 10 Tf 320 620 Td (3.10) Tj ET
+BT /F1 10 Tf 420 620 Td (C) Tj ET
+BT /F1 10 Tf 72 590 Td (Yields are in tonnes per row and were measured at the packing house.) Tj ET
+0.6 w 0 G
+72 552 m 480 552 l S
+72 532 m 480 532 l S
+72 470 m 480 470 l S
+BT /F1 10 Tf 76 538 Td (Station) Tj ET
+BT /F1 10 Tf 260 538 Td (Rain mm) Tj ET
+BT /F1 10 Tf 380 538 Td (Days) Tj ET
+BT /F1 10 Tf 76 516 Td (Upper farm) Tj ET
+BT /F1 10 Tf 260 516 Td (412) Tj ET
+BT /F1 10 Tf 380 516 Td (61) Tj ET
+BT /F1 10 Tf 76 498 Td (Lower farm) Tj ET
+BT /F1 10 Tf 260 498 Td (388) Tj ET
+BT /F1 10 Tf 380 498 Td (58) Tj ET
+BT /F1 10 Tf 76 480 Td (River field) Tj ET
+BT /F1 10 Tf 260 480 Td (455) Tj ET
+BT /F1 10 Tf 380 480 Td (64) Tj ET
+BT /F1 10 Tf 72 440 Td (Rain was recorded each morning.) Tj ET
+
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Length 1023 >>
+stream
+BT /F1 14 Tf 72 740 Td (Notes) Tj ET
+BT /F1 9 Tf 72 712 Td (The river rose slowly through the wet spring and the) Tj ET
+BT /F1 9 Tf 320 712 Td (Wetlands along the bank stored the floods and let) Tj ET
+BT /F1 9 Tf 72 699 Td (lower fields stayed under water for most of April while) Tj ET
+BT /F1 9 Tf 320 699 Td (them go again over the dry months so the streams) Tj ET
+BT /F1 9 Tf 72 686 Td (the upper farm dried out early enough to plant beans) Tj ET
+BT /F1 9 Tf 320 686 Td (never ran empty and the cattle had water all year) Tj ET
+BT /F1 9 Tf 72 673 Td (and the first of the summer barley before the rains) Tj ET
+BT /F1 9 Tf 320 673 Td (which the farmers counted as the best outcome of the) Tj ET
+BT /F1 9 Tf 72 660 Td (returned in May and kept the soil soft until harvest) Tj ET
+BT /F1 9 Tf 320 660 Td (work done on the ditches and hedges in the winter) Tj ET
+BT /F1 9 Tf 72 647 Td (began in the last week of the long and warm summer) Tj ET
+BT /F1 9 Tf 320 647 Td (before the season when the new plan came into use) Tj ET
+
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 6 0 R >>
+endobj
+8 0 obj
+<< /Title (Borderless tables fixture) /Producer (gen_fixtures.py) >>
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000127 00000 n 
+0000000224 00000 n 
+0000001860 00000 n 
+0000001986 00000 n 
+0000003061 00000 n 
+0000003187 00000 n 
+trailer
+<< /Size 9 /Root 1 0 R /Info 8 0 R /ID [<70616765776561766566697874757265> <70616765776561766566697874757265>] >>
+startxref
+3271
+%%EOF

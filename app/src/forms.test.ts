@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { currentValue, fieldLabel, isFillable, missingRequired, originalValue, setEdit, toFieldValues } from "./forms";
+import { clearedEdits, currentValue, fieldLabel, isFillable, missingRequired, originalValue, resetEdits, setEdit, toFieldValues } from "./forms";
 import type { FormField } from "./types";
 
 const base = { label: null, value: null, options: [], read_only: false, required: false, multiline: false, editable: false };
@@ -45,5 +45,49 @@ describe("form edits", () => {
   it("labels fields by /TU, else a readable name", () => {
     expect(fieldLabel({ ...text, label: "Full name" })).toBe("Full name");
     expect(fieldLabel({ ...text, name: "address.post_code" })).toBe("address post code");
+  });
+});
+
+describe("clear form", () => {
+  const w = { page: 0, rect: { left: 0, bottom: 0, right: 1, top: 1 }, export_value: "On", checked: true };
+  const f = (name: string, kind: FormField["kind"], extra: Partial<FormField> = {}): FormField => ({
+    name, label: null, kind, value: null, options: [], read_only: false, required: false, multiline: false, editable: false, widgets: [w], ...extra,
+  });
+  it("empties text and checkboxes, keeps choices it cannot empty, leaves read-only fields", () => {
+    const fields = [
+      f("name", "text", { value: "Ada" }),
+      f("notes", "text", { value: "" }),
+      f("agree", "checkbox"),
+      f("plan", "radio"),
+      f("country", "combo", { value: "Japan", options: ["Japan"] }),
+      f("city", "combo", { value: "Oslo", editable: true }),
+      f("ref", "text", { value: "R-1", read_only: true }),
+    ];
+    const r = clearedEdits({ notes: "typed" }, fields);
+    expect(r.edits).toEqual({ name: "", agree: false, city: "" });
+    expect(r.changed).toBe(4);
+    expect(r.kept).toBe(2);
+  });
+
+  it("resets to the document's defaults, empties fields without one, keeps choices it cannot reset", () => {
+    const wd = (checked = false, export_value: string | null = null) => ({ page: 0, rect: { left: 0, bottom: 0, right: 10, top: 10 }, export_value, checked });
+    const fields: FormField[] = [
+      { ...text, default_value: "Jane" },
+      { ...text, name: "notes", value: "x" },
+      { ...box, default_value: "On" },
+      { ...box, name: "news", widgets: [wd(true, "Yes")], default_value: "Off" },
+      { ...radio, default_value: "pro" },
+      { ...radio, name: "size" },
+      { ...base, name: "country", kind: "combo", value: "Canada", options: ["Canada", "Japan"], default_value: "Japan", widgets: [wd()] },
+      { ...base, name: "colour", kind: "list", value: "Red", options: ["Red"], default_value: "Gone", widgets: [wd()] },
+      { ...base, name: "city", kind: "combo", value: "Oslo", editable: true, widgets: [wd()] },
+      { ...text, name: "ref", value: "R-1", read_only: true, default_value: "R-0" },
+    ];
+    const r = resetEdits({ notes: "typed", plan: "basic" }, fields);
+    expect(r.edits).toEqual({ full_name: "Jane", notes: "", subscribe: true, news: false, plan: "pro", country: "Japan", city: "" });
+    expect(r.changed).toBe(7);
+    expect(r.kept).toBe(2);
+    // A second reset changes nothing.
+    expect(resetEdits(r.edits, fields).changed).toBe(0);
   });
 });

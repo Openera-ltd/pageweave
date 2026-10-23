@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { IMAGE_PRESETS, UNIT_PT, displayedSize, expandStamp, stampCharsOk } from "./PageToolsDialog";
+import { IMAGE_PRESETS, UNIT_PT, bookmarkLevels, bookmarkParts, displayedSize, expandStamp, stampCharsOk } from "./PageToolsDialog";
 
 describe("stamp preview", () => {
   it("expands the template like the engine", () => {
@@ -38,5 +38,23 @@ describe("image reduction presets", () => {
       expect(p.quality).toBeGreaterThanOrEqual(30);
       expect(p.quality).toBeLessThanOrEqual(95);
     }
+  });
+});
+
+describe("split by bookmarks preview", () => {
+  const bm = (title: string, page: number | null, depth = 0) => ({ title, page, depth });
+  const list = [bm("Intro", 2), bm("A", 3, 1), bm("Appendix", 14), bm("Two", 7), bm("Same", 7), bm("Nowhere", null), bm("Past end", 99)];
+  it("matches the engine: sorted by page, one part per distinct start page", () => {
+    expect(bookmarkParts(list, 20, 1)).toEqual([
+      { title: "Intro", first: 2 },
+      { title: "Two", first: 7 },
+      { title: "Appendix", first: 14 },
+    ]);
+    expect(bookmarkParts(list, 20, 2)).toEqual([{ title: "A", first: 3 }]);
+    expect(bookmarkParts(list, 20, 3)).toEqual([]);
+  });
+  it("offers only levels that have usable bookmarks", () => {
+    expect(bookmarkLevels(list, 20)).toEqual([1, 2]);
+    expect(bookmarkLevels([bm("x", null)], 20)).toEqual([]);
   });
 });

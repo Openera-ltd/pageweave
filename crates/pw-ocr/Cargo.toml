@@ -19,5 +19,6 @@ ort = { version = "=2.0.0-rc.14", default-features = false, features = ["std", "
 workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true
 image.workspace = true
 serde_json.workspace = true

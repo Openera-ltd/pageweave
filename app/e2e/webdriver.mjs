@@ -55,6 +55,8 @@ export class Session {
     return body.value;
   }
 
+  // Return plain values (booleans, strings, numbers), never DOM elements: an element removed while
+  // the driver serializes it fails with "stale element reference" (seen in CI run #73, print).
   async exec(script, ...args) {
     return this.cmd("POST", "/execute/sync", { script, args });
   }

@@ -5,8 +5,9 @@
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { inflateRawSync } from "node:zlib";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Session } from "./webdriver.mjs";
@@ -114,7 +115,9 @@ async function withApp(args, fn) {
   launchFailuresInARow = 0;
   phase.create += Date.now() - t0;
   try {
-    await s.waitFor(args.length ? '.tab-label' : ".home", { timeout: 20000 });
+    // PDFs open as tabs; Office files open the convert dialog over the start screen.
+    const pdfArgs = args.filter((a) => !/\.(docx|doc|odt|rtf|txt|xlsx|xls|ods|csv|pptx|ppt|odp|html?)$/i.test(a));
+    await s.waitFor(pdfArgs.length ? ".tab-label" : ".home", { timeout: 20000 });
     return await fn(s);
   } catch (e) {
     await captureFailure(s);
@@ -981,6 +984,212 @@ await test("forms: fill text, checkbox, radio, choice and multiline; Ctrl+S save
   }
 });
 
+await test("form data: export XFDF with unsaved values; import JSON with preview, Undo, then save a verified copy", async () => {
+  const src = join(FIX, "form-nested.pdf");
+  const before = sha(src);
+  const dir = mkdtempSync(join(work, "formdata-"));
+  const xfdf = join(dir, "nested.xfdf");
+  const json = join(dir, "in.json");
+  const out = join(dir, "nested-filled.pdf");
+  writeFileSync(json, JSON.stringify({ "applicant.name": "Grace Hopper", "applicant.address.city": "Arlington", colour: "Blue", agree: "Yes", ref_no: "X", not_here: "y" }));
+  const field = (name) => `[data-formlayer="0"] [data-field="${name}"]`;
+  const palette = async (s, text, id) => {
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', text);
+    await s.click(`[role="option"][data-command="${id}"]`);
+  };
+  const values = (s) =>
+    s.exec(`const q = (n) => document.querySelector('[data-formlayer="0"] [data-field="' + n + '"]');
+      return [q('applicant.name').value, q('applicant.address.city').value, q('colour').value, q('agree').checked]`);
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.waitFor(field("applicant.name"));
+    await s.type(field("applicant.name"), "Ada Lovelace");
+    await s.waitUntil(async () => (await unsavedText(s)) === "1 unsaved change", "one unsaved change");
+
+    // Export: XFDF by default, unsaved value included.
+    await s.click('[data-testid="viewer"]');
+    await palette(s, "Export form data", "file.exportFormData");
+    await s.waitFor("#formdata-export-output");
+    assert((await s.exec("return document.querySelector('#formdata-export-output').value")).endsWith("form-nested-data.xfdf"), "default name");
+    assert((await s.text('[data-testid="formdata-export-note"]')) === "Includes 1 unsaved change.", "unsaved values noted");
+    await s.type("#formdata-export-output", xfdf);
+    await axeCheck(s, "export-form-data-dialog");
+    await s.click('[data-testid="formdata-export-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved nested.xfdf") && t.includes("5 field values")), "export notice");
+    const text = readFileSync(xfdf, "utf8");
+    assert(text.includes('<field name="applicant">') && text.includes("<value>Ada Lovelace</value>"), `nested XFDF with the unsaved value:\n${text}`);
+    assert(text.includes("<value>R-1001</value>") && !text.includes("submit"), "read-only value kept, push button left out");
+
+    // Import: preview, fill, Undo.
+    await palette(s, "Import form data", "file.importFormData");
+    await s.waitFor("#formdata-import-path");
+    assert((await s.attr('[data-testid="formdata-import-apply"]', "title")) === "Choose a form data file.", "fill disabled until a file is read");
+    await s.type("#formdata-import-path", json);
+    await s.click('[data-testid="formdata-import-read"]');
+    await s.waitUntil(async () => (await s.text('[data-testid="formdata-import-summary"]')) === "4 fields to fill · 2 not used", "preview summary");
+    await s.click('[data-testid="formdata-import-unused"] summary');
+    await s.waitUntil(() => s.exec("return document.querySelector('[data-testid=formdata-import-unused]').open"), "not-used list opens on click");
+    // WebKitWebDriver's element text leaves out <details> content; read the DOM text.
+    const unused = await s.exec("return document.querySelector('[data-testid=formdata-import-unused]').textContent");
+    const order = await s.exec("return [...document.querySelectorAll('[data-testid=formdata-import-changes] .formdata-name')].map(e => e.textContent)");
+    assert(JSON.stringify(order) === JSON.stringify(["Applicant name", "City", "Colour", "Agree"]), `changes listed in form order: ${JSON.stringify(order)}`);
+    assert(unused.includes("ref_no") && unused.includes("read-only") && unused.includes("not_here"), `not-used list: ${unused}`);
+    await axeCheck(s, "import-form-data-preview");
+    writeFileSync(join(ART, "import-form-data.png"), await s.screenshot());
+    await s.click('[data-testid="formdata-import-apply"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Filled 4 fields from in.json")), "filled notice");
+    const filled = JSON.stringify(["Grace Hopper", "Arlington", "Blue", true]);
+    await s.waitUntil(async () => JSON.stringify(await values(s)) === filled, "controls show the imported values");
+    await s.waitUntil(async () => (await unsavedText(s)) === "4 unsaved changes", "four unsaved changes");
+    await s.click('.notice button[data-action="Undo"]');
+    await s.waitUntil(async () => JSON.stringify(await values(s)) === JSON.stringify(["Ada Lovelace", "", "", false]), "Undo restores the earlier edits");
+    assert((await s.exec("return document.querySelector('[data-formlayer=\"0\"] [data-field=\"colour\"]').selectedOptions[0]?.hidden ?? true")) === true, "list box shows no choice after Undo (none in the document)");
+    await s.waitUntil(async () => (await unsavedText(s)) === "1 unsaved change", "back to one unsaved change");
+
+    // Import again (Enter reads, Enter does not fill a stale preview), then save a copy.
+    await palette(s, "Import form data", "file.importFormData");
+    await s.waitFor("#formdata-import-path");
+    await s.type("#formdata-import-path", json);
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => (await s.text('[data-testid="formdata-import-summary"]')).startsWith("4 fields to fill"), "preview again");
+    await s.click('[data-testid="formdata-import-apply"]');
+    await s.waitUntil(async () => JSON.stringify(await values(s)) === filled, "values imported again");
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "s"]);
+    await s.waitFor("#output");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved nested-filled.pdf")), "saved notice");
+  });
+  assert(sha(src) === before, "source PDF unchanged");
+  assert(existsSync(out), "filled copy exists");
+  if (CLI) {
+    const f = JSON.parse(execFileSync(CLI, ["--json", "fields", out], { encoding: "utf8" })).result.data.fields;
+    const v = Object.fromEntries(f.map((x) => [x.name, x.value]));
+    assert(v["applicant.name"] === "Grace Hopper" && v["applicant.address.city"] === "Arlington" && v.colour === "Blue" && v.agree === "Yes" && v.ref_no === "R-1001", `CLI reads the saved values: ${JSON.stringify(v)}`);
+  }
+});
+
+await test("clear form fields: text and checkboxes emptied as unsaved edits, choices kept and said so; Undo", async () => {
+  const field = (name) => `[data-formlayer="0"] [data-field="${name}"]`;
+  await withApp([join(FIX, "form-nested.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.waitFor(field("applicant.name"));
+    await s.type(field("applicant.name"), "Ada");
+    await s.click(field("agree"));
+    await s.click(`${field("colour")} option[value="Green"]`);
+    await s.waitUntil(async () => (await unsavedText(s)) === "3 unsaved changes", "three edits");
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Clear form");
+    await s.click('[role="option"][data-command="edit.clearForm"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Cleared 2 fields") && t.includes("1 choice field keeps its option")), "cleared notice");
+    const state = () => s.exec(`const q = (n) => document.querySelector('[data-formlayer="0"] [data-field="' + n + '"]'); return [q('applicant.name').value, q('agree').checked, q('colour').value, q('ref_no').value]`);
+    assert(JSON.stringify(await state()) === JSON.stringify(["", false, "Green", "R-1001"]), `after clear: ${JSON.stringify(await state())}`);
+    await s.waitUntil(async () => (await unsavedText(s)) === "1 unsaved change", "only the kept choice remains an edit");
+    await s.click('.notice button[data-action="Undo"]');
+    await s.waitUntil(async () => JSON.stringify(await state()) === JSON.stringify(["Ada", true, "Green", "R-1001"]), "Undo restores");
+  });
+});
+
+await test("reset form: fields return to the document's default values as unsaved edits; Undo; saved copy verified", async () => {
+  const src = join(FIX, "form-defaults.pdf");
+  const before = sha(src);
+  const dir = mkdtempSync(join(work, "reset-"));
+  const out = join(dir, "reset.pdf");
+  const field = (name) => `[data-formlayer="0"] [data-field="${name}"]`;
+  const state = (s) =>
+    s.exec(`const q = (n) => document.querySelector('[data-formlayer="0"] [data-field="' + n + '"]');
+      const plan = [...document.querySelectorAll('[data-formlayer="0"] [data-field="plan"]')].find((r) => r.checked)?.value ?? "";
+      return [q('full_name').value, q('subscribe').checked, plan, q('country').value, q('comments').value]`);
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.waitFor(field("full_name"));
+    await s.type(field("full_name"), "Ada");
+    await s.type(field("comments"), "note");
+    await s.waitUntil(async () => (await unsavedText(s)) === "2 unsaved changes", "two edits");
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Reset form");
+    await s.click('[role="option"][data-command="edit.resetForm"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Reset 5 fields to default values")), "reset notice");
+    const reset = JSON.stringify(["Jane Doe", true, "pro", "Japan", ""]);
+    await s.waitUntil(async () => JSON.stringify(await state(s)) === reset, "controls show the defaults");
+    await s.waitUntil(async () => (await unsavedText(s)) === "4 unsaved changes", "four fields differ from the file");
+    await s.click('.notice button[data-action="Undo"]');
+    await s.waitUntil(async () => JSON.stringify(await state(s)) === JSON.stringify(["Ada", false, "", "Canada", "note"]), "Undo restores the typed values");
+    // Again, then once more: nothing left to reset.
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Reset form");
+    await s.click('[role="option"][data-command="edit.resetForm"]');
+    await s.waitUntil(async () => JSON.stringify(await state(s)) === reset, "reset again");
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Reset form");
+    await s.click('[role="option"][data-command="edit.resetForm"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("already shows its default values")), "nothing to reset");
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "s"]);
+    await s.waitFor("#output");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved reset.pdf")), "saved notice");
+  });
+  assert(sha(src) === before, "source PDF unchanged");
+  if (CLI) {
+    const f = JSON.parse(execFileSync(CLI, ["--json", "fields", out], { encoding: "utf8" })).result.data.fields;
+    const v = Object.fromEntries(f.map((x) => [x.name, x.kind === "radio" ? x.widgets.find((w) => w.checked)?.export_value : x.kind === "checkbox" ? x.widgets[0].checked : x.value]));
+    assert(v.full_name === "Jane Doe" && v.subscribe === true && v.plan === "pro" && v.country === "Japan" && (v.comments ?? "") === "", `CLI reads the reset values: ${JSON.stringify(v)}`);
+  }
+});
+
+await test("split: by bookmarks (parts named after them) and by size (every part under the limit)", async () => {
+  const dir = mkdtempSync(join(work, "split-"));
+  const openSplit = async (s) => {
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Split document");
+    await s.click('[role="option"][data-command="pages.split"]');
+    await s.waitFor("#output");
+  };
+  const radio = (s, label) => s.exec(`[...document.querySelectorAll('[role=dialog] [role=radio]')].find(b => b.textContent.trim() === ${JSON.stringify(label)}).click()`);
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await openSplit(s);
+    await radio(s, "By bookmarks");
+    await s.waitUntil(async () => (await s.text('[data-testid="split-bookmarks-note"]')) === "Creates 5 files, named after the bookmarks.", "bookmark preview");
+    await s.type("#output", dir);
+    await axeCheck(s, "split-bookmarks");
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved 5 files")), "saved notice");
+  });
+  for (let i = 1; i <= 5; i++) assert(existsSync(join(dir, `five-pages_0${i}_Chapter ${i}.pdf`)), `part ${i} named after its bookmark`);
+  if (CLI) assert(pdfPages(join(dir, "five-pages_03_Chapter 3.pdf")) === 1, "one page per chapter");
+
+  const dir2 = mkdtempSync(join(work, "split-size-"));
+  await withApp([join(FIX, "photo-heavy.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await openSplit(s);
+    await radio(s, "By size");
+    await s.type("#split-size", "5");
+    await s.exec("const u = document.querySelector('[aria-label=\"Size unit\"]'); u.value = 'KB'; u.dispatchEvent(new Event('change', { bubbles: true }))");
+    await s.waitUntil(async () => (await s.attr('[data-testid="tool-start"]', "title")) === "Choose a size of at least 10 KB.", "tiny limit refused");
+    await s.type("#split-size", "300");
+    await s.type("#output", dir2);
+    await s.waitUntil(() => s.exec("return !document.querySelector('[data-testid=tool-start]').hasAttribute('aria-disabled')"), "limit accepted");
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => /Saved \d+ files/.test(t)), "saved notice");
+  });
+  const parts = readdirSync(dir2).filter((f) => f.endsWith(".pdf"));
+  assert(parts.length >= 2, `several parts (${parts.length})`);
+  for (const f of parts) {
+    const size = statSync(join(dir2, f)).size;
+    assert(size <= 300 * 1024 || pdfPages(join(dir2, f)) === 1, `${f} is ${size} bytes`);
+  }
+});
+
 await test("organize pages: keyboard reorder, rotate, duplicate; saved file verified independently", async () => {
   const out = join(work, "organized.pdf");
   await withApp([join(FIX, "five-pages.pdf")], async (s) => {
@@ -1125,6 +1334,287 @@ await test("export as text: chosen pages saved as UTF-8 text with page sections;
   });
 });
 
+/** One part of a ZIP package (the Word file), read with Node's own inflate. */
+function zipPart(file, name) {
+  const b = readFileSync(file);
+  const eocd = b.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  assert(eocd >= 0, `${file} is a ZIP package`);
+  let p = b.readUInt32LE(eocd + 16);
+  const n = b.readUInt16LE(eocd + 10);
+  for (let i = 0; i < n; i++) {
+    const method = b.readUInt16LE(p + 10);
+    const size = b.readUInt32LE(p + 20);
+    const nameLen = b.readUInt16LE(p + 28);
+    const extra = b.readUInt16LE(p + 30);
+    const comment = b.readUInt16LE(p + 32);
+    const local = b.readUInt32LE(p + 42);
+    const entry = b.toString("utf8", p + 46, p + 46 + nameLen);
+    if (entry === name) {
+      const start = local + 30 + b.readUInt16LE(local + 26) + b.readUInt16LE(local + 28);
+      const data = b.subarray(start, start + size);
+      return (method === 8 ? inflateRawSync(data) : data).toString("utf8");
+    }
+    p += 46 + nameLen + extra + comment;
+  }
+  throw new Error(`${name} not in ${file}`);
+}
+
+await test("convert to Word: palette and page tools; editable Word file with columns, headings, table, link; notes reported; source unchanged", async () => {
+  const src = join(FIX, "article.pdf");
+  const before = sha(src);
+  const out = join(work, "article-converted.docx");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Convert to Word");
+    await s.click('[role="option"][data-command="file.toWord"]');
+    await s.waitFor("#output");
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("article.docx"), "default name is the document's with .docx");
+    await s.type("#output", out);
+    await axeCheck(s, "convert-to-word-dialog");
+    writeFileSync(join(ART, "convert-to-word.png"), await s.screenshot());
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved article-converted.docx")), "saved notice");
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("fonts Word may not have")), "font substitution reported");
+    // Only PDFs open in PageWeave: the notice offers Show in folder, not Open.
+    assert(await s.exec("return !!document.querySelector('.notice button[data-action=\"Show in folder\"]')"), "show in folder offered");
+  });
+  assert(sha(src) === before, "source PDF unchanged");
+  const xml = zipPart(out, "word/document.xml");
+  assert(xml.includes('<w:cols w:num="2"'), "two columns");
+  assert((xml.match(/<w:pStyle w:val="Heading/g) ?? []).length >= 5, "headings styled");
+  assert(xml.includes("1 Introduction") && xml.includes("rivers.example.org") && xml.includes("Station"), "text carried over");
+  assert(xml.includes("<w:tbl>"), "the ruled table is a Word table");
+  assert(zipPart(out, "word/_rels/document.xml.rels").includes("https://rivers.example.org/data"), "link kept");
+});
+
+await test("open an Office file: a Word file passed to the app opens the convert dialog; converted with LibreOffice and opened; macros off", async () => {
+  // A Word file made by PageWeave's own export of the article.
+  const docx = join(work, "office-input.docx");
+  if (CLI) execFileSync(CLI, ["to-docx", join(FIX, "article.pdf"), "-o", docx]);
+  else throw new Skip("needs the CLI to make the Word file");
+  const before = sha(docx);
+  const out = join(work, "office-input.pdf");
+  await withApp([], async (s) => {
+    const engine = await s.exec("return window.__TAURI_INTERNALS__.invoke('office_engine')");
+    if (!engine) throw new Skip("LibreOffice is not installed on this machine");
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Open a Word");
+    await s.click('[role="option"][data-command="file.openOffice"]');
+    await s.waitFor('[data-testid="office-start"]');
+    assert((await s.exec("return document.querySelector('[data-testid=office-start]').getAttribute('title')")) === "Choose a file first.", "needs a file");
+    await s.keys(["Escape"]);
+  });
+  await withApp([docx], async (s) => {
+    await s.waitFor('[data-testid="office-start"]');
+    assert((await s.text('[data-testid="office-file"]')) === "office-input.docx", "the file passed to the app");
+    assert((await s.exec("return document.querySelector('#office-output').value")).endsWith("office-input.pdf"), "PDF next to it");
+    await s.exec("document.querySelector('#office-output').value = ''");
+    await s.type("#office-output", out);
+    await axeCheck(s, "open-office-dialog");
+    writeFileSync(join(ART, "open-office.png"), await s.screenshot());
+    await s.click('[data-testid="office-start"]');
+    await s.waitUntil(async () => (await s.exec("return [...document.querySelectorAll('.tab-label')].map(t => t.textContent).join('|')")).includes("office-input.pdf"), "the converted PDF opened", 120000);
+    await pageLoaded(s, 0);
+  });
+  assert(sha(docx) === before, "the Word file is not changed");
+  assert(existsSync(out), "PDF written");
+});
+
+await test("convert to PowerPoint: one slide per page with text boxes, table and picture; source unchanged", async () => {
+  const src = join(FIX, "article.pdf");
+  const before = sha(src);
+  const out = join(work, "article-slides.pptx");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Convert to PowerPoint");
+    await s.click('[role="option"][data-command="file.toPowerPoint"]');
+    await s.waitFor("#output");
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("article.pptx"), "default name");
+    await s.type("#output", out);
+    await axeCheck(s, "convert-to-powerpoint-dialog");
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved article-slides.pptx")), "saved notice");
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("scaled to the slide size")), "page size note");
+  });
+  assert(sha(src) === before, "source unchanged");
+  const s1 = zipPart(out, "ppt/slides/slide1.xml");
+  const s2 = zipPart(out, "ppt/slides/slide2.xml");
+  zipPart(out, "ppt/slides/slide3.xml");
+  assert(s1.includes("1 Introduction") && s1.includes("<p:pic>") && s1.includes("hlinkClick"), "slide 1: text, picture, link");
+  assert(s2.includes("<a:tbl>") && s2.includes("Station"), "slide 2: table");
+});
+
+await test("translate: page to German as Word (layout kept), language detected; pairs through English are said; source unchanged", async () => {
+  const src = join(FIX, "five-pages.pdf");
+  const before = sha(src);
+  const out = join(work, "five-pages-de.docx");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Translate");
+    await s.click('[role="option"][data-command="file.translate"]');
+    await s.waitFor("#translate-to");
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('#translate-to option').length")) === 5, "five languages offered");
+    // French → German has no direct model: the dialog says it goes through English.
+    await s.exec("const f = document.querySelector('#translate-from'); f.value = 'fr'; f.dispatchEvent(new Event('change', { bubbles: true }));");
+    await s.exec("const t = document.querySelector('#translate-to'); t.value = 'de'; t.dispatchEvent(new Event('change', { bubbles: true }));");
+    await s.waitFor('[data-testid="translate-via"]');
+    // Same language on both sides is refused with a reason.
+    await s.exec("const f = document.querySelector('#translate-from'); f.value = 'de'; f.dispatchEvent(new Event('change', { bubbles: true }));");
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=tool-start]').title")) === "Choose two different languages.", "same language refused");
+    // Detect the language, translate page 1 into German as a Word document.
+    await s.exec("const f = document.querySelector('#translate-from'); f.value = ''; f.dispatchEvent(new Event('change', { bubbles: true }));");
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("five-pages-de.docx"), "default name");
+    await s.exec("const c = [...document.querySelectorAll('[role=dialog] input[type=checkbox]')].find((x) => x.checked); if (c) c.click();");
+    await s.type("#pages", "1");
+    await s.waitUntil(async () => (await s.text("#pages-msg")) === "1 page selected", "page 1 chosen");
+    await s.type("#output", out);
+    await axeCheck(s, "translate-dialog");
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved five-pages-de.docx")), "saved notice", 180000);
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Machine translation from English to German")), "review note");
+  });
+  assert(sha(src) === before, "source unchanged");
+  const doc = zipPart(out, "word/document.xml");
+  assert(/fuchs/i.test(doc) && doc.includes("PWMARK001") && doc.includes("PageWeave"), `German text with the marker and name kept: ${doc.slice(0, 600)}`);
+});
+
+await test("read aloud: words highlighted as heard, pause/resume, next sentence, speed saved, stop; save as audio", async () => {
+  const src = join(FIX, "article.pdf");
+  const out = join(work, "article-page2.wav");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    // Shortcut starts reading at the current page.
+    await s.keys(["Control", "Shift", "l"]);
+    await s.waitFor('[data-testid="readbar"]');
+    await axeCheck(s, "read-aloud-bar");
+    await s.waitUntil(async () => ["playing", "error"].includes(await s.exec("return document.querySelector('[data-testid=readbar]').dataset.status")), "reading starts", 30000);
+    const status = await s.exec("return document.querySelector('[data-testid=readbar]').dataset.status");
+    assert(status === "playing", `reading plays (status ${status}: ${await s.text('[data-testid="readbar"] [role="status"]')})`);
+    // The highlight moves with the audio.
+    await s.waitFor('.reading-mark[data-reading="0"]', 15000);
+    writeFileSync(join(ART, "read-aloud.png"), await s.screenshot());
+    const w1 = Number(await s.exec("return document.querySelector('[data-testid=readbar]').dataset.where"));
+    await s.waitUntil(async () => Number(await s.exec("return document.querySelector('[data-testid=readbar]').dataset.where")) > w1, "highlight advances", 15000);
+    // Pause stops the highlight; resume continues.
+    await s.click('[data-testid="read-toggle"]');
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=readbar]').dataset.status")) === "paused", "paused");
+    const w2 = Number(await s.exec("return document.querySelector('[data-testid=readbar]').dataset.where"));
+    await new Promise((r) => setTimeout(r, 800));
+    assert(Number(await s.exec("return document.querySelector('[data-testid=readbar]').dataset.where")) === w2, "no movement while paused");
+    await s.click('[data-testid="read-toggle"]');
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=readbar]').dataset.status")) === "playing", "resumed");
+    // Next sentence jumps ahead.
+    await s.click('[data-testid="read-next"]');
+    await s.waitUntil(async () => Number(await s.exec("return document.querySelector('[data-testid=readbar]').dataset.where")) > w2, "next sentence");
+    // A new speed restarts the sentence and is saved.
+    await s.exec("const e = document.querySelector('#read-rate'); e.value = '1.5'; e.dispatchEvent(new Event('change', { bubbles: true }));");
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=readbar]').dataset.status")) === "playing", "playing at 1.5x", 30000);
+    // Scrolling by hand stops following until Follow is pressed.
+    await s.exec("document.querySelector('[data-testid=viewer]').dispatchEvent(new WheelEvent('wheel', { deltaY: 200, bubbles: true }))");
+    await s.waitFor('[data-testid="read-follow"]');
+    await s.click('[data-testid="read-follow"]');
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=read-follow]')")), "following again");
+    // Stop from the toolbar button.
+    await s.click('[data-command="read.stop"]');
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=readbar]')")), "bar closed");
+    assert(!(await s.exec("return !!document.querySelector('.reading-mark')")), "highlight removed");
+    // Read from a page's context menu, then stop with the palette command.
+    await s.exec("const p = document.querySelector('[data-page=\"1\"]'); p.scrollIntoView(); const r = p.getBoundingClientRect(); p.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: r.left + 40, clientY: r.top + 40 }))");
+    await s.click('[role="menuitem"][data-command="read.aloud"]');
+    // Scrolling by hand before anything is highlighted also stops following (seen on Windows, where
+    // the first word is reported a moment after playback starts).
+    await s.waitFor('[data-testid="readbar"]');
+    await s.exec("document.querySelector('[data-testid=viewer]').dispatchEvent(new WheelEvent('wheel', { deltaY: 100, bubbles: true }))");
+    await s.waitFor('[data-testid="read-follow"]');
+    await s.click('[data-testid="read-follow"]');
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=readbar]')?.dataset.status")) === "playing", "reading page 2", 30000);
+    assert((await s.text('[data-testid="readbar"] [role="status"]')).includes("page 2"), "reads page 2");
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Stop reading");
+    await s.click('[role="option"][data-command="read.stop"]');
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=readbar]')")), "stopped from the palette");
+    // Save page 2 as audio with the saved speed.
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Save as audio");
+    await s.click('[role="option"][data-command="read.saveAudio"]');
+    await s.waitFor("#output");
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("article.wav"), "default name");
+    await s.type("#output", out);
+    await s.exec("const c = [...document.querySelectorAll('[role=dialog] input[type=checkbox]')].find((x) => x.checked); if (c) c.click();");
+    await s.type("#pages", "2");
+    await s.waitUntil(async () => (await s.text("#pages-msg")) === "1 page selected", "page 2 chosen");
+    await axeCheck(s, "save-audio-dialog");
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved article-page2.wav")), "saved notice", 120000);
+  });
+  const wav = readFileSync(out);
+  assert(wav.subarray(0, 4).toString() === "RIFF" && wav.subarray(8, 12).toString() === "WAVE", "a WAV file");
+  assert(wav.length > 44 + 16000, "with audio");
+  // The speed is kept across a restart.
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-command="read.aloud"]');
+    await s.waitFor('[data-testid="readbar"]');
+    assert((await s.exec("return document.querySelector('#read-rate').value")) === "1.5", "speed restored");
+    await s.click('[data-testid="read-stop"]');
+  });
+});
+
+await test("export tables: Excel workbook with values kept and merged cells; CSV files into a folder; nothing found is said", async () => {
+  const src = join(FIX, "tables.pdf");
+  const out = join(work, "tables-export.xlsx");
+  const folder = mkdtempSync(join(work, "csv-"));
+  const open = async (s) => {
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Export tables");
+    await s.click('[role="option"][data-command="file.exportTables"]');
+    await s.waitFor("#output");
+  };
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await open(s);
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("tables.xlsx"), "default workbook name");
+    await s.click('[data-testid="sheet-format-csv"]');
+    assert(!(await s.exec("return document.querySelector('#output').value")).endsWith(".xlsx"), "CSV saves into a folder");
+    await s.click('[data-testid="sheet-format-xlsx"]');
+    await s.type("#output", out);
+    await axeCheck(s, "export-tables-dialog");
+    writeFileSync(join(ART, "export-tables.png"), await s.screenshot());
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved tables-export.xlsx") && t.includes("2 tables")), "saved notice with the table count");
+    await open(s);
+    await s.click('[data-testid="sheet-format-csv"]');
+    await s.type("#output", folder);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved 2 files")), "CSV files saved");
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("CSV keeps only the text")), "CSV loss explained");
+  });
+  const sheet = zipPart(out, "xl/worksheets/sheet1.xml");
+  assert(sheet.includes('<mergeCell ref="A1:B1"/>'), "merged header");
+  assert(sheet.includes(">007</t>") && sheet.includes(">00042</t>") && sheet.includes(">1,234.50</t>") && sheet.includes(">12.40</t>"), "values kept as text");
+  assert(sheet.includes("<v>-4.5</v>"), "plain number typed");
+  const csv = readFileSync(join(folder, "tables_p1_t1.csv"), "utf8");
+  assert(csv.includes('007,Savings,2026-03-12,"1,234.50"'), `CSV row: ${csv}`);
+  // A document without tables: the dialog says so and writes nothing.
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await open(s);
+    const none = join(work, "none.xlsx");
+    await s.type("#output", none);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await s.text('[role="dialog"]')).includes("No tables were found"), "reason shown in the dialog");
+    assert(!existsSync(none), "nothing written");
+  });
+});
+
 await test("reduce file size: tab menu and palette; smaller verified copy with the same text; sizes reported; second pass refused", async () => {
   const src = join(FIX, "uncompressed-report.pdf");
   const before = sha(src);
@@ -1136,7 +1626,7 @@ await test("reduce file size: tab menu and palette; smaller verified copy with t
     await s.click('[role="option"][data-command="file.reduceSize"]');
     await s.waitFor("#output");
     assert((await s.exec("return document.querySelector('#output').value")).endsWith("uncompressed-report-smaller.pdf"), "default name");
-    assert((await s.exec("return document.querySelector('#pages')")) === null, "whole document, no page range");
+    assert((await s.exec("return !!document.querySelector('#pages')")) === false, "whole document, no page range");
     await s.type("#output", out);
     await axeCheck(s, "reduce-size-dialog");
     writeFileSync(join(ART, "reduce-size-dialog.png"), await s.screenshot());
@@ -1172,7 +1662,7 @@ await test("reduce file size with image resolution: preset applied; images resam
     await s.type('[role="dialog"] input', "Reduce file size");
     await s.click('[role="option"][data-command="file.reduceSize"]');
     await s.waitFor('[data-testid="optimize-images"]');
-    assert((await s.exec("return document.querySelector('#optimize-preset')")) === null, "preset hidden while off");
+    assert((await s.exec("return !!document.querySelector('#optimize-preset')")) === false, "preset hidden while off");
     await s.click('[data-testid="optimize-images"]');
     await s.waitFor("#optimize-preset");
     assert((await s.exec("return document.querySelector('#optimize-preset').value")) === "standard", "standard by default");
@@ -1232,7 +1722,7 @@ await test("compare documents: with an open tab; difference list, side-by-side h
     await axeCheck(s, "compare-result");
     writeFileSync(join(ART, "compare-result.png"), await s.screenshot());
     await s.keys(["Escape"]);
-    await s.waitUntil(async () => (await s.exec("return document.querySelector('[role=dialog]')")) === null, "closed");
+    await s.waitUntil(async () => (await s.exec("return !!document.querySelector('[role=dialog]')")) === false, "closed");
     assert((await s.exec("return document.querySelectorAll('.tab-label .name').length")) === 2, "tabs unchanged");
   });
 });
@@ -1260,7 +1750,7 @@ await test("compare documents: another file by path; errors explained; swap orde
     await s.waitFor('[data-testid="compare-summary"]');
     assert((await s.text('[data-testid="compare-summary"]')) === "4 pages changed · 1 page inserted · 1 page deleted", "same result after swapping");
     await s.keys(["Escape"]);
-    await s.waitUntil(async () => (await s.exec("return document.querySelector('[role=dialog]')")) === null, "closed");
+    await s.waitUntil(async () => (await s.exec("return !!document.querySelector('[role=dialog]')")) === false, "closed");
     assert((await s.exec("return document.querySelectorAll('.tab-label .name').length")) === 1, "the compared file did not become a tab");
   });
 });
@@ -1353,8 +1843,8 @@ await test("print: Ctrl+P, page range and resolution; prepared pages at page siz
     assert(job.images.every((i) => i[0] && i[1] > 0), "every page image loaded before printing");
     assert(Math.abs(job.images[0][1] - Math.round((595 * 150) / 72)) <= 2, `A4 at 150 dpi is ~1240 px wide (${job.images[0][1]})`);
     assert(job.css.includes("size: 595pt 842pt") && job.css.includes("size: 792pt 612pt"), "page sizes in @page rules");
-    await s.waitUntil(async () => (await s.exec("return document.querySelector('[role=dialog]')")) === null, "dialog closes after printing");
-    assert((await s.exec("return document.querySelector('#print-root')")) === null, "prepared pages removed");
+    await s.waitUntil(async () => (await s.exec("return !!document.querySelector('[role=dialog]')")) === false, "dialog closes after printing");
+    assert((await s.exec("return !!document.querySelector('#print-root')")) === false, "prepared pages removed");
     // Ctrl+P inside a text field never reaches the browser's own print (which would print the
     // app's screens): the key's default action is prevented. (Listener added after the app's.)
     await s.exec("window.addEventListener('keydown', (e) => { if (e.ctrlKey && e.key.toLowerCase() === 'p') window.__ctrlPPrevented = e.defaultPrevented; }); return 1");
@@ -1739,7 +2229,7 @@ await test("images to PDF: opens from the start screen; explains what is missing
     await axeCheck(s, "images-to-pdf-dialog");
     writeFileSync(join(ART, "images-to-pdf-dialog.png"), await s.screenshot());
     await s.keys(["Escape"]);
-    await s.waitUntil(async () => (await s.exec("return document.querySelector('[role=dialog]')")) === null, "closed");
+    await s.waitUntil(async () => (await s.exec("return !!document.querySelector('[role=dialog]')")) === false, "closed");
   });
   if (CLI) {
     // The conversion itself, through the same engine (the native file picker cannot be automated).
@@ -1974,7 +2464,7 @@ await test("remove password: copy opens without a password; unavailable with a r
     await s.exec("[...document.querySelectorAll('.notice button')].find(b => b.textContent === 'Open').click(); return 1");
     await s.waitUntil(async () => (await s.exec("return [...document.querySelectorAll('.tab-label .name')].map(n => n.textContent)")).includes("unlocked.pdf"), "copy opened");
     await pageLoaded(s, 0);
-    assert((await s.exec("return document.querySelector('#pdf-password')")) === null, "no password asked");
+    assert((await s.exec("return !!document.querySelector('#pdf-password')")) === false, "no password asked");
     // On the unprotected copy the command is unavailable and says why.
     await openPalette(s, "Remove password");
     const reason = await s.exec("const o = document.querySelector('[data-command=\"file.unprotect\"]'); return o.getAttribute('aria-disabled') + '|' + o.textContent");
@@ -2204,6 +2694,279 @@ await test("redaction: mark by search, selection and dragged area; review; apply
     assert(!t.includes("SECRET") && !t.includes("PWHIDE") && t.includes("is closed") && t.includes("Public footer text"), `independent text check: ${t}`);
     const t2 = JSON.parse(execFileSync(CLI, ["--json", "text", "--pages", "2", out], { encoding: "utf8" })).result.data.pages[0].text;
     assert(t2.trim() === "", `whole-page redaction leaves no text on page 2: ${t2}`);
+  }
+});
+
+await test("mark patterns for redaction: find sensitive text, untick one match, mark and apply; values gone, the unticked one kept", async () => {
+  const src = join(FIX, "sensitive-info.pdf");
+  const out = join(work, "sensitive-redacted.pdf");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Mark patterns");
+    await s.click('[role="option"][data-command="redact.markPatterns"]');
+    await s.waitFor('[data-testid="patterns-find"]');
+    await s.click('[role="dialog"] input[data-kind="phone"]'); // leave phone numbers out
+    await s.click('[data-testid="patterns-find"]');
+    await s.waitUntil(async () => (await s.text('[data-testid="patterns-summary"]')) === "5 matches on 2 pages", "matches found");
+    const rows = await s.exec("return [...document.querySelectorAll('[data-testid=patterns-hits] li')].map(l => l.textContent)");
+    assert(rows.some((r) => r.includes("E-mail") && r.includes("ada.lovelace@example.org")) && !rows.some((r) => r.includes("7946")), `rows: ${JSON.stringify(rows)}`);
+    const ssn = rows.findIndex((r) => r.includes("123-45-6789"));
+    await s.click(`[data-testid="patterns-hits"] li:nth-child(${ssn + 1}) input`);
+    await s.waitUntil(async () => (await s.text('[data-testid="patterns-mark"]')) === "Mark 4 for redaction", "one match unticked");
+    await axeCheck(s, "redact-patterns-dialog");
+    writeFileSync(join(ART, "redact-patterns.png"), await s.screenshot());
+    await s.click('[data-testid="patterns-mark"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Marked 4 for redaction")), "marked notice");
+    await s.waitUntil(async () => (await annotCount(s, "redact")) >= 3, "marks drawn on page 1");
+    await s.click('[data-testid="redaction-marks"]');
+    await s.waitFor("#redact-output");
+    await s.type("#redact-output", out);
+    await s.click('[data-testid="redact-apply"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved sensitive-redacted.pdf")), "saved notice", 30000);
+  });
+  assert(existsSync(out), "redacted copy exists");
+  if (CLI) {
+    const pages = JSON.parse(execFileSync(CLI, ["--json", "text", out], { encoding: "utf8" })).result.data.pages.map((p) => p.text).join("\n");
+    for (const gone of ["lovelace@", "4111 1111 1111 1111", "WEST", "grace@"]) assert(!pages.includes(gone), `${gone} removed: ${pages}`);
+    for (const kept of ["123-45-6789", "+44 20 7946 0958", "4111 1111 1111 1112"]) assert(pages.includes(kept), `${kept} kept: ${pages}`);
+  }
+});
+
+await test("accessibility check: problems grouped with text labels, review items listed, page buttons jump", async () => {
+  await withApp([join(FIX, "tagged-issues.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Check accessibility");
+    await s.click('[role="option"][data-command="file.accessibility"]');
+    await s.waitUntil(async () => (await s.text('[data-testid="a11y-summary"]')).includes("to fix"), "report shown");
+    const fix = await s.text('[data-testid="a11y-group-fail"]');
+    for (const want of ["Fails", "Document language", "Pictures have alternate text", "Form fields are labelled"]) assert(fix.includes(want), `needs fixing lists ${want}: ${fix}`);
+    const warn = await s.text('[data-testid="a11y-group-warning"]');
+    assert(warn.includes("Tables have header cells") && warn.includes("Fonts embedded") && warn.includes("Helvetica"), `warnings: ${warn}`);
+    assert((await s.text('[data-testid="a11y-group-manual"]')).includes("Reading order"), "manual review items");
+    await axeCheck(s, "accessibility-dialog");
+    writeFileSync(join(ART, "accessibility-check.png"), await s.screenshot());
+    await s.click('[aria-label="Go to page 1 (Pictures have alternate text)"]');
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=a11y-summary]')")), "dialog closed after jumping");
+  });
+});
+
+await test("page labels: roman front matter then prefixed numbers; preview; saved copy shows them in thumbnails", async () => {
+  const out = join(work, "five-labelled.pdf");
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Page labels");
+    await s.click('[role="option"][data-command="pages.labels"]');
+    await s.waitFor('[data-testid="labels-start"]');
+    const setSelect = (label, value) =>
+      s.exec(`const el = document.querySelector('[aria-label="' + arguments[0] + '"]'); el.value = arguments[1]; el.dispatchEvent(new Event('change', { bubbles: true })); return 1`, label, value);
+    await setSelect("Range 1: numbers", "roman_lower");
+    await s.click('[data-testid="labels-add"]');
+    await s.type('[aria-label="Range 2: from page"]', "3");
+    await s.type('[aria-label="Range 2: prefix"]', "Ch-");
+    await s.waitUntil(async () => (await s.text('[data-testid="labels-preview"]')) === "Page 1 → i · Page 2 → ii · Page 3 → Ch-1 · Page 4 → Ch-2 · Page 5 → Ch-3", "preview");
+    await s.type('[aria-label="Range 2: from page"]', "1");
+    await s.waitUntil(async () => (await s.attr('[data-testid="labels-start"]', "title")) === "Range 2 must start after range 1.", "invalid range explained");
+    await s.type('[aria-label="Range 2: from page"]', "3");
+    await s.type("#labels-output", out);
+    await axeCheck(s, "page-labels-dialog");
+    writeFileSync(join(ART, "page-labels.png"), await s.screenshot());
+    await s.click('[data-testid="labels-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved five-labelled.pdf")), "saved notice");
+    await s.click('.notice button[data-action="Open"]');
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('.tab-label[aria-current=page] .name')?.textContent")) === "five-labelled.pdf", "copy opened");
+    await s.waitUntil(async () => JSON.stringify(await s.exec("return [...document.querySelectorAll('[data-thumb] .num')].map(n => n.textContent)")) === JSON.stringify(["i", "ii", "Ch-1", "Ch-2", "Ch-3"]), "thumbnails show the labels");
+  });
+  if (CLI) {
+    const pages = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data.pages.map((p) => p.label);
+    assert(JSON.stringify(pages) === JSON.stringify(["i", "ii", "Ch-1", "Ch-2", "Ch-3"]), `CLI labels ${JSON.stringify(pages)}`);
+  }
+});
+
+await test("comments panel: delete a note and change a highlight's comment; closing asks; saved copy verified", async () => {
+  const src = join(FIX, "hidden-info.pdf");
+  const before = sha(src);
+  const out = join(work, "comments-edited.pdf");
+  const items = (s) => s.exec("return [...document.querySelectorAll('.comments li')].map(li => li.textContent)");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click("#sb-tab-comments");
+    await s.waitUntil(async () => (await items(s)).length === 4, "four comments listed");
+    assert((await items(s))[0].includes("Note") && (await items(s))[0].includes("Reviewer note PWCOMMENT"), `first: ${(await items(s))[0]}`);
+    await s.click('[aria-label="Delete Note on page 1"]');
+    await s.waitUntil(async () => (await items(s))[0].includes("Removed when you save a copy"), "pending delete shown");
+    await s.click('[aria-label="Edit comment of Highlight on page 1"]');
+    await s.type('[aria-label="Comment for Highlight on page 1"]', "Checked by QA");
+    await s.click('[data-testid="comment-apply"]');
+    await s.waitUntil(async () => (await items(s))[1].includes("Checked by QA") && (await items(s))[1].includes("Changed"), "pending text shown");
+    await s.waitUntil(async () => (await unsavedText(s)) === "2 unsaved changes", "two unsaved changes");
+    await axeCheck(s, "comments-panel");
+    writeFileSync(join(ART, "comments-panel.png"), await s.screenshot());
+    // Closing the tab asks first.
+    await s.keys(["Control", "w"]);
+    await s.waitFor('[data-testid="unsaved-cancel"]');
+    await s.click('[data-testid="unsaved-cancel"]');
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "s"]);
+    await s.waitFor("#output");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved comments-edited.pdf")), "saved notice");
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('.tab-label[aria-current=page] .name')?.textContent")) === "comments-edited.pdf", "copy opened");
+    await s.click("#sb-tab-comments");
+    await s.waitUntil(async () => {
+      const it = await items(s);
+      return it.length === 3 && it[0].includes("Checked by QA") && !it.join(" ").includes("PWCOMMENT");
+    }, "copy lists the changed comments");
+    assert((await unsavedText(s)) === "", "nothing unsaved after saving");
+  });
+  assert(sha(src) === before, "source unchanged");
+  if (CLI) {
+    const list = execFileSync(CLI, ["annotations", out], { encoding: "utf8" });
+    assert(!list.includes("PWCOMMENT") && list.includes("Checked by QA") && list.includes("3 annotation(s)"), `CLI listing:\n${list}`);
+  }
+});
+
+await test("batch: reduce size of the open files into a folder, again with existing results kept, then an OCR batch stopped part-way", async () => {
+  const dir = mkdtempSync(join(work, "batch-"));
+  const scans = [1, 2, 3].map((i) => {
+    const p = join(dir, `scan${i}.pdf`);
+    copyFileSync(join(FIX, "scanned.pdf"), p);
+    return p;
+  });
+  const outDir = join(dir, "out");
+  mkdirSync(outDir);
+  const openBatch = async (s) => {
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Process several");
+    await s.click('[role="option"][data-command="file.batch"]');
+    await s.waitFor('[data-testid="batch-start"]');
+  };
+  const setAction = (s, v) => s.exec("const el = document.querySelector('#batch-action'); el.value = arguments[0]; el.dispatchEvent(new Event('change', { bubbles: true })); return 1", v);
+  await withApp([join(FIX, "uncompressed-report.pdf"), join(FIX, "five-pages.pdf")], async (s) => {
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label').length")) === 2, "two tabs");
+    await pageLoaded(s, 0);
+    await openBatch(s);
+    assert((await s.attr('[data-testid="batch-start"]', "title")) === "Add PDF files first.", "needs files");
+    await s.click('[data-testid="batch-add-open"]');
+    await s.type("#batch-folder", outDir);
+    await setAction(s, "optimize");
+    await axeCheck(s, "batch-dialog");
+    await s.click('[data-testid="batch-start"]');
+    await s.waitUntil(async () => (await s.text('[data-testid="batch-summary"]')) === "2 done (of 2)", "results", 60000);
+    const rows = await s.exec("return [...document.querySelectorAll('[data-testid=batch-results] li')].map(l => l.dataset.state + '|' + l.textContent)");
+    assert(rows[0].startsWith("done|uncompressed-report.pdf") && rows[0].includes("Saved uncompressed-report-smaller.pdf"), `rows: ${JSON.stringify(rows)}`);
+    writeFileSync(join(ART, "batch-results.png"), await s.screenshot());
+    await s.click('[data-testid="batch-close"]');
+    // The same batch again: existing results are kept and new ones get another name.
+    await openBatch(s);
+    await s.click('[data-testid="batch-add-open"]');
+    await s.type("#batch-folder", outDir);
+    await setAction(s, "optimize");
+    await s.click('[data-testid="batch-start"]');
+    await s.waitUntil(async () => (await s.text('[data-testid="batch-summary"]')) === "2 done (of 2)", "second run", 60000);
+    await s.click('[data-testid="batch-close"]');
+  });
+  const outs = readdirSync(outDir).filter((f) => f.endsWith(".pdf")).sort();
+  assert(outs.length === 4 && outs.includes("uncompressed-report-smaller.pdf") && outs.includes("five-pages-smaller.pdf"), `both runs kept: ${JSON.stringify(outs)}`);
+  if (CLI) {
+    const t = JSON.parse(execFileSync(CLI, ["--json", "text", "--pages", "1", join(outDir, "five-pages-smaller.pdf")], { encoding: "utf8" })).result.data.pages[0].text;
+    assert(t.includes("PWMARK001"), "result keeps the text");
+  }
+
+  await withApp(scans, async (s) => {
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label').length")) === 3, "three tabs");
+    await pageLoaded(s, 0);
+    await openBatch(s);
+    await s.click('[data-testid="batch-add-open"]');
+    await s.type("#batch-folder", outDir);
+    await setAction(s, "ocr");
+    await s.click('[data-testid="batch-start"]');
+    await s.waitFor('[data-testid="batch-stop"]');
+    assert((await s.attr('[data-testid="batch-close"]', "aria-disabled")) === "true", "can't close while running");
+    await s.click('[data-testid="batch-stop"]');
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=batch-stop]')")), "batch stopped", 60000);
+    const sum = await s.text('[data-testid="batch-summary"]');
+    assert(/cancelled/.test(sum), `some files were stopped: ${sum}`);
+  });
+  const leftovers = readdirSync(outDir).filter((f) => f.startsWith(".pw-staged"));
+  assert(leftovers.length === 0, `no partial files left: ${leftovers}`);
+});
+
+await test("settings ▸ resources: PDF engine and text recognition verified against their checksums, speech voices found; check again", async () => {
+  await withApp([], async (s) => {
+    await s.keys(["Control", ","]);
+    await s.waitFor("#tab-resources");
+    await s.click("#tab-resources");
+    const states = () => s.exec("return [...document.querySelectorAll('[data-testid=resources-list] li')].map(l => l.dataset.resource + ':' + l.dataset.state)");
+    // Office documents are optional (LibreOffice installed separately): ready or not installed.
+    await s.waitUntil(async () => /^\["pdf_engine:ready","text_recognition:ready","translation:ready","read_aloud:ready","office_documents:(ready|missing)"\]$/.test(JSON.stringify(await states())), "required ready, optional listed", 30000);
+    const text = await s.text('[data-testid="resources-list"]');
+    assert(!/\.onnx|\.dll|\.so|onnxruntime|pdfium/i.test(text), `no technical file or model names in the UI: ${text}`);
+    await s.click('[data-testid="resources-check"]');
+    await s.waitUntil(async () => (await s.text('[data-testid="resources-check"]')) === "Check again", "check finished", 30000);
+    await axeCheck(s, "settings-resources");
+  });
+});
+
+await test("engine crash on a damaged file fails the job with a reason; the app stays open and keeps working", async () => {
+  const src = join(FIX, "..", "hostile", "redact-generate-content-crash.pdf");
+  const out = join(work, "crash-redacted.pdf");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Mark current page");
+    await s.click('[role="option"][data-command="redact.markPage"]');
+    await s.waitUntil(async () => (await annotCount(s, "redact")) === 1, "page marked");
+    await s.click('[data-testid="redaction-marks"]');
+    await s.waitFor("#redact-output");
+    await s.type("#redact-output", out);
+    await s.click('[data-testid="redact-apply"]');
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[role=dialog] [role=alert]')?.textContent ?? ''")).includes("stopped unexpectedly"), "crash reported in the dialog", 60000);
+    assert(!existsSync(out), "nothing saved");
+    // Still alive: close the dialog and use the app.
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[role=dialog]')")), "dialog closed");
+    await s.keys(["Control", "d"]);
+    await s.waitUntil(async () => await s.exec("return !!document.querySelector('[role=dialog]')"), "app still responds");
+  });
+});
+
+await test("viewer: an engine crash while showing a page fails only that page; other pages, Retry and the app keep working", async () => {
+  // Debug builds honour PW_READER_TEST in the reader processes; release builds ignore it.
+  if (!/[\\/]debug[\\/]/.test(APP)) throw new Skip("needs a debug build (the crash hook is compiled out of release builds)");
+  // The test driver starts the app with its own environment, so the hook goes in a file.
+  const hook = join(tmpdir(), "pageweave-reader-test");
+  writeFileSync(hook, "abort:2");
+  try {
+    await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+      await pageLoaded(s, 0);
+      await s.exec("document.querySelector('[data-page=\"2\"]').scrollIntoView()");
+      await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-page=\"2\"] .page-error')?.textContent ?? ''")).includes("Page 3 could not be displayed"), "page 3 fails with a reason", 30000);
+      await pageLoaded(s, 1);
+      await s.exec("document.querySelector('[data-page=\"3\"]').scrollIntoView()");
+      await pageLoaded(s, 3);
+      // Retry answers at once with the same failure instead of crashing another reader.
+      await s.exec("document.querySelector('[data-page=\"2\"]').scrollIntoView()");
+      await s.exec("document.querySelector('[data-page=\"2\"] .page-error button').click()");
+      await s.waitUntil(async () => (await s.exec("return !!document.querySelector('[data-page=\"2\"] .page-error')")), "still the same reason");
+      // The app keeps working: search finds text on another page.
+      await s.click('[data-testid="viewer"]');
+      await s.keys(["Control", "f"]);
+      await s.waitFor('input[aria-label="Find in document"]');
+      await s.type('input[aria-label="Find in document"]', "PWMARK004");
+      await s.keys(["Enter"]);
+      await s.waitUntil(async () => (await s.text(".searchbar .count")) === "1 of 1", "search works", 20000);
+    });
+  } finally {
+    rmSync(hook, { force: true });
   }
 });
 

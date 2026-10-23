@@ -39,6 +39,13 @@ Required attributions:
   License 2.0 — `third_party/licenses/ppocr/Apache-2.0.txt`, attribution and pinned sources in
   `third_party/licenses/ppocr/NOTICE.txt`. Redistributed unmodified under `ocr/`.
 
+## OPUS-MT translation models
+
+- Helsinki-NLP OPUS-MT models (University of Helsinki), CC BY 4.0 — `third_party/licenses/opus-mt/CC-BY-4.0.txt`;
+  attribution, citation and pinned sources (ONNX conversion by Xenova) in
+  `third_party/licenses/opus-mt/NOTICE.txt`. Redistributed under `translate/` with files renamed only;
+  pinned in `resources/translate.lock.json` (decision D-022).
+
 ## Rust crates and UI packages
 
 - `third_party/licenses/rust-crates.txt` — license texts of every Rust crate compiled into the

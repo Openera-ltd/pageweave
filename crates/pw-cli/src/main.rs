@@ -38,12 +38,92 @@ enum Conflict {
     Replace,
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+enum PatternKind {
+    Email,
+    Phone,
+    Card,
+    Iban,
+    Ssn,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum SheetFormat {
+    Xlsx,
+    Csv,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum DataFormat {
+    Xfdf,
+    Json,
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Show page count, sizes, metadata, bookmarks and security status.
     Inspect { file: PathBuf },
     /// List form fields (names, kinds, values, options) as JSON.
     Fields { file: PathBuf },
+    /// List the comments and markup already in a file, or change them in a new file (-o):
+    /// --delete PAGE:INDEX:TYPE removes one (with its pop-up); --set-text PAGE:INDEX:TYPE=TEXT
+    /// changes its comment. PAGE is 1-based; INDEX and TYPE are as the listing prints them.
+    Annotations {
+        file: PathBuf,
+        #[arg(long, value_name = "PAGE:INDEX:TYPE")]
+        delete: Vec<String>,
+        #[arg(long, value_name = "PAGE:INDEX:TYPE=TEXT")]
+        set_text: Vec<String>,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Set page labels (the numbers readers show) in a new file: --range PAGE:STYLE[:FIRST[:PREFIX]]
+    /// per range, e.g. --range 1:roman-lower --range 5:decimal --range 17:decimal:1:A-; styles:
+    /// decimal, roman-upper, roman-lower, letters-upper, letters-lower, none. --remove clears them.
+    Labels {
+        file: PathBuf,
+        #[arg(long = "range", value_name = "PAGE:STYLE[:FIRST[:PREFIX]]", required_unless_present = "remove")]
+        ranges: Vec<String>,
+        #[arg(long, conflicts_with = "ranges")]
+        remove: bool,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    /// Check what can be checked automatically about accessibility (tags, language, title,
+    /// alternate text, table headers, form labels, …) and list what a person must review.
+    Accessibility { file: PathBuf },
+    /// Find sensitive text — e-mail addresses, phone numbers, card numbers, IBANs, US SSNs and/or a
+    /// custom regular expression — with the position of each match (to redact with `redact`).
+    Patterns {
+        file: PathBuf,
+        /// Kinds to look for, comma-separated.
+        #[arg(long, value_enum, value_delimiter = ',')]
+        kinds: Vec<PatternKind>,
+        /// A regular expression to look for as well.
+        #[arg(long)]
+        custom: Option<String>,
+        #[arg(long)]
+        pages: Option<String>,
+    },
+    /// Save the form's field values as a form data file: XFDF (default), or JSON with --format json
+    /// or an output name ending in .json.
+    FormExport {
+        file: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        #[arg(long, value_enum)]
+        format: Option<DataFormat>,
+    },
+    /// Fill the form from an XFDF or JSON form data file into a new file (-o), or show how the file
+    /// matches the form without filling anything (--preview).
+    FormImport {
+        file: PathBuf,
+        data: PathBuf,
+        #[arg(short, long, required_unless_present = "preview")]
+        output: Option<PathBuf>,
+        #[arg(long, conflicts_with = "output")]
+        preview: bool,
+    },
     /// Print the text of all or selected pages, or save it as a UTF-8 text file with -o.
     Text {
         file: PathBuf,
@@ -51,6 +131,72 @@ enum Command {
         pages: Option<String>,
         #[arg(short, long)]
         output: Option<PathBuf>,
+    },
+    /// Convert to an editable Word document (.docx): paragraphs, headings, columns, pictures and
+    /// links; a report says what could not be carried over.
+    ToDocx {
+        file: PathBuf,
+        #[arg(long)]
+        pages: Option<String>,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    /// Convert an Office document (Word, Excel, PowerPoint, OpenDocument, RTF, text, CSV, HTML) to
+    /// PDF with the LibreOffice installed on this computer. Macros never run.
+    FromOffice {
+        file: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    /// Translate pages with the local translation models into a Word document (-o file.docx,
+    /// layout kept) or a text file (-o file.txt). Without a file, list the language directions.
+    Translate {
+        file: Option<PathBuf>,
+        #[arg(long)]
+        pages: Option<String>,
+        /// Language of the document (detected when absent), e.g. en.
+        #[arg(long)]
+        from: Option<String>,
+        /// Language to translate into, e.g. de.
+        #[arg(long)]
+        to: Option<String>,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Read pages aloud with the computer's speech voice into a WAV file (-o file.wav). Without
+    /// -o, list the voices.
+    Speak {
+        file: Option<PathBuf>,
+        #[arg(long)]
+        pages: Option<String>,
+        /// A voice id from `speak` without a file (the default voice when absent).
+        #[arg(long)]
+        voice: Option<String>,
+        /// 0.5 to 2 (1 is normal).
+        #[arg(long, default_value_t = 1.0)]
+        rate: f32,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Convert to a PowerPoint presentation (.pptx), one slide per page: text boxes, tables,
+    /// pictures and links; a report says what could not be carried over.
+    ToPptx {
+        file: PathBuf,
+        #[arg(long)]
+        pages: Option<String>,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    /// Save the tables (ruled or aligned columns) as an Excel workbook (-o file.xlsx, one sheet per table) or as CSV
+    /// files (--format csv, -o an existing folder). Values are kept exactly.
+    Tables {
+        file: PathBuf,
+        #[arg(long)]
+        pages: Option<String>,
+        #[arg(long, value_enum, default_value = "xlsx")]
+        format: SheetFormat,
+        #[arg(short, long)]
+        output: PathBuf,
     },
     /// Find text and report pages and positions.
     Search {
@@ -108,11 +254,17 @@ enum Command {
     /// Split into several PDFs, every N pages or by ranges.
     Split {
         file: PathBuf,
-        #[arg(long, conflicts_with = "ranges")]
+        #[arg(long, conflicts_with_all = ["ranges", "by_bookmarks", "max_size"])]
         every: Option<u32>,
         /// Repeat for each part, e.g. --ranges 1-3 --ranges 4-
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["by_bookmarks", "max_size"])]
         ranges: Vec<String>,
+        /// A part per bookmark of this outline level (1 = top level), named after the bookmark.
+        #[arg(long, value_name = "LEVEL", conflicts_with = "max_size")]
+        by_bookmarks: Option<u32>,
+        /// Parts of at most this size, e.g. 500KB, 10MB (1 MB = 1024 KB).
+        #[arg(long, value_name = "SIZE")]
+        max_size: Option<String>,
         #[arg(long)]
         out_dir: PathBuf,
     },
@@ -407,6 +559,75 @@ enum Command {
     Run { request: PathBuf },
     /// List the operations this build supports.
     Capabilities,
+    /// Check the installed resources (PDF engine, text recognition) against their pinned checksums.
+    /// Exits 0 when everything is ready and 10 when something is missing or damaged.
+    Resources,
+    /// Serve PageWeave's tools to an AI agent over MCP (stdio). Files only inside the --root
+    /// folders; tools that create files only with --allow-write; existing files are never replaced.
+    Mcp {
+        /// A folder the agent may use (repeat for several).
+        #[arg(long = "root", required = true, value_name = "FOLDER")]
+        roots: Vec<PathBuf>,
+        /// Also offer tools that create new files inside those folders.
+        #[arg(long)]
+        allow_write: bool,
+        /// Operations run at the same time.
+        #[arg(long, default_value_t = 2, value_parser = clap::value_parser!(u8).range(1..=8))]
+        workers: u8,
+    },
+}
+
+/// "1:0:Text" → (0-based page, index, subtype).
+fn parse_annot_ref(s: &str) -> Result<(u32, u32, String), PwError> {
+    let bad = || PwError::invalid("annotations.syntax", format!("“{s}”: use PAGE:INDEX:TYPE, e.g. 1:0:Text."));
+    let mut p = s.splitn(3, ':');
+    let page: u32 = p.next().and_then(|x| x.trim().parse().ok()).filter(|x| *x >= 1).ok_or_else(bad)?;
+    let index: u32 = p.next().and_then(|x| x.trim().parse().ok()).ok_or_else(bad)?;
+    let subtype = p.next().map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).ok_or_else(bad)?;
+    Ok((page - 1, index, subtype))
+}
+
+/// "5:roman-lower", "17:decimal:1:A-" → a label range (pages 1-based on the command line).
+fn parse_label_range(s: &str) -> Result<pw_core::ops::PageLabelRange, PwError> {
+    use pw_core::ops::LabelStyle as L;
+    let bad = || {
+        PwError::invalid(
+            "labels.syntax",
+            format!("“{s}” is not a label range; use PAGE:STYLE[:FIRST[:PREFIX]], e.g. 5:decimal."),
+        )
+    };
+    let mut parts = s.splitn(4, ':');
+    let page: u32 = parts.next().and_then(|p| p.trim().parse().ok()).filter(|p| *p >= 1).ok_or_else(bad)?;
+    let style = match parts.next().map(|x| x.trim().to_ascii_lowercase()).as_deref() {
+        Some("decimal") => L::Decimal,
+        Some("roman-upper") => L::RomanUpper,
+        Some("roman-lower") => L::RomanLower,
+        Some("letters-upper") => L::LettersUpper,
+        Some("letters-lower") => L::LettersLower,
+        Some("none") => L::None,
+        _ => return Err(bad()),
+    };
+    let first = match parts.next() {
+        Some(f) if !f.trim().is_empty() => f.trim().parse().map_err(|_| bad())?,
+        _ => 1,
+    };
+    let prefix = parts.next().unwrap_or("").to_string();
+    Ok(pw_core::ops::PageLabelRange { start: page - 1, style, prefix, first })
+}
+
+/// "10MB", "500 KB", "2.5mb", "123456" (bytes) → bytes; 1 KB = 1024 bytes.
+fn parse_size(s: &str) -> Result<u64, PwError> {
+    let bad = || PwError::invalid("split.size_syntax", format!("“{s}” is not a size; use e.g. 500KB or 10MB."));
+    let t = s.trim().to_ascii_lowercase();
+    let (num, mult) = [("gb", 1u64 << 30), ("mb", 1 << 20), ("kb", 1 << 10), ("b", 1)]
+        .iter()
+        .find_map(|(suffix, m)| t.strip_suffix(suffix).map(|n| (n.trim().to_string(), *m)))
+        .unwrap_or((t.clone(), 1));
+    let v: f64 = num.parse().map_err(|_| bad())?;
+    if !v.is_finite() || v <= 0.0 || v * mult as f64 > u64::MAX as f64 / 2.0 {
+        return Err(bad());
+    }
+    Ok((v * mult as f64).round() as u64)
 }
 
 fn capabilities() -> serde_json::Value {
@@ -421,7 +642,7 @@ fn capabilities() -> serde_json::Value {
 
 fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
     let op = match &cli.command {
-        Command::Capabilities => return Ok(None),
+        Command::Capabilities | Command::Mcp { .. } | Command::Resources => return Ok(None),
         Command::Run { request } => {
             let text = if request.as_os_str() == "-" {
                 let mut s = String::new();
@@ -436,11 +657,124 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
         }
         Command::Inspect { file } => Operation::Inspect { input: file.clone() },
         Command::Fields { file } => Operation::FormFields { input: file.clone() },
+        Command::Annotations { file, delete, set_text, output } => {
+            if delete.is_empty() && set_text.is_empty() {
+                Operation::ListAnnotations { input: file.clone() }
+            } else {
+                let out = output
+                    .clone()
+                    .ok_or_else(|| PwError::invalid("annotations.output", "Give -o for the changed copy."))?;
+                let mut changes = Vec::new();
+                for d in delete {
+                    let (page, index, subtype) = parse_annot_ref(d)?;
+                    changes.push(pw_core::ops::AnnotationChange { page, index, subtype, delete: true, text: None });
+                }
+                for t in set_text {
+                    let (r, text) = t.split_once('=').ok_or_else(|| {
+                        PwError::invalid("annotations.syntax", format!("“{t}”: use PAGE:INDEX:TYPE=TEXT."))
+                    })?;
+                    let (page, index, subtype) = parse_annot_ref(r)?;
+                    changes.push(pw_core::ops::AnnotationChange {
+                        page,
+                        index,
+                        subtype,
+                        delete: false,
+                        text: Some(text.to_string()),
+                    });
+                }
+                Operation::ApplyEdits {
+                    input: file.clone(),
+                    form_values: vec![],
+                    annotations: vec![],
+                    object_edits: vec![],
+                    annotation_changes: changes,
+                    output: out,
+                }
+            }
+        }
+        Command::Labels { file, ranges, remove: _, output } => Operation::SetPageLabels {
+            input: file.clone(),
+            ranges: ranges.iter().map(|r| parse_label_range(r)).collect::<Result<_, _>>()?,
+            output: output.clone(),
+        },
+        Command::Accessibility { file } => Operation::CheckAccessibility { input: file.clone() },
+        Command::Patterns { file, kinds, custom, pages } => {
+            use pw_core::ops::TextPattern as T;
+            let patterns = kinds
+                .iter()
+                .map(|k| match k {
+                    PatternKind::Email => T::Email,
+                    PatternKind::Phone => T::Phone,
+                    PatternKind::Card => T::CardNumber,
+                    PatternKind::Iban => T::Iban,
+                    PatternKind::Ssn => T::UsSsn,
+                })
+                .collect();
+            Operation::FindPatterns { input: file.clone(), patterns, custom: custom.clone(), pages: pages.clone() }
+        }
+        Command::FormExport { file, output, format } => {
+            use pw_core::formdata::FormDataFormat as F;
+            let by_name = output.extension().is_some_and(|e| e.eq_ignore_ascii_case("json"));
+            let format = match format {
+                Some(DataFormat::Json) => F::Json,
+                Some(DataFormat::Xfdf) => F::Xfdf,
+                None if by_name => F::Json,
+                None => F::Xfdf,
+            };
+            Operation::ExportFormData { input: file.clone(), format, values: vec![], output: output.clone() }
+        }
+        Command::FormImport { file, data, output: Some(out), preview: false } => {
+            Operation::ImportFormData { input: file.clone(), data: data.clone(), output: out.clone() }
+        }
+        Command::FormImport { file, data, .. } => Operation::ReadFormData { input: file.clone(), data: data.clone() },
         Command::Text { file, pages, output: None } => {
             Operation::ExtractText { input: file.clone(), pages: pages.clone() }
         }
         Command::Text { file, pages, output: Some(out) } => {
             Operation::ExportText { input: file.clone(), pages: pages.clone(), output: out.clone() }
+        }
+        Command::Tables { file, pages, format, output } => Operation::ExportTables {
+            input: file.clone(),
+            pages: pages.clone(),
+            format: match format {
+                SheetFormat::Xlsx => pw_core::ops::TableFormat::Xlsx,
+                SheetFormat::Csv => pw_core::ops::TableFormat::Csv,
+            },
+            output: output.clone(),
+        },
+        Command::FromOffice { file, output } => {
+            Operation::ConvertOfficeToPdf { input: file.clone(), output: output.clone() }
+        }
+        Command::Speak { file: Some(file), pages, voice, rate, output: Some(output) } => Operation::ReadAloudToWav {
+            input: file.clone(),
+            pages: pages.clone(),
+            voice: voice.clone(),
+            rate: *rate,
+            output: output.clone(),
+        },
+        Command::Speak { .. } => {
+            return Err(PwError::invalid("usage", "Give a PDF and -o file.wav, or nothing to list the voices."))
+        }
+        Command::Translate { file: Some(file), pages, from, to: Some(to), output: Some(output) } => {
+            Operation::TranslateDocument {
+                input: file.clone(),
+                pages: pages.clone(),
+                source: from.clone(),
+                target: to.clone(),
+                output: output.clone(),
+            }
+        }
+        Command::Translate { .. } => {
+            return Err(PwError::invalid(
+                "usage",
+                "Give a PDF, --to LANGUAGE and -o file.docx (or .txt), or nothing to list the languages.",
+            ))
+        }
+        Command::ToPptx { file, pages, output } => {
+            Operation::ConvertToPptx { input: file.clone(), pages: pages.clone(), output: output.clone() }
+        }
+        Command::ToDocx { file, pages, output } => {
+            Operation::ConvertToDocx { input: file.clone(), pages: pages.clone(), output: output.clone() }
         }
         Command::Search { file, query, match_case, whole_word } => Operation::Search {
             input: file.clone(),
@@ -464,11 +798,18 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
             degrees: *degrees,
             output: output.clone(),
         },
-        Command::Split { file, every, ranges, out_dir } => {
-            let split = match (every, ranges.is_empty()) {
-                (Some(n), _) => SplitMode::EveryN { n: *n },
-                (None, false) => SplitMode::Ranges { ranges: ranges.clone() },
-                (None, true) => return Err(PwError::invalid("split.mode", "Use --every N or --ranges.")),
+        Command::Split { file, every, ranges, by_bookmarks, max_size, out_dir } => {
+            let split = match (every, ranges.is_empty(), by_bookmarks, max_size) {
+                (Some(n), ..) => SplitMode::EveryN { n: *n },
+                (None, false, ..) => SplitMode::Ranges { ranges: ranges.clone() },
+                (None, true, Some(level), _) => SplitMode::Bookmarks { level: *level },
+                (None, true, None, Some(size)) => SplitMode::MaxSize { max_bytes: parse_size(size)? },
+                (None, true, None, None) => {
+                    return Err(PwError::invalid(
+                        "split.mode",
+                        "Use --every N, --ranges, --by-bookmarks LEVEL or --max-size SIZE.",
+                    ))
+                }
             };
             Operation::Split { input: file.clone(), split, output_dir: out_dir.clone() }
         }
@@ -871,6 +1212,72 @@ fn print_human(r: &OperationResult) {
                 println!("{}", p["text"].as_str().unwrap_or(""));
             }
         }
+        "export_tables" => {
+            for o in &r.outputs {
+                println!("Wrote {} ({} bytes)", o.path.display(), o.bytes);
+            }
+            if let Some(found) = r.data["found"].as_array() {
+                for t in found {
+                    println!("Page {} table {}: {} rows × {} columns", t[0], t[1], t[2], t[3]);
+                }
+            }
+        }
+        "convert_office_to_pdf" => {
+            for o in &r.outputs {
+                println!("Wrote {} ({} bytes, {} pages)", o.path.display(), o.bytes, o.pages.unwrap_or(0));
+            }
+        }
+        "translate_document" => {
+            let d = &r.data;
+            for o in &r.outputs {
+                println!("Wrote {} ({} bytes)", o.path.display(), o.bytes);
+            }
+            println!(
+                "{} → {}{}{}: {} paragraphs in {:.1} s; numbers/codes kept {}/{}",
+                d["source"].as_str().unwrap_or(""),
+                d["target"].as_str().unwrap_or(""),
+                if d["detected"] == true { " (detected)" } else { "" },
+                if d["via_english"] == true { " through English" } else { "" },
+                d["paragraphs"],
+                d["millis"].as_f64().unwrap_or(0.0) / 1000.0,
+                d["protected_kept"],
+                d["protected_total"]
+            );
+        }
+        "read_aloud_to_wav" => {
+            let d = &r.data;
+            for o in &r.outputs {
+                println!("Wrote {} ({} bytes)", o.path.display(), o.bytes);
+            }
+            println!(
+                "Pages: {}, sentences: {}, length: {:.1} s, voice: {} ({})",
+                d["pages"],
+                d["sentences"],
+                d["duration_ms"].as_f64().unwrap_or(0.0) / 1000.0,
+                d["voice"].as_str().unwrap_or(""),
+                d["engine"].as_str().unwrap_or("")
+            );
+        }
+        "convert_to_pptx" => {
+            let d = &r.data;
+            for o in &r.outputs {
+                println!("Wrote {} ({} bytes)", o.path.display(), o.bytes);
+            }
+            println!(
+                "Slides: {}, tables: {}, pictures: {}, links: {}",
+                d["pages"], d["tables"], d["pictures"], d["links"]
+            );
+        }
+        "convert_to_docx" => {
+            let d = &r.data;
+            for o in &r.outputs {
+                println!("Wrote {} ({} bytes)", o.path.display(), o.bytes);
+            }
+            println!(
+                "Pages: {}, paragraphs: {}, headings: {}, tables: {}, pictures: {}, links: {}",
+                d["pages"], d["paragraphs"], d["headings"], d["tables"], d["pictures"], d["links"]
+            );
+        }
         "ocr_pages" => {
             let d = &r.data;
             for o in &r.outputs {
@@ -934,6 +1341,63 @@ fn print_human(r: &OperationResult) {
                 );
             }
         }
+        "list_annotations" => {
+            let list = r.data["annotations"].as_array().cloned().unwrap_or_default();
+            for a in &list {
+                let who = a["author"].as_str().map(|w| format!(" — {w}")).unwrap_or_default();
+                println!(
+                    "page {}  #{:<3} {:<15} {}{who}",
+                    a["page"].as_u64().unwrap_or(0) + 1,
+                    a["index"].as_u64().unwrap_or(0),
+                    a["subtype"].as_str().unwrap_or(""),
+                    a["text"].as_str().unwrap_or("")
+                );
+            }
+            println!("{} annotation(s)", list.len());
+        }
+        "check_accessibility" => {
+            for c in r.data["checks"].as_array().into_iter().flatten() {
+                let status = match c["status"].as_str().unwrap_or("") {
+                    "pass" => "PASS",
+                    "fail" => "FAIL",
+                    "warning" => "WARN",
+                    "manual" => "REVIEW",
+                    _ => "N/A",
+                };
+                println!("{status:<7} {}: {}", c["title"].as_str().unwrap_or(""), c["detail"].as_str().unwrap_or(""));
+                let pages: Vec<String> = c["pages"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|p| p.as_u64())
+                    .map(|p| (p + 1).to_string())
+                    .collect();
+                if !pages.is_empty() {
+                    println!("        pages: {}", pages.join(", "));
+                }
+                let names: Vec<&str> = c["names"].as_array().into_iter().flatten().filter_map(|n| n.as_str()).collect();
+                if !names.is_empty() {
+                    println!("        {}", names.join(", "));
+                }
+            }
+            let d = &r.data;
+            println!(
+                "{} passed, {} failed, {} warnings, {} to review by hand (automated checks only; not a PDF/UA or WCAG verdict)",
+                d["passed"], d["failed"], d["warnings"], d["manual"]
+            );
+        }
+        "find_patterns" => {
+            let hits = r.data["hits"].as_array().cloned().unwrap_or_default();
+            for h in &hits {
+                println!(
+                    "page {}  {:<11}  {}",
+                    h["page"].as_u64().unwrap_or(0) + 1,
+                    h["kind"].as_str().unwrap_or(""),
+                    h["text"].as_str().unwrap_or("")
+                );
+            }
+            println!("{} match(es)", hits.len());
+        }
         "search" => {
             for h in r.data["hits"].as_array().into_iter().flatten() {
                 println!("page {}: {}", h["page"].as_u64().unwrap_or(0) + 1, h["text"].as_str().unwrap_or(""));
@@ -959,6 +1423,30 @@ fn print_human(r: &OperationResult) {
 const CLI_STACK_BYTES: usize = 16 * 1024 * 1024;
 
 fn main() -> ExitCode {
+    // Worker mode (D-015): one operation over stdin/stdout for a parent process.
+    if std::env::args_os().nth(1).is_some_and(|a| a == pw_pdf::worker::WORKER_FLAG) {
+        return match std::thread::Builder::new().name("pageweave-worker".into()).stack_size(CLI_STACK_BYTES).spawn(
+            || {
+                pw_pdf::worker::run_worker();
+                ExitCode::SUCCESS
+            },
+        ) {
+            Ok(h) => h.join().unwrap_or(ExitCode::from(70)),
+            Err(_) => ExitCode::from(71),
+        };
+    }
+    // Reader mode (D-018): read-only calls for a parent process, until stdin closes.
+    if std::env::args_os().nth(1).is_some_and(|a| a == pw_pdf::service::READER_FLAG) {
+        return match std::thread::Builder::new().name("pageweave-reader".into()).stack_size(CLI_STACK_BYTES).spawn(
+            || {
+                pw_pdf::service::run_reader();
+                ExitCode::SUCCESS
+            },
+        ) {
+            Ok(h) => h.join().unwrap_or(ExitCode::from(70)),
+            Err(_) => ExitCode::from(71),
+        };
+    }
     match std::thread::Builder::new().name("pageweave-cli".into()).stack_size(CLI_STACK_BYTES).spawn(run) {
         Ok(h) => h.join().unwrap_or(ExitCode::from(70)),
         Err(_) => ExitCode::from(71),
@@ -973,7 +1461,87 @@ fn run() -> ExitCode {
             return ExitCode::from(if e.use_stderr() { 1 } else { 0 });
         }
     };
+    if let Command::Mcp { roots, allow_write, workers } = &cli.command {
+        // stdout carries the protocol only; problems starting up go to stderr.
+        let roots = match pw_mcp::Roots::new(roots) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("error: {}", e.message);
+                return ExitCode::from(e.category.exit_code().clamp(2, 255) as u8);
+            }
+        };
+        let cfg = pw_mcp::Config { roots, allow_write: *allow_write, workers: *workers as usize };
+        pw_mcp::serve(cfg, std::io::stdin().lock(), std::io::stdout());
+        return ExitCode::SUCCESS;
+    }
+    if let Command::Resources = &cli.command {
+        return match pw_pdf::resources::resource_status() {
+            Ok(r) => {
+                if cli.json {
+                    println!("{}", json!({"ok": true, "result": r}));
+                } else {
+                    for c in &r.capabilities {
+                        let state = match c.state {
+                            pw_pdf::resources::ResourceState::Ready => "READY",
+                            pw_pdf::resources::ResourceState::Missing => "MISSING",
+                            pw_pdf::resources::ResourceState::Damaged => "DAMAGED",
+                        };
+                        println!("{state:<8} {}: {} ({} bytes)", c.title, c.detail, c.bytes);
+                    }
+                }
+                use pw_pdf::resources::ResourceState as S;
+                // Optional capabilities (e.g. Office documents) never make the exit code fail.
+                let worst =
+                    r.capabilities.iter().filter(|c| c.required).map(|c| c.state).fold(S::Ready, |a, b| match (a, b) {
+                        (S::Damaged, _) | (_, S::Damaged) => S::Damaged,
+                        (S::Missing, _) | (_, S::Missing) => S::Missing,
+                        _ => S::Ready,
+                    });
+                let cat = match worst {
+                    S::Ready => return ExitCode::SUCCESS,
+                    S::Missing => pw_core::ErrorCategory::MissingResource,
+                    S::Damaged => pw_core::ErrorCategory::CorruptResource,
+                };
+                ExitCode::from(cat.exit_code().clamp(2, 255) as u8)
+            }
+            Err(e) => {
+                eprintln!("error: {}", e.message);
+                ExitCode::from(e.category.exit_code().clamp(2, 255) as u8)
+            }
+        };
+    }
     let outcome = (|| -> Result<serde_json::Value, PwError> {
+        if let Command::Translate { file: None, output: None, to: None, .. } = &cli.command {
+            let dirs = pw_translate::directions()?;
+            if !cli.json {
+                for d in &dirs {
+                    println!(
+                        "{} {} → {}  {} to {}",
+                        if d.installed { "READY  " } else { "MISSING" },
+                        d.source,
+                        d.target,
+                        pw_translate::language_name(&d.source),
+                        pw_translate::language_name(&d.target)
+                    );
+                }
+                println!("Other pairs of these languages are translated through English.");
+            }
+            return Ok(json!({ "directions": dirs }));
+        }
+        if let Command::Speak { file: None, output: None, .. } = &cli.command {
+            let info = pw_speech::engine_info()?;
+            if !cli.json {
+                for v in &info.voices {
+                    println!("{} {}  {}  {}", if v.default { "*" } else { " " }, v.id, v.language, v.name);
+                }
+                let by = match info.precision {
+                    pw_speech::Precision::Word => "word",
+                    pw_speech::Precision::Sentence => "sentence",
+                };
+                println!("Engine: {} (timings by {by})", info.name);
+            }
+            return Ok(serde_json::to_value(info).unwrap_or_default());
+        }
         let Some(mut req) = build_request(&cli)? else {
             return Ok(capabilities());
         };
@@ -1021,6 +1589,23 @@ fn run() -> ExitCode {
                 eprintln!("{}", e.action);
             }
             ExitCode::from(e.category.exit_code().clamp(2, 255) as u8)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_size;
+
+    #[test]
+    fn sizes_parse_with_binary_units() {
+        assert_eq!(parse_size("10MB").ok(), Some(10 << 20));
+        assert_eq!(parse_size(" 500 kb ").ok(), Some(500 << 10));
+        assert_eq!(parse_size("2.5mb").ok(), Some((2.5 * (1u64 << 20) as f64) as u64));
+        assert_eq!(parse_size("123456").ok(), Some(123_456));
+        assert_eq!(parse_size("1GB").ok(), Some(1 << 30));
+        for bad in ["", "MB", "-1MB", "0", "ten", "1e400"] {
+            assert!(parse_size(bad).is_err(), "{bad}");
         }
     }
 }

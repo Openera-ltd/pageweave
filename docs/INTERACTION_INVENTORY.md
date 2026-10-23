@@ -16,7 +16,13 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `file.attachFiles` | Attach files… | — | Exercised by tests |
 | `file.editProperties` | Edit document properties… | — | Exercised by tests |
 | `file.unprotect` | Remove password… | — | Exercised by tests |
+| `file.batch` | Process several files… | — | Exercised by tests |
 | `file.sanitize` | Remove hidden information… | — | Exercised by tests |
+| `file.exportFormData` | Export form data… | — | Exercised by tests |
+| `file.accessibility` | Check accessibility… | — | Exercised by tests |
+| `file.importFormData` | Import form data… | — | Exercised by tests |
+| `edit.clearForm` | Clear form fields | — | Exercised by tests |
+| `edit.resetForm` | Reset form to default values | — | Exercised by tests |
 | `file.reduceSize` | Reduce file size… | — | Exercised by tests |
 | `file.compare` | Compare with… | — | Exercised by tests |
 | `file.print` | Print… | Ctrl+P | Exercised by tests |
@@ -35,6 +41,7 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `redact.markSelection` | Mark selected text for redaction | Ctrl+Shift+X | Exercised by tests |
 | `redact.markArea` | Mark areas for redaction | — | Exercised by tests |
 | `redact.markPage` | Mark current page for redaction | — | Exercised by tests |
+| `redact.markPatterns` | Mark patterns for redaction… | — | Exercised by tests |
 | `redact.markMatches` | Mark all search matches for redaction | — | Exercised by tests |
 | `redact.apply` | Apply redactions… | — | Exercised by tests |
 | `file.saveCopy` | Save a copy with changes… | Ctrl+S | Exercised by tests |
@@ -66,6 +73,15 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `pages.stamp` | Page numbers and stamps… | — | Exercised by tests |
 | `pages.exportImages` | Export pages as images… | — | Exercised by tests |
 | `pages.exportText` | Export as text… | — | Exercised by tests |
+| `file.toWord` | Convert to Word… | — | Exercised by tests |
+| `file.openOffice` | Open a Word, Excel or PowerPoint file… | — | Exercised by tests |
+| `file.toPowerPoint` | Convert to PowerPoint… | — | Exercised by tests |
+| `file.exportTables` | Export tables to Excel or CSV… | — | Exercised by tests |
+| `file.translate` | Translate… | — | Exercised by tests |
+| `read.aloud` | Read aloud | Ctrl+Shift+L | Exercised by tests |
+| `read.stop` | Stop reading aloud | — | Exercised by tests |
+| `read.saveAudio` | Save as audio (WAV)… | — | Exercised by tests |
+| `pages.labels` | Page labels… | — | Exercised by tests |
 | `pages.deskew` | Straighten pages… | — | Exercised by tests |
 | `pages.orient` | Turn pages upright… | — | Exercised by tests |
 | `pages.removeBlank` | Remove blank pages… | — | Exercised by tests |
@@ -78,4 +94,4 @@ declares availability with a user-facing reason when disabled (see `CommandHandl
 | `app.commandPalette` | Command palette | Ctrl+K, Ctrl+Shift+P | Exercised by tests |
 | `app.openLogs` | Show log folder | — | Exercised by tests |
 
-Coverage: 71 of 71 commands exercised by unit or real-app E2E tests.
+Coverage: 87 of 87 commands exercised by unit or real-app E2E tests.

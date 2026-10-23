@@ -171,11 +171,18 @@ export interface Settings {
   recent_files: string[];
   shortcuts: Record<string, string>;
   restore_session: boolean;
+  /** Read aloud voice id (system default when null) and speed (0.5–2). */
+  read_voice: string | null;
+  read_rate: number;
 }
 
 export type CollisionPolicy = "fail" | "rename" | "replace";
 
-export type SplitMode = { mode: "every_n"; n: number } | { mode: "ranges"; ranges: string[] };
+export type SplitMode =
+  | { mode: "every_n"; n: number }
+  | { mode: "ranges"; ranges: string[] }
+  | { mode: "bookmarks"; level: number }
+  | { mode: "max_size"; max_bytes: number };
 
 export type AnnotationKind = "highlight" | "underline" | "strike_out" | "note";
 
@@ -211,6 +218,8 @@ export interface FormField {
   required: boolean;
   multiline: boolean;
   editable: boolean;
+  /** Value "Reset form" restores, when the document sets one. */
+  default_value?: string | null;
   widgets: FormWidget[];
 }
 
@@ -228,6 +237,43 @@ export interface FieldValue {
   value: FormValue;
 }
 
+/** Installed resources (engine `resources::resource_status`). File names are diagnostics only. */
+export interface ResourceReport {
+  all_ready: boolean;
+  capabilities: Array<{
+    id: string;
+    title: string;
+    state: "ready" | "missing" | "damaged";
+    detail: string;
+    bytes: number;
+    location: string | null;
+    files: Array<{ name: string; state: "ready" | "missing" | "damaged"; bytes: number }>;
+    required: boolean;
+  }>;
+}
+
+/** A comment or markup already in the file (engine `list_annotations`). */
+export interface ExistingAnnotation {
+  page: number;
+  index: number;
+  subtype: string;
+  rect: { left: number; bottom: number; right: number; top: number };
+  text: string | null;
+  author: string | null;
+  modified: string | null;
+  color: string | null;
+  text_editable: boolean;
+}
+
+/** A pending change to an annotation already in the file (pw-core `AnnotationChange`). */
+export interface AnnotationChange {
+  page: number;
+  index: number;
+  subtype: string;
+  delete: boolean;
+  text: string | null;
+}
+
 export type Operation =
   | { op: "extract_pages"; input: string; pages: string; output: string }
   | { op: "delete_pages"; input: string; pages: string; output: string }
@@ -235,7 +281,13 @@ export type Operation =
   | { op: "merge"; inputs: string[]; output: string }
   | { op: "split"; input: string; split: SplitMode; output_dir: string }
   | { op: "annotate"; input: string; annotations: AnnotationSpec[]; output: string }
-  | { op: "apply_edits"; input: string; form_values: FieldValue[]; annotations: AnnotationSpec[]; object_edits?: Array<{ page: number; edits: PageEdit[] }>; output: string }
+  | { op: "export_form_data"; input: string; format: "xfdf" | "json"; values: FieldValue[]; output: string }
+  | { op: "read_form_data"; input: string; data: string }
+  | { op: "check_accessibility"; input: string }
+  | { op: "set_page_labels"; input: string; ranges: Array<{ start: number; style: string; prefix: string; first: number }>; output: string }
+  | { op: "find_patterns"; input: string; patterns: Array<"email" | "phone" | "card_number" | "iban" | "us_ssn">; custom: string | null; pages: string | null }
+  | { op: "import_form_data"; input: string; data: string; output: string }
+  | { op: "apply_edits"; input: string; form_values: FieldValue[]; annotations: AnnotationSpec[]; object_edits?: Array<{ page: number; edits: PageEdit[] }>; annotation_changes?: AnnotationChange[]; output: string }
   | {
       op: "stamp_text";
       input: string;
@@ -283,6 +335,12 @@ export type Operation =
   | { op: "extract_images"; input: string; pages: string | null; output_dir: string }
   | { op: "optimize"; input: string; images: { max_dpi: number; quality: number } | null; output: string }
   | { op: "export_text"; input: string; pages: string | null; output: string }
+  | { op: "convert_to_docx"; input: string; pages: string | null; output: string }
+  | { op: "translate_document"; input: string; pages: string | null; source: string | null; target: string; output: string }
+  | { op: "read_aloud_to_wav"; input: string; pages: string | null; voice: string | null; rate: number; output: string }
+  | { op: "convert_to_pptx"; input: string; pages: string | null; output: string }
+  | { op: "convert_office_to_pdf"; input: string; output: string }
+  | { op: "export_tables"; input: string; pages: string | null; format: "xlsx" | "csv"; output: string }
   | { op: "crop_pages"; input: string; pages: string | null; margins: { top: number; right: number; bottom: number; left: number }; output: string }
   | { op: "watermark"; input: string; pages: string | null; watermark: WatermarkSpec; output: string }
   | { op: "set_properties"; input: string; title?: string; author?: string; subject?: string; keywords?: string; output: string }
@@ -477,4 +535,56 @@ export interface EditableObjects {
   rotation: number;
   texts: EditableText[];
   images: EditableImage[];
+}
+
+/** The computer's speech engine (read aloud). */
+export interface SpeechVoice {
+  id: string;
+  name: string;
+  language: string;
+  default: boolean;
+}
+
+export interface SpeechInfo {
+  name: string;
+  /** Whether highlighting follows words or whole sentences. */
+  precision: "word" | "sentence";
+  voices: SpeechVoice[];
+}
+
+/** One page's text in reading order; offsets count Unicode characters (use Array.from). */
+export interface ReadingWord {
+  start: number;
+  end: number;
+  rects: SearchRect[];
+}
+
+export interface ReadingPage {
+  page: number;
+  text: string;
+  words: ReadingWord[];
+}
+
+/** A stretch of spoken text (character offsets) and when it is heard (ms from the start). */
+export interface SpeechMark {
+  start: number;
+  end: number;
+  start_ms: number;
+  end_ms: number;
+}
+
+export interface Spoken {
+  /** WAV data URL. */
+  audio: string;
+  duration_ms: number;
+  sentences: SpeechMark[];
+  words: SpeechMark[];
+  precision: "word" | "sentence";
+}
+
+/** A translation direction PageWeave offers (BCP 47 codes). */
+export interface TranslationDirection {
+  source: string;
+  target: string;
+  installed: boolean;
 }

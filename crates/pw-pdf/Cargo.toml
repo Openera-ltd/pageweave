@@ -10,6 +10,8 @@ publish = false
 [dependencies]
 pw-core.workspace = true
 pw-ocr.workspace = true
+pw-speech.workspace = true
+pw-translate.workspace = true
 pdfium-render.workspace = true
 image.workspace = true
 serde.workspace = true
@@ -22,6 +24,7 @@ lopdf.workspace = true
 getrandom.workspace = true
 flate2.workspace = true
 similar.workspace = true
+regex.workspace = true
 cms.workspace = true
 x509-cert.workspace = true
 der.workspace = true
@@ -32,8 +35,14 @@ sha1.workspace = true
 time.workspace = true
 p12-keystore.workspace = true
 ring.workspace = true
+# Word export: package writing and verification.
+zip.workspace = true
+quick-xml.workspace = true
+# Private temporary folders for Office conversions.
+tempfile.workspace = true
 
 [dev-dependencies]
+pw-speech.workspace = true
 image.workspace = true
 lopdf.workspace = true
 tempfile.workspace = true

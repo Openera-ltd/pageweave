@@ -14,8 +14,14 @@ export type CommandId =
   | "file.attachFiles"
   | "file.editBookmarks"
   | "file.imagesToPdf"
+  | "file.batch"
   | "file.unprotect"
   | "file.sanitize"
+  | "file.exportFormData"
+  | "file.accessibility"
+  | "file.importFormData"
+  | "edit.clearForm"
+  | "edit.resetForm"
   | "file.reduceSize"
   | "file.compare"
   | "file.print"
@@ -34,6 +40,7 @@ export type CommandId =
   | "redact.markSelection"
   | "redact.markArea"
   | "redact.markPage"
+  | "redact.markPatterns"
   | "redact.markMatches"
   | "redact.apply"
   | "file.saveCopy"
@@ -65,6 +72,15 @@ export type CommandId =
   | "pages.stamp"
   | "pages.exportImages"
   | "pages.exportText"
+  | "file.toWord"
+  | "file.openOffice"
+  | "file.toPowerPoint"
+  | "file.exportTables"
+  | "file.translate"
+  | "read.aloud"
+  | "read.stop"
+  | "read.saveAudio"
+  | "pages.labels"
   | "pages.deskew"
   | "pages.orient"
   | "pages.removeBlank"
@@ -98,7 +114,13 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "file.attachFiles", label: "Attach files…", category: "File", shortcuts: [] },
   { id: "file.editProperties", label: "Edit document properties…", category: "File", shortcuts: [] },
   { id: "file.unprotect", label: "Remove password…", category: "File", shortcuts: [] },
+  { id: "file.batch", label: "Process several files…", category: "File", shortcuts: [] },
   { id: "file.sanitize", label: "Remove hidden information…", category: "File", shortcuts: [] },
+  { id: "file.exportFormData", label: "Export form data…", category: "File", shortcuts: [] },
+  { id: "file.accessibility", label: "Check accessibility…", category: "File", shortcuts: [] },
+  { id: "file.importFormData", label: "Import form data…", category: "File", shortcuts: [] },
+  { id: "edit.clearForm", label: "Clear form fields", category: "Edit", shortcuts: [] },
+  { id: "edit.resetForm", label: "Reset form to default values", category: "Edit", shortcuts: [] },
   { id: "file.reduceSize", label: "Reduce file size…", category: "File", shortcuts: [] },
   { id: "file.compare", label: "Compare with…", category: "File", shortcuts: [] },
   { id: "file.print", label: "Print…", category: "File", shortcuts: ["Ctrl+P"] },
@@ -118,6 +140,7 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "redact.markSelection", label: "Mark selected text for redaction", category: "Redact", shortcuts: ["Ctrl+Shift+X"] },
   { id: "redact.markArea", label: "Mark areas for redaction", category: "Redact", shortcuts: [] },
   { id: "redact.markPage", label: "Mark current page for redaction", category: "Redact", shortcuts: [] },
+  { id: "redact.markPatterns", label: "Mark patterns for redaction…", category: "Redact", shortcuts: [] },
   { id: "redact.markMatches", label: "Mark all search matches for redaction", category: "Redact", shortcuts: [], allowInInput: true },
   { id: "redact.apply", label: "Apply redactions…", category: "Redact", shortcuts: [] },
   { id: "file.saveCopy", label: "Save a copy with changes…", category: "File", shortcuts: ["Ctrl+S"], allowInInput: true },
@@ -149,6 +172,15 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "pages.stamp", label: "Page numbers and stamps…", category: "Pages", shortcuts: [] },
   { id: "pages.exportImages", label: "Export pages as images…", category: "Pages", shortcuts: [] },
   { id: "pages.exportText", label: "Export as text…", category: "Pages", shortcuts: [] },
+  { id: "file.toWord", label: "Convert to Word…", category: "File", shortcuts: [] },
+  { id: "file.openOffice", label: "Open a Word, Excel or PowerPoint file…", category: "File", shortcuts: [] },
+  { id: "file.toPowerPoint", label: "Convert to PowerPoint…", category: "File", shortcuts: [] },
+  { id: "file.exportTables", label: "Export tables to Excel or CSV…", category: "File", shortcuts: [] },
+  { id: "file.translate", label: "Translate…", category: "File", shortcuts: [] },
+  { id: "read.aloud", label: "Read aloud", category: "View", shortcuts: ["Ctrl+Shift+L"] },
+  { id: "read.stop", label: "Stop reading aloud", category: "View", shortcuts: [] },
+  { id: "read.saveAudio", label: "Save as audio (WAV)…", category: "File", shortcuts: [] },
+  { id: "pages.labels", label: "Page labels…", category: "Pages", shortcuts: [] },
   { id: "pages.deskew", label: "Straighten pages…", category: "Pages", shortcuts: [] },
   { id: "pages.orient", label: "Turn pages upright…", category: "Pages", shortcuts: [] },
   { id: "pages.removeBlank", label: "Remove blank pages…", category: "Pages", shortcuts: [] },

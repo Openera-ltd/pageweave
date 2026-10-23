@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/pw-core", "crates/pw-pdf", "crates/pw-ocr", "crates/pw-cli", "app/src-tauri"]
+members = ["crates/pw-core", "crates/pw-pdf", "crates/pw-ocr", "crates/pw-speech", "crates/pw-translate", "crates/pw-cli", "crates/pw-mcp", "app/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,7 +11,8 @@ rust-version = "1.89"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# float_roundtrip: numbers read back exactly as written (reader processes, D-018).
+serde_json = { version = "1", features = ["float_roundtrip"] }
 thiserror = "2"
 tempfile = "3"
 uuid = { version = "1", features = ["v4", "serde"] }
@@ -38,6 +39,12 @@ p384 = { version = "0.13", default-features = false, features = ["ecdsa", "std"]
 sha1 = "0.10"
 # Myers diff for document comparison (Apache-2.0, no dependencies).
 similar = { version = "2", default-features = false }
+# XFDF form data reading (MIT; already in the dependency graph via Tauri). No DTD or entity expansion.
+quick-xml = "=0.42.0"
+# Word (.docx) packages: writing and verifying them (MIT). Deflate only, no other codecs or encryption.
+zip = { version = "=9.0.5", default-features = false, features = ["deflate-flate2"] }
+# Pattern search for redaction (MIT/Apache-2.0; already in the graph). Linear-time matching, no backtracking.
+regex = { version = "1.13", default-features = false, features = ["std", "unicode-perl", "unicode-case"] }
 # Both already in the dependency graph (pdfium-render / Tauri); pinned to those versions.
 libloading = "=0.9.0"
 parking_lot = "0.12"
@@ -46,6 +53,9 @@ clap = { version = "4", features = ["derive"] }
 pw-core = { path = "crates/pw-core" }
 pw-pdf = { path = "crates/pw-pdf" }
 pw-ocr = { path = "crates/pw-ocr" }
+pw-speech = { path = "crates/pw-speech" }
+pw-translate = { path = "crates/pw-translate" }
+pw-mcp = { path = "crates/pw-mcp" }
 
 [workspace.lints.rust]
 # Denied everywhere; the single audited exception is decision D-006 (enforced by a test).

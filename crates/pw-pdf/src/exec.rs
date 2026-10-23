@@ -15,6 +15,21 @@ fn out(c: &pw_core::output::CommittedOutput, pages: Option<u32>) -> OutputInfo {
     OutputInfo { path: c.path.clone(), bytes: c.bytes, pages }
 }
 
+/// Plain-language notes about entries of a form data file that were not used.
+fn import_notes(m: &crate::formdata::FormDataMatch) -> Vec<String> {
+    let mut notes = Vec::new();
+    if !m.unknown.is_empty() {
+        notes.push(format!("{} name(s) in the file are not fields of this form.", m.unknown.len()));
+    }
+    for s in m.skipped.iter().take(5) {
+        notes.push(format!("“{}” was not filled: {}", s.name, s.reason));
+    }
+    if m.skipped.len() > 5 {
+        notes.push(format!("{} more value(s) were not filled.", m.skipped.len() - 5));
+    }
+    notes
+}
+
 /// Execute a request. `ctx` provides cancellation and progress when run as a job.
 pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<OperationResult> {
     req.validate()?;
@@ -106,6 +121,49 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             let (c, w) = crate::forms::fill_form(input, opts.password, values, output, policy)?;
             warnings.extend(w);
             (vec![out(&c, None)], json!({ "fields": values.len() }))
+        }
+        Operation::ExportFormData { input, format, values, output } => {
+            let (c, n, w) = crate::formdata::export_form_data(input, opts.password, *format, values, output, policy)?;
+            warnings.extend(w);
+            (vec![out(&c, None)], json!({ "fields": n, "format": format }))
+        }
+        Operation::CheckAccessibility { input } => {
+            let report = crate::accessibility::check_accessibility(input, &opts)?;
+            (vec![], serde_json::to_value(&report).unwrap_or_default())
+        }
+        Operation::FindPatterns { input, patterns, custom, pages } => {
+            let report = crate::patterns::find_patterns(
+                input,
+                &opts,
+                patterns,
+                custom.as_deref(),
+                pages.as_deref(),
+                &cancelled,
+                &|d, t| {
+                    if let Some(c) = ctx {
+                        c.set_progress(d, t, "pages");
+                    }
+                },
+            )?;
+            if report.truncated {
+                warnings.push(format!("Showing the first {} matches.", report.hits.len()));
+            }
+            (vec![], serde_json::to_value(&report).unwrap_or_default())
+        }
+        Operation::ReadFormData { input, data } => {
+            let m = crate::formdata::read_form_data(input, opts.password, data)?;
+            (vec![], serde_json::to_value(&m).unwrap_or_default())
+        }
+        Operation::ImportFormData { input, data, output } => {
+            let (c, m, w) = crate::formdata::import_form_data(input, opts.password, data, output, policy)?;
+            warnings.extend(w);
+            warnings.extend(import_notes(&m));
+            let filled = m.changes().len();
+            (
+                vec![out(&c, None)],
+                json!({ "filled": filled, "unchanged": m.matched.len() - filled, "skipped": m.skipped,
+                        "unknown": m.unknown }),
+            )
         }
         Operation::OrganizePages { input, extra_inputs, pages, output } => {
             let (c, n, w) = edit::organize_pages(input, &opts, extra_inputs, pages, output, policy, &cancelled)?;
@@ -226,6 +284,17 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             let (c, n, w) = edit::watermark(input, &opts, pages.as_deref(), watermark, output, policy, &cancelled)?;
             warnings.extend(w);
             (vec![out(&c, Some(n))], json!({ "page_count": n }))
+        }
+        Operation::SetPageLabels { input, ranges, output } => {
+            let page_progress = |done: u64, total: u64| {
+                if let Some(c) = ctx {
+                    c.set_progress(done, total, "pages");
+                }
+            };
+            let (c, n, w) =
+                crate::pagelabels::set_page_labels(input, &opts, ranges, output, policy, &cancelled, &page_progress)?;
+            warnings.extend(w);
+            (vec![out(&c, Some(n))], json!({ "page_count": n, "ranges": ranges.len() }))
         }
         Operation::SetProperties { input, title, author, subject, keywords, output } => {
             let page_progress = |done: u64, total: u64| {
@@ -428,6 +497,135 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             let straightened = report.iter().filter(|r| r.action == crate::deskew::DeskewAction::Straightened).count();
             (vec![out(&c, None)], json!({ "straightened": straightened, "pages": report }))
         }
+        Operation::ExportTables { input, pages, format, output } => {
+            let page_progress = |done: u64, total: u64| {
+                if let Some(c) = ctx {
+                    c.set_progress(done, total, "pages");
+                }
+            };
+            let (outs, report) = match format {
+                pw_core::ops::TableFormat::Xlsx => {
+                    let (c, r) = crate::sheet::export_xlsx(
+                        input,
+                        &opts,
+                        pages.as_deref(),
+                        output,
+                        policy,
+                        &cancelled,
+                        &page_progress,
+                    )?;
+                    (vec![c], r)
+                }
+                pw_core::ops::TableFormat::Csv => {
+                    warnings.push("CSV keeps only the text of each cell: no formatting, merged cells or several tables in one file.".into());
+                    crate::sheet::export_csv(
+                        input,
+                        &opts,
+                        pages.as_deref(),
+                        output,
+                        policy,
+                        &cancelled,
+                        &page_progress,
+                    )?
+                }
+            };
+            (outs.iter().map(|c| out(c, None)).collect(), serde_json::to_value(&report).unwrap_or_default())
+        }
+        Operation::ConvertOfficeToPdf { input, output } => {
+            if let Some(c) = ctx {
+                c.set_indeterminate();
+            }
+            let (c, report, w) = crate::office::convert_office_to_pdf(
+                input,
+                output,
+                policy,
+                &cancelled,
+                crate::office::CONVERT_TIMEOUT,
+            )?;
+            warnings.extend(w);
+            (vec![out(&c, Some(report.pages))], serde_json::to_value(&report).unwrap_or_default())
+        }
+        Operation::TranslateDocument { input, pages, source, target, output } => {
+            let page_progress = |done: u64, total: u64| {
+                if let Some(c) = ctx {
+                    c.set_progress(done, total, "paragraphs");
+                }
+            };
+            let (c, report, w) = crate::docx::translate::translate_document(
+                input,
+                &opts,
+                pages.as_deref(),
+                source.as_deref(),
+                target,
+                output,
+                policy,
+                &cancelled,
+                &page_progress,
+            )?;
+            warnings.extend(w);
+            (vec![out(&c, None)], serde_json::to_value(&report).unwrap_or_default())
+        }
+        Operation::ReadAloudToWav { input, pages, voice, rate, output } => {
+            let page_progress = |done: u64, total: u64| {
+                if let Some(c) = ctx {
+                    c.set_progress(done, total, "pages");
+                }
+            };
+            let (c, report) = crate::reading::read_aloud_to_wav(
+                input,
+                &opts,
+                pages.as_deref(),
+                voice.as_deref(),
+                *rate,
+                output,
+                policy,
+                &cancelled,
+                &page_progress,
+            )?;
+            if report.pages_without_text > 0 {
+                warnings.push(format!(
+                    "{} of {} pages have no text and were skipped.",
+                    report.pages_without_text, report.pages
+                ));
+            }
+            (vec![out(&c, None)], serde_json::to_value(&report).unwrap_or_default())
+        }
+        Operation::ConvertToPptx { input, pages, output } => {
+            let page_progress = |done: u64, total: u64| {
+                if let Some(c) = ctx {
+                    c.set_progress(done, total, "pages");
+                }
+            };
+            let (c, report, w) = crate::slides::convert_to_pptx(
+                input,
+                &opts,
+                pages.as_deref(),
+                output,
+                policy,
+                &cancelled,
+                &page_progress,
+            )?;
+            warnings.extend(w);
+            (vec![out(&c, None)], serde_json::to_value(&report).unwrap_or_default())
+        }
+        Operation::ConvertToDocx { input, pages, output } => {
+            let page_progress = |done: u64, total: u64| {
+                if let Some(c) = ctx {
+                    c.set_progress(done, total, "pages");
+                }
+            };
+            let (c, report, w) = crate::docx::convert_to_docx(
+                input,
+                &opts,
+                pages.as_deref(),
+                output,
+                policy,
+                &cancelled,
+                &page_progress,
+            )?;
+            warnings.extend(w);
+            (vec![out(&c, None)], serde_json::to_value(&report).unwrap_or_default())
+        }
         Operation::VerifySignatures { input, trusted } => {
             let anchors = crate::signatures::load_trusted_certificates(trusted)?;
             let report = crate::signatures::verify_signatures(input, &opts, &anchors)?;
@@ -452,53 +650,82 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(w);
             (vec![out(&c, Some(n))], json!({ "page_count": n, "areas": areas.len() }))
         }
-        Operation::ApplyEdits { input, form_values, annotations, object_edits, output } => {
-            let (c, w) = if object_edits.iter().all(|p| p.edits.is_empty()) {
-                crate::forms::apply_edits(input, opts.password, form_values, annotations, output, policy)?
-            } else {
-                let edited = crate::objects::apply_object_edits(input, &opts, object_edits)?;
-                let mut w = edited.warnings.clone();
-                if form_values.is_empty() && annotations.is_empty() {
-                    let c = pw_core::output::write_atomic_bytes(
-                        output,
-                        policy,
-                        std::slice::from_ref(input),
-                        &edited.bytes,
-                        |staged| {
-                            let back =
-                                std::fs::read(staged).map_err(|e| pw_core::PwError::from_io(&e, "output file"))?;
-                            if back == edited.bytes {
-                                Ok(())
-                            } else {
-                                Err(pw_core::PwError::new(
-                                    pw_core::ErrorCategory::ValidationFailed,
-                                    "output.verify",
-                                    "The written file differs.",
-                                ))
-                            }
-                        },
-                    )?;
-                    (c, w)
-                } else {
-                    // The verified object edits feed the form/annotation stage through a staged file
-                    // (crash recovery removes leftovers with this prefix).
-                    let dir =
-                        output.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(std::path::Path::new("."));
-                    let stage = dir.join(format!("{}objects.pdf", pw_core::output::staged_prefix(std::process::id())));
-                    std::fs::write(&stage, &edited.bytes)
-                        .map_err(|e| pw_core::PwError::from_io(&e, "temporary file"))?;
-                    let r = crate::forms::apply_edits(&stage, opts.password, form_values, annotations, output, policy);
-                    let _ = std::fs::remove_file(&stage);
-                    let (c, w2) = r?;
-                    w.extend(w2);
-                    (c, w)
-                }
+        Operation::ListAnnotations { input } => {
+            let list = crate::annots::list_annotations(input, &opts)?;
+            (vec![], serde_json::to_value(&list).unwrap_or_default())
+        }
+        Operation::ApplyEdits { input, form_values, annotations, object_edits, annotation_changes, output } => {
+            let has_objects = object_edits.iter().any(|p| !p.edits.is_empty());
+            let has_later = !form_values.is_empty() || !annotations.is_empty();
+            // Staged intermediate files sit next to the output (crash recovery removes leftovers
+            // with this prefix); the original stays protected at every stage.
+            let dir = output.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(std::path::Path::new("."));
+            let stage_path = |name: &str| dir.join(format!("{}{name}.pdf", pw_core::output::own_staged_prefix()));
+            let mut stages: Vec<std::path::PathBuf> = Vec::new();
+            let commit_bytes = |bytes: &[u8]| {
+                pw_core::output::write_atomic_bytes(output, policy, std::slice::from_ref(input), bytes, |staged| {
+                    let back = std::fs::read(staged).map_err(|e| pw_core::PwError::from_io(&e, "output file"))?;
+                    if back == bytes {
+                        Ok(())
+                    } else {
+                        Err(pw_core::PwError::new(
+                            pw_core::ErrorCategory::ValidationFailed,
+                            "output.verify",
+                            "The written file differs.",
+                        ))
+                    }
+                })
             };
+            let result = (|| -> PwResult<(pw_core::output::CommittedOutput, Vec<String>)> {
+                let mut w = Vec::new();
+                let mut src = input.clone();
+                if !annotation_changes.is_empty() {
+                    let (bytes, w1) =
+                        crate::annots::apply_annotation_changes(&src, &opts, annotation_changes, &cancelled)?;
+                    w.extend(w1);
+                    if !has_objects && !has_later {
+                        return Ok((commit_bytes(&bytes)?, w));
+                    }
+                    let st = stage_path("annots");
+                    std::fs::write(&st, &bytes).map_err(|e| pw_core::PwError::from_io(&e, "temporary file"))?;
+                    stages.push(st.clone());
+                    src = st;
+                }
+                if has_objects {
+                    let edited = crate::objects::apply_object_edits(&src, &opts, object_edits)?;
+                    w.extend(edited.warnings.clone());
+                    if !has_later {
+                        return Ok((commit_bytes(&edited.bytes)?, w));
+                    }
+                    let st = stage_path("objects");
+                    std::fs::write(&st, &edited.bytes).map_err(|e| pw_core::PwError::from_io(&e, "temporary file"))?;
+                    stages.push(st.clone());
+                    src = st;
+                }
+                let protected: Vec<std::path::PathBuf> =
+                    std::iter::once(input.clone()).chain(stages.iter().cloned()).collect();
+                let (c, w2) = crate::forms::apply_edits_protecting(
+                    &src,
+                    opts.password,
+                    form_values,
+                    annotations,
+                    output,
+                    policy,
+                    &protected,
+                )?;
+                w.extend(w2);
+                Ok((c, w))
+            })();
+            for st in &stages {
+                let _ = std::fs::remove_file(st);
+            }
+            let (c, w) = result?;
             warnings.extend(w);
             let n_obj: usize = object_edits.iter().map(|p| p.edits.len()).sum();
             (
                 vec![out(&c, None)],
-                json!({ "fields": form_values.len(), "annotations": annotations.len(), "object_edits": n_obj }),
+                json!({ "fields": form_values.len(), "annotations": annotations.len(), "object_edits": n_obj,
+                        "annotation_changes": annotation_changes.len() }),
             )
         }
         Operation::Split { input, split, output_dir } => {

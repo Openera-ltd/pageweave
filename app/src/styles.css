@@ -861,6 +861,16 @@ textarea {
   pointer-events: none;
 }
 
+/* Read aloud: the word (or sentence) being heard. An outline as well as a tint, so it does not
+   depend on colour alone and stays visible over highlights. */
+.page .reading-mark {
+  position: absolute;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  outline: 2px solid var(--accent);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
 .page .hit.current {
   background: var(--hit-current);
   outline: 1px solid rgba(255, 120, 0, 0.9);
@@ -1947,4 +1957,248 @@ kbd,
   background: var(--danger-bg);
   color: var(--danger);
   font-size: 12px;
+}
+
+/* Form data import preview */
+.formdata-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2);
+  min-width: 0;
+}
+.formdata-list li {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  gap: var(--space-4);
+  min-width: 0;
+}
+.formdata-list li:last-child {
+  border-bottom: 0;
+}
+.formdata-name {
+  flex: 0 0 40%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.formdata-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.formdata-unused summary {
+  cursor: pointer;
+  padding: var(--space-2) 0;
+  color: var(--text-muted);
+}
+.formdata-unused summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-1);
+}
+.pattern-kind {
+  flex: 0 0 64px;
+  font-weight: 600;
+}
+
+/* Accessibility check */
+.a11y-heading {
+  font-size: var(--font-size-2);
+  margin: var(--space-4) 0 var(--space-2);
+}
+.a11y-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2);
+}
+.a11y-list li {
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+.a11y-list li:last-child {
+  border-bottom: 0;
+}
+.a11y-status {
+  flex: 0 0 auto;
+  min-width: 88px;
+  font-weight: 600;
+  font-size: var(--font-size-1);
+}
+.a11y-status.fail {
+  color: var(--danger);
+}
+.a11y-status.warning {
+  color: var(--warning);
+}
+.a11y-status.pass {
+  color: var(--success);
+}
+.a11y-status.manual,
+.a11y-status.not_applicable {
+  color: var(--text-muted);
+}
+.a11y-names {
+  overflow-wrap: anywhere;
+}
+.a11y-pages {
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+/* Page labels */
+.labels-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.labels-table th {
+  text-align: left;
+  font-weight: 600;
+  font-size: var(--font-size-1);
+  padding: 0 var(--space-2) var(--space-2) 0;
+}
+.labels-table td {
+  padding: 0 var(--space-2) var(--space-2) 0;
+}
+.labels-table .input,
+.labels-table .select {
+  width: 100%;
+  min-width: 0;
+}
+.labels-table td:last-child {
+  width: 36px;
+}
+.labels-table {
+  table-layout: fixed;
+}
+.labels-table th:nth-child(1) {
+  width: 96px;
+}
+.labels-table th:nth-child(2) {
+  width: 150px;
+}
+.labels-table th:nth-child(4) {
+  width: 100px;
+}
+.labels-table th:nth-child(5) {
+  width: 40px;
+}
+
+/* Comments panel */
+.comments {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.comments li {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2);
+  padding: var(--space-2);
+  min-width: 0;
+}
+.comments li.deleted .comment-text {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+.comment-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  width: 100%;
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  min-width: 0;
+}
+.comment-main:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-1);
+}
+.comment-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+}
+.comment-head .num {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: var(--font-size-1);
+}
+.comment-head .swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  border: 1px solid var(--border-strong);
+}
+.comment-text {
+  overflow-wrap: anywhere;
+  font-size: var(--font-size-1);
+}
+.comment-actions {
+  justify-content: flex-end;
+  gap: var(--space-1);
+}
+.comment-edit textarea {
+  width: 100%;
+  min-height: 60px;
+  margin: var(--space-2) 0;
+}
+.comment-main .hint {
+  font-size: var(--font-size-1);
+}
+
+/* ---------- Read aloud bar ---------- */
+.readbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.readbar .status {
+  color: var(--text-muted);
+  font-size: var(--font-size-1);
+  min-width: 12ch;
+}
+
+.readbar .status.error {
+  color: var(--danger);
+}
+
+.readbar select {
+  max-width: 30ch;
+}
+
+/* Two fields side by side (e.g. translate From / To); stacked on narrow windows. */
+.field-row {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.field-row > .field {
+  flex: 1 1 12rem;
 }

@@ -63,9 +63,13 @@ pub fn serve(state: &AppState, uri: &Uri) -> Response<Vec<u8>> {
         Ok(d) => d,
         Err(e) => return text(StatusCode::NOT_FOUND, &e.code),
     };
-    let opts = pw_pdf::OpenOptions { password: doc.password.as_deref() };
-    match pw_pdf::render_page_png(&doc.path, &opts, req.page, req.scale_permille as f32 / 1000.0) {
-        Ok((png, _, _)) => Response::builder()
+    let call = pw_pdf::service::ReadCall::Render {
+        path: doc.path.clone(),
+        page: req.page,
+        scale: req.scale_permille as f32 / 1000.0,
+    };
+    match state.read_bytes(&call, doc.password.as_deref()) {
+        Ok(png) => Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "image/png")
             .header(header::CACHE_CONTROL, "private, max-age=3600")

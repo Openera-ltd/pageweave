@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, FolderOpen, Plus, Trash2 } from "lucide-react";
 import { useApi } from "../api";
 import { basename, dirname, join, siblingOutput, stem } from "../paths";
-import { toPwError, type AnnotationSpec, type CollisionPolicy, type FieldValue, type PageEdit, type StampPosition, type JobSnapshot, type WatermarkLayer, type OpenedDoc, type Operation, type PwError } from "../types";
+import { toPwError, type AnnotationChange, type AnnotationSpec, type BookmarkInfo, type CollisionPolicy, type FieldValue, type PageEdit, type StampPosition, type JobSnapshot, type WatermarkLayer, type OpenedDoc, type Operation, type PwError, type TranslationDirection } from "../types";
 import { Dialog, useDebounced } from "./ui";
+import { availability, languageName, languages } from "../translate";
 
-export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop" | "text" | "optimize" | "deskew" | "extractImages" | "orient";
+export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop" | "text" | "word" | "slides" | "audio" | "translate" | "tables" | "optimize" | "deskew" | "extractImages" | "orient";
 
 const TITLES: Record<PageTool, string> = {
   extract: "Extract pages",
@@ -20,6 +21,11 @@ const TITLES: Record<PageTool, string> = {
   watermark: "Watermark",
   crop: "Crop pages",
   text: "Export as text",
+  word: "Convert to Word",
+  slides: "Convert to PowerPoint",
+  audio: "Save as audio",
+  translate: "Translate",
+  tables: "Export tables",
   optimize: "Reduce file size",
   deskew: "Straighten pages",
   extractImages: "Extract images",
@@ -27,7 +33,7 @@ const TITLES: Record<PageTool, string> = {
 };
 
 /** Start-button label (the title's first word does not fit every tool). */
-const START: Partial<Record<PageTool, string>> = { ocr: "Recognize", watermark: "Add watermark", crop: "Crop", text: "Export", optimize: "Reduce size", deskew: "Straighten", extractImages: "Extract", orient: "Turn upright" };
+const START: Partial<Record<PageTool, string>> = { translate: "Translate", audio: "Save audio", slides: "Convert", tables: "Export", word: "Convert", ocr: "Recognize", watermark: "Add watermark", crop: "Crop", text: "Export", optimize: "Reduce size", deskew: "Straighten", extractImages: "Extract", orient: "Turn upright" };
 
 const SUFFIX: Record<PageTool, string> = {
   extract: "extract",
@@ -42,6 +48,11 @@ const SUFFIX: Record<PageTool, string> = {
   watermark: "watermarked",
   crop: "cropped",
   text: "",
+  word: "",
+  slides: "",
+  audio: "",
+  translate: "",
+  tables: "",
   optimize: "smaller",
   deskew: "straightened",
   extractImages: "",
@@ -49,7 +60,7 @@ const SUFFIX: Record<PageTool, string> = {
 };
 
 /** Tools that offer "All pages" (on by default unless pages were preselected). */
-const ALL_PAGES_TOOLS: PageTool[] = ["rotate", "stamp", "images", "ocr", "watermark", "crop", "text", "deskew", "extractImages", "orient"];
+const ALL_PAGES_TOOLS: PageTool[] = ["rotate", "stamp", "images", "ocr", "watermark", "crop", "text", "word", "slides", "audio", "translate", "tables", "deskew", "extractImages", "orient"];
 
 export type CropUnit = "mm" | "in" | "pt";
 /** Points per unit. */
@@ -105,9 +116,14 @@ interface Props {
   formValues?: FieldValue[];
   /** For the save tool: edits to existing text and pictures (Edit mode). */
   objectEdits?: Array<{ page: number; edits: PageEdit[] }>;
+  /** Deletes / text changes of annotations already in the file. */
+  annotationChanges?: AnnotationChange[];
   jobs: Record<string, JobSnapshot>;
   onClose: () => void;
   onFinished: (job: JobSnapshot) => void;
+  /** For the audio tool: the read-aloud voice (null = default) and speed. */
+  readVoice?: string | null;
+  readRate?: number;
 }
 
 type RangeCheck = { state: "idle" | "checking" } | { state: "ok"; count: number } | { state: "error"; message: string };
@@ -134,10 +150,11 @@ function useRangeCheck(docId: number, spec: string, enabled: boolean): RangeChec
   return check;
 }
 
-export function PageToolsDialog({ tool, doc, initialPages, annotations, formValues, objectEdits, jobs, onClose, onFinished }: Props) {
+export function PageToolsDialog({ tool, doc, initialPages, annotations, formValues, objectEdits, annotationChanges, jobs, onClose, onFinished, readVoice = null, readRate = 1 }: Props) {
   const nAnnots = annotations?.length ?? 0;
   const nFields = formValues?.length ?? 0;
   const nObjects = (objectEdits ?? []).reduce((n, p) => n + p.edits.length, 0);
+  const nComments = annotationChanges?.length ?? 0;
   // "-annotated" / "-filled" when only one kind of change is saved, "-edited" otherwise.
   const suffix = tool === "save" ? (nObjects === 0 && nFields === 0 ? "annotated" : nObjects === 0 && nAnnots === 0 ? "filled" : "edited") : SUFFIX[tool];
   const api = useApi();
@@ -146,9 +163,27 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   const [includeTextPages, setIncludeTextPages] = useState(false);
   const [dpi, setDpi] = useState(150);
   const [reduceImages, setReduceImages] = useState(false);
+  const [sheetFormat, setSheetFormat] = useState<"xlsx" | "csv">("xlsx");
+  // Translate: languages (source null = detect), output format, and the installed directions.
+  const [trFrom, setTrFrom] = useState<string | null>(null);
+  const [trTo, setTrTo] = useState("en");
+  const [trFormat, setTrFormat] = useState<"docx" | "txt">("docx");
+  const [trDirs, setTrDirs] = useState<TranslationDirection[] | null>(null);
+  const [trDirsError, setTrDirsError] = useState<string | null>(null);
+  useEffect(() => {
+    if (tool !== "translate") return;
+    let live = true;
+    api.translationDirections().then(
+      (d) => live && setTrDirs(d),
+      (e) => live && setTrDirsError(toPwError(e).message),
+    );
+    return () => {
+      live = false;
+    };
+  }, [api, tool]);
   const [imagePreset, setImagePreset] = useState("standard");
   /** Tools that write several files into a folder rather than one new PDF. */
-  const toFolder = tool === "split" || tool === "images" || tool === "extractImages";
+  const toFolder = tool === "split" || tool === "images" || tool === "extractImages" || (tool === "tables" && sheetFormat === "csv");
   const [stampText, setStampText] = useState("Page {page} of {total}");
   const [position, setPosition] = useState<StampPosition>("bottom_center");
   const [fontSize, setFontSize] = useState("10");
@@ -164,9 +199,26 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   const [cropUnit, setCropUnit] = useState<CropUnit>("mm");
   const [crop, setCrop] = useState({ top: "0", right: "0", bottom: "0", left: "0" });
   const [output, setOutput] = useState(
-    toFolder ? dirname(doc.path) : tool === "text" ? join(dirname(doc.path), `${stem(doc.path)}.txt`) : siblingOutput(doc.path, suffix),
+    toFolder
+      ? dirname(doc.path)
+      : tool === "text"
+        ? join(dirname(doc.path), `${stem(doc.path)}.txt`)
+        : tool === "word"
+          ? join(dirname(doc.path), `${stem(doc.path)}.docx`)
+          : tool === "slides"
+            ? join(dirname(doc.path), `${stem(doc.path)}.pptx`)
+          : tool === "audio"
+            ? join(dirname(doc.path), `${stem(doc.path)}.wav`)
+          : tool === "translate"
+            ? join(dirname(doc.path), `${stem(doc.path)}-en.docx`)
+          : tool === "tables"
+            ? join(dirname(doc.path), `${stem(doc.path)}.xlsx`)
+            : siblingOutput(doc.path, suffix),
   );
-  const [splitMode, setSplitMode] = useState<"every_n" | "ranges">("every_n");
+  const [splitMode, setSplitMode] = useState<"every_n" | "ranges" | "bookmarks" | "max_size">("every_n");
+  const [bmLevel, setBmLevel] = useState(1);
+  const [maxSize, setMaxSize] = useState("10");
+  const [sizeUnit, setSizeUnit] = useState<"KB" | "MB">("MB");
   const [everyN, setEveryN] = useState("1");
   const [ranges, setRanges] = useState("");
   const [files, setFiles] = useState<string[]>([doc.path]);
@@ -209,6 +261,9 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
 
   const everyNValue = Number(everyN);
   const everyNValid = Number.isInteger(everyNValue) && everyNValue >= 1 && everyNValue <= doc.info.page_count;
+  const bmParts = useMemo(() => bookmarkParts(doc.info.bookmarks ?? [], doc.info.page_count, bmLevel), [doc.info.bookmarks, doc.info.page_count, bmLevel]);
+  const bmLevels = useMemo(() => bookmarkLevels(doc.info.bookmarks ?? [], doc.info.page_count), [doc.info.bookmarks, doc.info.page_count]);
+  const maxBytes = Math.round(Number(maxSize) * (sizeUnit === "MB" ? 1024 * 1024 : 1024));
   const rangeLines = useMemo(() => ranges.split(/\r?\n/).map((s) => s.trim()).filter(Boolean), [ranges]);
 
   const blocker: string | null = (() => {
@@ -216,8 +271,10 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
     if (tool === "delete" && range.state === "ok" && range.count >= doc.info.page_count) return "A PDF must keep at least one page.";
     if (tool === "split" && splitMode === "every_n" && !everyNValid) return `Enter a number from 1 to ${doc.info.page_count}.`;
     if (tool === "split" && splitMode === "ranges" && rangeLines.length === 0) return "Enter one page range per line.";
+    if (tool === "split" && splitMode === "bookmarks" && bmParts.length === 0) return bmLevels.length ? `There are no level ${bmLevel} bookmarks.` : "This document has no bookmarks that point to a page.";
+    if (tool === "split" && splitMode === "max_size" && !(Number.isFinite(maxBytes) && maxBytes >= MIN_SPLIT_BYTES)) return "Choose a size of at least 10 KB.";
     if (tool === "merge" && files.length < 2) return "Add at least one more file.";
-    if (tool === "save" && nAnnots + nFields + nObjects === 0) return "There are no changes to save.";
+    if (tool === "save" && nAnnots + nFields + nObjects + nComments === 0) return "There are no changes to save.";
     if (tool === "stamp") {
       if (!stampText.trim()) return "Enter the text to stamp.";
       if (!stampCharsOk(stampText)) return "Stamps support Latin characters only for now.";
@@ -236,6 +293,12 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
       if (!stampCharsOk(wmText)) return "Watermarks support Latin characters only for now.";
       if (!(wmSizeN >= 8 && wmSizeN <= 400)) return "Use a text size from 8 to 400.";
     }
+    if (tool === "translate") {
+      if (trDirsError) return trDirsError;
+      if (!trDirs) return "Checking the installed languages…";
+      const a = availability(trDirs, trFrom, trTo);
+      if (a !== true && a !== "via-english") return a;
+    }
     if (!output.trim()) return toFolder ? "Choose an output folder." : "Choose where to save the new file.";
     return null;
   })();
@@ -252,7 +315,14 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         return {
           op: "split",
           input: doc.path,
-          split: splitMode === "every_n" ? { mode: "every_n", n: everyNValue } : { mode: "ranges", ranges: rangeLines },
+          split:
+            splitMode === "every_n"
+              ? { mode: "every_n", n: everyNValue }
+              : splitMode === "ranges"
+                ? { mode: "ranges", ranges: rangeLines }
+                : splitMode === "bookmarks"
+                  ? { mode: "bookmarks", level: bmLevel }
+                  : { mode: "max_size", max_bytes: maxBytes },
           output_dir: output,
         };
       case "merge":
@@ -283,6 +353,16 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
       }
       case "text":
         return { op: "export_text", input: doc.path, pages: allPages ? null : pages, output };
+      case "word":
+        return { op: "convert_to_docx", input: doc.path, pages: allPages ? null : pages, output };
+      case "slides":
+        return { op: "convert_to_pptx", input: doc.path, pages: allPages ? null : pages, output };
+      case "translate":
+        return { op: "translate_document", input: doc.path, pages: allPages ? null : pages, source: trFrom, target: trTo, output };
+      case "audio":
+        return { op: "read_aloud_to_wav", input: doc.path, pages: allPages ? null : pages, voice: readVoice, rate: readRate, output };
+      case "tables":
+        return { op: "export_tables", input: doc.path, pages: allPages ? null : pages, format: sheetFormat, output };
       case "crop":
         return { op: "crop_pages", input: doc.path, pages: allPages ? null : pages, margins: cropPt, output };
       case "watermark":
@@ -301,6 +381,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
           form_values: formValues ?? [],
           annotations: (annotations ?? []).map(({ page, kind, rects, color, contents }) => ({ page, kind, rects, color, contents: contents ?? null })),
           object_edits: objectEdits ?? [],
+          annotation_changes: annotationChanges ?? [],
           output,
         };
     }
@@ -325,6 +406,22 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
     } else if (tool === "text") {
       const p = await api.pickSaveAnyPath(output);
       if (p) setOutput(/\.txt$/i.test(p) ? p : `${p}.txt`);
+    } else if (tool === "slides") {
+      const p = await api.pickSaveAnyPath(output);
+      if (p) setOutput(/\.pptx$/i.test(p) ? p : `${p}.pptx`);
+    } else if (tool === "translate") {
+      const p = await api.pickSaveAnyPath(output);
+      const ext = trFormat === "docx" ? ".docx" : ".txt";
+      if (p) setOutput(p.toLowerCase().endsWith(ext) ? p : `${p}${ext}`);
+    } else if (tool === "audio") {
+      const p = await api.pickSaveAnyPath(output);
+      if (p) setOutput(/\.wav$/i.test(p) ? p : `${p}.wav`);
+    } else if (tool === "tables") {
+      const p = await api.pickSaveAnyPath(output);
+      if (p) setOutput(/\.xlsx$/i.test(p) ? p : `${p}.xlsx`);
+    } else if (tool === "word") {
+      const p = await api.pickSaveAnyPath(output);
+      if (p) setOutput(/\.docx$/i.test(p) ? p : `${p}.docx`);
     } else {
       const p = await api.pickSavePath(output);
       if (p) setOutput(p.toLowerCase().endsWith(".pdf") ? p : `${p}.pdf`);
@@ -360,7 +457,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
     <Dialog title={TITLES[tool]} onClose={onClose} footer={footer} busy={busy} wide={tool === "merge"}>
       {tool === "save" ? (
         <p className="hint" style={{ marginTop: 0 }}>
-          Saves {[nObjects ? `${nObjects} content edit${nObjects === 1 ? "" : "s"}` : "", nFields ? `${nFields} filled field${nFields === 1 ? "" : "s"}` : "", nAnnots ? `${nAnnots} annotation${nAnnots === 1 ? "" : "s"}` : ""].filter(Boolean).join(", ").replace(/, ([^,]*)$/, " and $1")} into a copy of{" "}
+          Saves {[nObjects ? `${nObjects} content edit${nObjects === 1 ? "" : "s"}` : "", nFields ? `${nFields} filled field${nFields === 1 ? "" : "s"}` : "", nAnnots ? `${nAnnots} annotation${nAnnots === 1 ? "" : "s"}` : "", nComments ? `${nComments} change${nComments === 1 ? "" : "s"} to existing comments` : ""].filter(Boolean).join(", ").replace(/, ([^,]*)$/, " and $1")} into a copy of{" "}
           <strong>{doc.name}</strong>. The original file is not changed.
         </p>
       ) : (
@@ -554,6 +651,110 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
         </p>
       )}
 
+      {tool === "translate" && (
+        <>
+          <div className="field-row">
+            <label className="field">
+              <span className="label">From</span>
+              <select
+                id="translate-from"
+                className="select"
+                value={trFrom ?? ""}
+                disabled={!trDirs}
+                onChange={(e) => setTrFrom(e.target.value || null)}
+              >
+                <option value="">Detect automatically</option>
+                {languages(trDirs ?? []).map((l) => (
+                  <option key={l} value={l}>
+                    {languageName(l)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span className="label">To</span>
+              <select
+                id="translate-to"
+                className="select"
+                value={trTo}
+                disabled={!trDirs}
+                onChange={(e) => {
+                  const to = e.target.value;
+                  setTrTo(to);
+                  setOutput(join(dirname(doc.path), `${stem(doc.path)}-${to}.${trFormat}`));
+                }}
+              >
+                {languages(trDirs ?? []).map((l) => (
+                  <option key={l} value={l}>
+                    {languageName(l)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {trDirs && trFrom && availability(trDirs, trFrom, trTo) === "via-english" && (
+            <span className="hint" data-testid="translate-via">Translated through English (no direct model for this pair).</span>
+          )}
+          <div className="field">
+            <span className="label" id="translate-format-label">Save as</span>
+            <div className="segmented" role="radiogroup" aria-labelledby="translate-format-label">
+              {(
+                [
+                  ["docx", "Word document"],
+                  ["txt", "Text"],
+                ] as const
+              ).map(([f, l]) => (
+                <button
+                  key={f}
+                  type="button"
+                  role="radio"
+                  aria-checked={trFormat === f}
+                  data-testid={`translate-format-${f}`}
+                  onClick={() => {
+                    if (f === trFormat) return;
+                    setTrFormat(f);
+                    setOutput(join(dirname(doc.path), `${stem(doc.path)}-${trTo}.${f}`));
+                  }}
+                >
+                  {l}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+      {tool === "tables" && (
+        <div className="field">
+          <span className="label" id="sheet-format-label">Format</span>
+          <div className="segmented" role="radiogroup" aria-labelledby="sheet-format-label">
+            {(
+              [
+                ["xlsx", "Excel workbook"],
+                ["csv", "CSV files"],
+              ] as const
+            ).map(([f, l]) => (
+              <button
+                key={f}
+                type="button"
+                role="radio"
+                aria-checked={sheetFormat === f}
+                data-testid={`sheet-format-${f}`}
+                onClick={() => {
+                  if (f === sheetFormat) return;
+                  setSheetFormat(f);
+                  setOutput(f === "csv" ? dirname(doc.path) : join(dirname(doc.path), `${stem(doc.path)}.xlsx`));
+                }}
+              >
+                {l}
+              </button>
+            ))}
+          </div>
+          <span className="hint">
+            {sheetFormat === "xlsx" ? "One sheet per table; merged cells kept." : "One file per table, text only."} Ruled tables and columns aligned over three or more rows are found; values are kept exactly.
+          </span>
+        </div>
+      )}
+
       {tool === "optimize" && (
         <p className="hint" style={{ marginTop: 0 }}>
           Saves a smaller copy: data is packed more tightly and repeated parts are stored once. Text and drawings are never changed.
@@ -635,9 +836,41 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
               <button type="button" role="radio" aria-checked={splitMode === "ranges"} onClick={() => setSplitMode("ranges")}>
                 By ranges
               </button>
+              <button type="button" role="radio" aria-checked={splitMode === "bookmarks"} onClick={() => setSplitMode("bookmarks")}>
+                By bookmarks
+              </button>
+              <button type="button" role="radio" aria-checked={splitMode === "max_size"} onClick={() => setSplitMode("max_size")}>
+                By size
+              </button>
             </div>
           </div>
-          {splitMode === "every_n" ? (
+          {splitMode === "bookmarks" ? (
+            <div className="field">
+              <label htmlFor="split-level">Bookmark level</label>
+              <select id="split-level" className="select" value={bmLevel} disabled={bmLevels.length === 0} onChange={(e) => setBmLevel(Number(e.target.value))}>
+                {(bmLevels.length ? bmLevels : [1]).map((l) => (
+                  <option key={l} value={l}>
+                    {l === 1 ? "Top level" : `Level ${l}`}
+                  </option>
+                ))}
+              </select>
+              <span className="hint" data-testid="split-bookmarks-note">
+                {bmParts.length ? `Creates ${bmParts.length} file${bmParts.length === 1 ? "" : "s"}, named after the bookmarks.` : "No bookmarks at this level point to a page."}
+              </span>
+            </div>
+          ) : splitMode === "max_size" ? (
+            <div className="field">
+              <label htmlFor="split-size">Largest file size</label>
+              <div className="row">
+                <input id="split-size" className="input" type="number" min={1} step="any" value={maxSize} aria-invalid={!(maxBytes >= MIN_SPLIT_BYTES)} onChange={(e) => setMaxSize(e.target.value)} style={{ width: 110 }} />
+                <select className="select" aria-label="Size unit" value={sizeUnit} onChange={(e) => setSizeUnit(e.target.value as "KB" | "MB")}>
+                  <option value="MB">MB</option>
+                  <option value="KB">KB</option>
+                </select>
+              </div>
+              <span className="hint">A page larger than this on its own becomes a file by itself.</span>
+            </div>
+          ) : splitMode === "every_n" ? (
             <div className="field">
               <label htmlFor="every">Pages per file</label>
               <input id="every" className="input" type="number" min={1} max={doc.info.page_count} value={everyN} aria-invalid={!everyNValid} onChange={(e) => setEveryN(e.target.value)} />
@@ -689,16 +922,20 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
       )}
 
       <div className="field">
-        <label htmlFor="output">{tool === "split" ? "Save parts in folder" : tool === "images" || tool === "extractImages" ? "Save images in folder" : "Save as"}</label>
+        <label htmlFor="output">{tool === "split" ? "Save parts in folder" : tool === "images" || tool === "extractImages" ? "Save images in folder" : toFolder ? "Save files in folder" : "Save as"}</label>
         <div className="row">
           <input id="output" className="input grow" value={output} onChange={(e) => setOutput(e.target.value)} spellCheck={false} />
           <button type="button" className="btn outline" onClick={browse}>
             <FolderOpen /> Browse…
           </button>
         </div>
-        {tool === "split" && <span className="hint">Files are named “{doc.name.replace(/\.pdf$/i, "")}_part01.pdf”, …</span>}
+        {tool === "split" && splitMode !== "bookmarks" && <span className="hint">Files are named “{doc.name.replace(/\.pdf$/i, "")}_part01.pdf”, …</span>}
         {tool === "extractImages" && <span className="hint">JPEG images are saved exactly as stored; others as PNG. Repeated images are saved once.</span>}
         {tool === "text" && <span className="hint">UTF-8 text, one section per page. Scanned pages need text recognition first.</span>}
+        {tool === "translate" && <span className="hint">Translated on this computer; the result is a new file and the PDF is not changed. Review machine translation before relying on it.</span>}
+        {tool === "audio" && <span className="hint">The pages read aloud with the read-aloud voice and speed ({readRate}×), as a WAV file.</span>}
+        {tool === "slides" && <span className="hint">One slide per page with editable text boxes, tables and pictures. Slides take the first page's size.</span>}
+        {tool === "word" && <span className="hint">Editable text, headings, columns, pictures and links. Scanned pages need text recognition first.</span>}
         {tool === "images" && <span className="hint">PNG files named “{doc.name.replace(/\.pdf$/i, "")}_p001.png”, …</span>}
       </div>
 
@@ -737,4 +974,22 @@ function swap<T>(a: T[], i: number, j: number): T[] {
   const b = a.slice();
   [b[i], b[j]] = [b[j]!, b[i]!];
   return b;
+}
+
+/** Smallest size limit (pw-core MIN_SPLIT_BYTES). */
+export const MIN_SPLIT_BYTES = 10 * 1024;
+
+/** Outline levels (1-based) that have at least one bookmark pointing to a page. */
+export function bookmarkLevels(bookmarks: BookmarkInfo[], pageCount: number): number[] {
+  const levels = new Set(bookmarks.filter((b) => b.page !== null && b.page < pageCount).map((b) => b.depth + 1));
+  return [...levels].sort((a, b) => a - b);
+}
+
+/** The parts splitting by bookmarks at `level` makes, as the engine does: one per distinct start page. */
+export function bookmarkParts(bookmarks: BookmarkInfo[], pageCount: number, level: number): Array<{ title: string; first: number }> {
+  const starts = bookmarks
+    .filter((b) => b.depth + 1 === level && b.page !== null && b.page < pageCount)
+    .map((b) => ({ title: b.title, first: b.page! }))
+    .sort((a, b) => a.first - b.first);
+  return starts.filter((b, i) => i === 0 || b.first !== starts[i - 1]!.first);
 }

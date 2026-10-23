@@ -49,3 +49,72 @@ export function missingRequired(edits: FormEdits, fields: FormField[]): FormFiel
 export function fieldLabel(f: FormField): string {
   return f.label ?? f.name.replace(/[._]+/g, " ").trim();
 }
+
+/**
+ * Edits that empty the form: text fields to "", checkboxes unticked. Choice lists and radio groups
+ * are kept — the engine can only set them to one of their options — and counted in `kept`.
+ */
+export function clearedEdits(edits: FormEdits, fields: FormField[]): { edits: FormEdits; changed: number; kept: number } {
+  let next = edits;
+  let changed = 0;
+  let kept = 0;
+  for (const f of fields) {
+    if (!isFillable(f) || f.read_only) continue;
+    if (f.kind === "text" || f.kind === "checkbox") {
+      const empty: FormValue = f.kind === "text" ? "" : false;
+      if (currentValue(next, f) !== empty) {
+        next = setEdit(next, f, empty);
+        changed++;
+      }
+    } else if (f.kind === "combo" && f.editable) {
+      if (currentValue(next, f) !== "") {
+        next = setEdit(next, f, "");
+        changed++;
+      }
+    } else if (currentValue(next, f) !== "") {
+      kept++;
+    }
+  }
+  return { edits: next, changed, kept };
+}
+
+/**
+ * Edits that put every field back to the document's default value (`/DV`), as a viewer's
+ * "Reset form" does. Fields without a default are emptied where possible (text, checkboxes,
+ * editable combos); choices and radio groups without a usable default keep their value and are
+ * counted in `kept`. Read-only fields are never touched.
+ */
+export function resetEdits(edits: FormEdits, fields: FormField[]): { edits: FormEdits; changed: number; kept: number } {
+  let next = edits;
+  let changed = 0;
+  let kept = 0;
+  const put = (f: FormField, v: FormValue) => {
+    if (currentValue(next, f) !== v) {
+      next = setEdit(next, f, v);
+      changed++;
+    }
+  };
+  for (const f of fields) {
+    if (!isFillable(f) || f.read_only) continue;
+    const dv = f.default_value ?? null;
+    switch (f.kind) {
+      case "text":
+        put(f, dv ?? "");
+        break;
+      case "checkbox":
+        put(f, dv !== null && dv !== "Off" && f.widgets.some((w) => w.export_value === dv));
+        break;
+      case "radio":
+        if (dv !== null && f.widgets.some((w) => w.export_value === dv)) put(f, dv);
+        else if (currentValue(next, f) !== "") kept++;
+        break;
+      case "combo":
+      case "list":
+        if (dv !== null && (f.options.includes(dv) || (f.kind === "combo" && f.editable))) put(f, dv);
+        else if (f.kind === "combo" && f.editable) put(f, "");
+        else if (currentValue(next, f) !== "") kept++;
+        break;
+    }
+  }
+  return { edits: next, changed, kept };
+}

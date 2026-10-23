@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatBytes } from "../format";
-import { CaseSensitive, ChevronDown, ChevronUp, FileText, FolderOpen, Images, Trash2, WholeWord, X } from "lucide-react";
+import { CaseSensitive, ChevronDown, ChevronUp, FileText, FolderOpen, Images, Layers, Trash2, WholeWord, X } from "lucide-react";
 import { COMMANDS, type CommandHandlers, type CommandId } from "../commands";
 import { basename, dirname } from "../paths";
 import type { JobSnapshot, OpenedDoc, PwError } from "../types";
@@ -13,6 +13,8 @@ export function Home({
   dropActive,
   onOpen,
   onImagesToPdf,
+  onBatch,
+  onOpenOffice,
   onOpenRecent,
   onRemoveRecent,
   openShortcut,
@@ -21,6 +23,8 @@ export function Home({
   dropActive: boolean;
   onOpen: () => void;
   onImagesToPdf: () => void;
+  onBatch: () => void;
+  onOpenOffice: () => void;
   onOpenRecent: (path: string) => void;
   onRemoveRecent: (path: string) => void;
   openShortcut?: string;
@@ -31,13 +35,19 @@ export function Home({
         <h1>PageWeave</h1>
         <p>Open a PDF to view, search and reorganize its pages. Your files stay on this computer.</p>
         <div className={`drop ${dropActive ? "active" : ""}`} aria-hidden="true">
-          {dropActive ? "Release to open" : "Drop PDF files or images here"}
+          {dropActive ? "Release to open" : "Drop PDF, Office files or images here"}
         </div>
         <button type="button" className="btn primary" data-command="file.open" onClick={onOpen} title={openShortcut ? `Open PDF (${openShortcut})` : "Open PDF"}>
           <FolderOpen /> Open PDF…
         </button>{" "}
         <button type="button" className="btn outline" data-command="file.imagesToPdf" onClick={onImagesToPdf}>
           <Images /> Create PDF from images…
+        </button>{" "}
+        <button type="button" className="btn outline" data-command="file.openOffice" onClick={onOpenOffice}>
+          <FileText /> Open an Office file…
+        </button>{" "}
+        <button type="button" className="btn outline" data-command="file.batch" onClick={onBatch}>
+          <Layers /> Process several files…
         </button>
         {recent.length > 0 && (
           <>

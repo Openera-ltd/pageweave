@@ -22,7 +22,89 @@ pub enum SplitMode {
     EveryN { n: u32 },
     /// One output per range expression, e.g. `["1-3", "4-", "last"]`.
     Ranges { ranges: Vec<String> },
+    /// A new part at each bookmark of outline `level` (1 = top level). Pages before the first such
+    /// bookmark go into the first part. Parts are named after their bookmark.
+    Bookmarks { level: u32 },
+    /// Parts of at most `max_bytes` each, measured on the saved part (a page that is larger on its
+    /// own becomes a part by itself, with a warning).
+    MaxSize { max_bytes: u64 },
 }
+
+/// A change to an annotation already in the file, found by page and position in the page's
+/// annotation list (as `list_annotations` reports it). `subtype` must still match, so a stale
+/// listing can't change the wrong annotation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AnnotationChange {
+    pub page: u32,
+    pub index: u32,
+    pub subtype: String,
+    /// Remove the annotation (and its pop-up).
+    #[serde(default)]
+    pub delete: bool,
+    /// New comment text (not for text boxes, whose text is drawn on the page).
+    #[serde(default)]
+    pub text: Option<String>,
+}
+
+pub const MAX_ANNOTATION_CHANGES: usize = 10_000;
+
+/// Numbering style of a page label range (PDF 32000-1 §12.4.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LabelStyle {
+    /// 1, 2, 3
+    Decimal,
+    /// I, II, III
+    RomanUpper,
+    /// i, ii, iii
+    RomanLower,
+    /// A … Z, AA … ZZ
+    LettersUpper,
+    /// a … z, aa … zz
+    LettersLower,
+    /// Prefix only, no number.
+    None,
+}
+
+/// Pages from `start` (0-based) up to the next range are labelled `prefix` + number in `style`,
+/// counting from `first`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PageLabelRange {
+    pub start: u32,
+    pub style: LabelStyle,
+    #[serde(default)]
+    pub prefix: String,
+    #[serde(default = "default_first_label")]
+    pub first: u32,
+}
+
+fn default_first_label() -> u32 {
+    1
+}
+
+pub const MAX_LABEL_RANGES: usize = 1000;
+pub const MAX_LABEL_PREFIX_CHARS: usize = 50;
+
+/// Kinds of sensitive text PageWeave can find for redaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextPattern {
+    Email,
+    /// Phone numbers: 7–15 digits with optional +country code, brackets, spaces, dots or dashes.
+    Phone,
+    /// Payment card numbers: 13–19 digits that pass the Luhn check.
+    CardNumber,
+    /// IBANs that pass the ISO 13616 checksum.
+    Iban,
+    /// US Social Security numbers written as 123-45-6789 (impossible area/group/serial values left out).
+    UsSsn,
+}
+
+/// Longest custom search pattern (characters).
+pub const MAX_PATTERN_CHARS: usize = 500;
+
+/// Smallest size limit for splitting by size (bytes).
+pub const MIN_SPLIT_BYTES: u64 = 10 * 1024;
 
 pub const MAX_ANNOTATIONS_PER_REQUEST: usize = 10_000;
 pub const MAX_NOTE_CHARS: usize = 10_000;
@@ -451,6 +533,14 @@ pub struct AnnotationSpec {
     pub contents: Option<String>,
 }
 
+/// Spreadsheet format for exported tables.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TableFormat {
+    Xlsx,
+    Csv,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Operation {
@@ -516,6 +606,27 @@ pub enum Operation {
         values: Vec<FieldValue>,
         output: PathBuf,
     },
+    /// Save the form's field values as an XFDF or JSON form data file. `values` are unsaved changes
+    /// to write instead of what the document holds (the app's pending edits).
+    ExportFormData {
+        input: PathBuf,
+        format: crate::formdata::FormDataFormat,
+        #[serde(default)]
+        values: Vec<FieldValue>,
+        output: PathBuf,
+    },
+    /// How the values in a form data file match the document's fields (read-only; shown before
+    /// anything is filled).
+    ReadFormData {
+        input: PathBuf,
+        data: PathBuf,
+    },
+    /// Fill the form from a form data file into a new verified file.
+    ImportFormData {
+        input: PathBuf,
+        data: PathBuf,
+        output: PathBuf,
+    },
     /// Build a new file from pages in a chosen order: reorder, duplicate, drop, rotate, and insert
     /// pages from other files in one step.
     OrganizePages {
@@ -558,6 +669,62 @@ pub enum Operation {
     },
     /// Save the text of pages (all when `pages` is absent) as a UTF-8 text file, one block per page.
     ExportText {
+        input: PathBuf,
+        #[serde(default)]
+        pages: Option<String>,
+        output: PathBuf,
+    },
+    /// Save the tables (ruled grids and borderless aligned columns) of pages (all when `pages` is
+    /// absent) as an Excel workbook (one sheet per table; `output` is the .xlsx file) or as CSV
+    /// files (`output` is an existing folder).
+    ExportTables {
+        input: PathBuf,
+        #[serde(default)]
+        pages: Option<String>,
+        format: TableFormat,
+        output: PathBuf,
+    },
+    /// Convert an Office document (Word, Excel, PowerPoint, OpenDocument, RTF, text, CSV, HTML)
+    /// to a PDF with the LibreOffice installed on this computer.
+    ConvertOfficeToPdf {
+        input: PathBuf,
+        output: PathBuf,
+    },
+    /// Translate pages (all when `pages` is absent) with the local translation models into a Word
+    /// document (`output` .docx, layout kept) or a text file (.txt). `source` is detected when
+    /// absent; language codes are BCP 47 ("en", "de", …).
+    TranslateDocument {
+        input: PathBuf,
+        #[serde(default)]
+        pages: Option<String>,
+        #[serde(default)]
+        source: Option<String>,
+        target: String,
+        output: PathBuf,
+    },
+    /// Read pages (all when `pages` is absent) aloud with the computer's speech voice into a WAV
+    /// file (`voice`: an id from the speech engine, the default voice when absent; `rate`: 0.5–2,
+    /// 1 is normal).
+    ReadAloudToWav {
+        input: PathBuf,
+        #[serde(default)]
+        pages: Option<String>,
+        #[serde(default)]
+        voice: Option<String>,
+        #[serde(default = "normal_rate")]
+        rate: f32,
+        output: PathBuf,
+    },
+    /// Convert pages (all when `pages` is absent) into a PowerPoint presentation (.pptx), one
+    /// slide per page.
+    ConvertToPptx {
+        input: PathBuf,
+        #[serde(default)]
+        pages: Option<String>,
+        output: PathBuf,
+    },
+    /// Convert pages (all when `pages` is absent) into an editable Word document (.docx).
+    ConvertToDocx {
         input: PathBuf,
         #[serde(default)]
         pages: Option<String>,
@@ -744,6 +911,30 @@ pub enum Operation {
         old: PathBuf,
         new: PathBuf,
     },
+    /// Set the page labels (the numbers readers show, e.g. i–iv then 1–20) in a new verified file.
+    /// An empty list removes the labels.
+    SetPageLabels {
+        input: PathBuf,
+        ranges: Vec<PageLabelRange>,
+        output: PathBuf,
+    },
+    /// What can be checked automatically about the document's accessibility (tags, language,
+    /// title, alternate text, table headers, form labels, …), plus items a person must review.
+    CheckAccessibility {
+        input: PathBuf,
+    },
+    /// Find sensitive text — built-in kinds and/or a custom regular expression — with the position
+    /// of every match (read-only; used to mark text for redaction).
+    FindPatterns {
+        input: PathBuf,
+        #[serde(default)]
+        patterns: Vec<TextPattern>,
+        /// A regular expression (Rust `regex` syntax; matched in linear time).
+        #[serde(default)]
+        custom: Option<String>,
+        #[serde(default)]
+        pages: Option<String>,
+    },
     /// What redacting `areas` would remove (read-only; shown before applying).
     RedactionPreview {
         input: PathBuf,
@@ -765,7 +956,15 @@ pub enum Operation {
         /// Changes to existing text and pictures (applied first).
         #[serde(default)]
         object_edits: Vec<PageEdits>,
+        /// Deletions of and text changes to annotations already in the file (applied before
+        /// everything else).
+        #[serde(default)]
+        annotation_changes: Vec<AnnotationChange>,
         output: PathBuf,
+    },
+    /// The annotations (comments, highlights, notes, shapes …) already in the file (read-only).
+    ListAnnotations {
+        input: PathBuf,
     },
 }
 
@@ -783,11 +982,17 @@ pub const OPERATION_IDS: &[&str] = &[
     "split",
     "annotate",
     "fill_form",
+    "export_form_data",
+    "read_form_data",
+    "import_form_data",
     "apply_edits",
+    "list_annotations",
     "organize_pages",
     "stamp_text",
     "export_images",
     "redaction_preview",
+    "find_patterns",
+    "check_accessibility",
     "ocr_pages",
     "protect",
     "unprotect",
@@ -795,8 +1000,15 @@ pub const OPERATION_IDS: &[&str] = &[
     "watermark",
     "crop_pages",
     "set_bookmarks",
+    "set_page_labels",
     "images_to_pdf",
     "export_text",
+    "convert_to_docx",
+    "convert_to_pptx",
+    "read_aloud_to_wav",
+    "translate_document",
+    "convert_office_to_pdf",
+    "export_tables",
     "optimize",
     "compare",
     "verify_signatures",
@@ -831,11 +1043,17 @@ impl Operation {
             Operation::Split { .. } => "split",
             Operation::Annotate { .. } => "annotate",
             Operation::FillForm { .. } => "fill_form",
+            Operation::ExportFormData { .. } => "export_form_data",
+            Operation::ReadFormData { .. } => "read_form_data",
+            Operation::ImportFormData { .. } => "import_form_data",
             Operation::ApplyEdits { .. } => "apply_edits",
+            Operation::ListAnnotations { .. } => "list_annotations",
             Operation::OrganizePages { .. } => "organize_pages",
             Operation::StampText { .. } => "stamp_text",
             Operation::ExportImages { .. } => "export_images",
             Operation::RedactionPreview { .. } => "redaction_preview",
+            Operation::FindPatterns { .. } => "find_patterns",
+            Operation::CheckAccessibility { .. } => "check_accessibility",
             Operation::OcrPages { .. } => "ocr_pages",
             Operation::Protect { .. } => "protect",
             Operation::Unprotect { .. } => "unprotect",
@@ -843,8 +1061,15 @@ impl Operation {
             Operation::Watermark { .. } => "watermark",
             Operation::CropPages { .. } => "crop_pages",
             Operation::SetBookmarks { .. } => "set_bookmarks",
+            Operation::SetPageLabels { .. } => "set_page_labels",
             Operation::ImagesToPdf { .. } => "images_to_pdf",
             Operation::ExportText { .. } => "export_text",
+            Operation::ConvertToDocx { .. } => "convert_to_docx",
+            Operation::ConvertToPptx { .. } => "convert_to_pptx",
+            Operation::ReadAloudToWav { .. } => "read_aloud_to_wav",
+            Operation::TranslateDocument { .. } => "translate_document",
+            Operation::ConvertOfficeToPdf { .. } => "convert_office_to_pdf",
+            Operation::ExportTables { .. } => "export_tables",
             Operation::Optimize { .. } => "optimize",
             Operation::Compare { .. } => "compare",
             Operation::VerifySignatures { .. } => "verify_signatures",
@@ -871,6 +1096,10 @@ impl Operation {
             self,
             Operation::Inspect { .. }
                 | Operation::FormFields { .. }
+                | Operation::ReadFormData { .. }
+                | Operation::FindPatterns { .. }
+                | Operation::CheckAccessibility { .. }
+                | Operation::ListAnnotations { .. }
                 | Operation::ExtractText { .. }
                 | Operation::Search { .. }
                 | Operation::RedactionPreview { .. }
@@ -888,6 +1117,10 @@ impl Operation {
         match self {
             Operation::Merge { inputs, .. } | Operation::ImagesToPdf { inputs, .. } => inputs.clone(),
             Operation::Compare { old, new } => vec![old.clone(), new.clone()],
+            // The data file is an input too: never overwritten by the output.
+            Operation::ReadFormData { input, data } | Operation::ImportFormData { input, data, .. } => {
+                vec![input.clone(), data.clone()]
+            }
             // Files being attached are inputs too: never overwritten by the output.
             Operation::AddAttachments { input, files, .. } => {
                 std::iter::once(input.clone()).chain(files.iter().cloned()).collect()
@@ -906,9 +1139,13 @@ impl Operation {
             | Operation::Split { input, .. }
             | Operation::Annotate { input, .. }
             | Operation::FillForm { input, .. }
+            | Operation::ExportFormData { input, .. }
             | Operation::StampText { input, .. }
             | Operation::ExportImages { input, .. }
             | Operation::RedactionPreview { input, .. }
+            | Operation::FindPatterns { input, .. }
+            | Operation::CheckAccessibility { input }
+            | Operation::ListAnnotations { input }
             | Operation::OcrPages { input, .. }
             | Operation::Protect { input, .. }
             | Operation::Unprotect { input, .. }
@@ -926,7 +1163,14 @@ impl Operation {
             | Operation::FindBlankPages { input, .. }
             | Operation::ExtractImages { input, .. }
             | Operation::SetBookmarks { input, .. }
+            | Operation::SetPageLabels { input, .. }
             | Operation::ExportText { input, .. }
+            | Operation::ConvertToDocx { input, .. }
+            | Operation::ConvertToPptx { input, .. }
+            | Operation::ReadAloudToWav { input, .. }
+            | Operation::TranslateDocument { input, .. }
+            | Operation::ConvertOfficeToPdf { input, .. }
+            | Operation::ExportTables { input, .. }
             | Operation::Optimize { input, .. }
             | Operation::ExtractAttachment { input, .. }
             | Operation::SanitizeInspect { input }
@@ -949,6 +1193,10 @@ impl Operation {
         match self {
             Operation::Inspect { .. }
             | Operation::FormFields { .. }
+            | Operation::ReadFormData { .. }
+            | Operation::FindPatterns { .. }
+            | Operation::CheckAccessibility { .. }
+            | Operation::ListAnnotations { .. }
             | Operation::ExtractText { .. }
             | Operation::Search { .. }
             | Operation::RedactionPreview { .. }
@@ -958,6 +1206,8 @@ impl Operation {
             | Operation::VerifySignatures { .. }
             | Operation::FindBlankPages { .. }
             | Operation::ListPageObjects { .. } => None,
+            Operation::ExportTables { format: TableFormat::Csv, output, .. } => Some(output.clone()),
+            Operation::ExportTables { output, .. } => parent(output),
             Operation::Split { output_dir, .. }
             | Operation::ExportImages { output_dir, .. }
             | Operation::ExtractImages { output_dir, .. } => Some(output_dir.clone()),
@@ -968,6 +1218,8 @@ impl Operation {
             | Operation::RotatePages { output, .. }
             | Operation::Annotate { output, .. }
             | Operation::FillForm { output, .. }
+            | Operation::ExportFormData { output, .. }
+            | Operation::ImportFormData { output, .. }
             | Operation::ApplyEdits { output, .. }
             | Operation::OrganizePages { output, .. }
             | Operation::Redact { output, .. }
@@ -979,8 +1231,14 @@ impl Operation {
             | Operation::CropPages { output, .. }
             | Operation::ExtractAttachment { output, .. }
             | Operation::SetBookmarks { output, .. }
+            | Operation::SetPageLabels { output, .. }
             | Operation::ImagesToPdf { output, .. }
             | Operation::ExportText { output, .. }
+            | Operation::ConvertToDocx { output, .. }
+            | Operation::ConvertToPptx { output, .. }
+            | Operation::ReadAloudToWav { output, .. }
+            | Operation::TranslateDocument { output, .. }
+            | Operation::ConvertOfficeToPdf { output, .. }
             | Operation::Optimize { output, .. }
             | Operation::Deskew { output, .. }
             | Operation::FixOrientation { output, .. }
@@ -1038,8 +1296,109 @@ impl Operation {
             Operation::Split { split: SplitMode::Ranges { ranges }, .. } if ranges.is_empty() => {
                 return Err(PwError::invalid("split.no_ranges", "Enter at least one page range."));
             }
+            Operation::Split { split: SplitMode::Bookmarks { level }, .. } if !(1..=64).contains(level) => {
+                return Err(PwError::invalid("split.level", "Choose a bookmark level from 1 to 64."));
+            }
+            Operation::Split { split: SplitMode::MaxSize { max_bytes }, .. } if *max_bytes < MIN_SPLIT_BYTES => {
+                return Err(PwError::invalid("split.max_size", "Choose a size limit of at least 10 KB."));
+            }
+            Operation::ExportTables { format: TableFormat::Xlsx, output, .. } => {
+                let ok = output.extension().is_some_and(|e| e.eq_ignore_ascii_case("xlsx"));
+                if !ok {
+                    return Err(PwError::invalid("tables.extension", "Save the workbook with a .xlsx name."));
+                }
+            }
+            Operation::ConvertOfficeToPdf { output, .. } => {
+                let ok = output.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf"));
+                if !ok {
+                    return Err(PwError::invalid("office.extension", "Save the PDF with a .pdf name."));
+                }
+            }
+            Operation::TranslateDocument { output, source, target, .. } => {
+                let ok =
+                    output.extension().is_some_and(|e| e.eq_ignore_ascii_case("docx") || e.eq_ignore_ascii_case("txt"));
+                if !ok {
+                    return Err(PwError::invalid(
+                        "translate.extension",
+                        "Save the translation as a Word document (.docx) or a text file (.txt).",
+                    ));
+                }
+                let code = |c: &str| {
+                    !c.is_empty() && c.len() <= 12 && c.chars().all(|x| x.is_ascii_alphanumeric() || x == '-')
+                };
+                if !code(target) || source.as_deref().is_some_and(|s| !code(s)) {
+                    return Err(PwError::invalid("translate.language", "Choose the languages from the list."));
+                }
+            }
+            Operation::ReadAloudToWav { output, rate, .. } => {
+                let ok = output.extension().is_some_and(|e| e.eq_ignore_ascii_case("wav"));
+                if !ok {
+                    return Err(PwError::invalid("speech.extension", "Save the recording with a .wav name."));
+                }
+                if !rate.is_finite() || !(0.5..=2.0).contains(rate) {
+                    return Err(PwError::invalid("speech.rate", "The reading speed must be between 0.5× and 2×."));
+                }
+            }
+            Operation::ConvertToPptx { output, .. } => {
+                let ok = output.extension().is_some_and(|e| e.eq_ignore_ascii_case("pptx"));
+                if !ok {
+                    return Err(PwError::invalid("pptx.extension", "Save the presentation with a .pptx name."));
+                }
+            }
+            Operation::ConvertToDocx { output, .. } => {
+                let ok = output.extension().is_some_and(|e| e.eq_ignore_ascii_case("docx"));
+                if !ok {
+                    return Err(PwError::invalid("docx.extension", "Save the Word document with a .docx name."));
+                }
+            }
+            Operation::SetPageLabels { ranges, .. } => {
+                if ranges.len() > MAX_LABEL_RANGES {
+                    return Err(PwError::invalid("labels.too_many", "Too many label ranges."));
+                }
+                if let Some(first) = ranges.first() {
+                    if first.start != 0 {
+                        return Err(PwError::invalid("labels.first_page", "The first range must start on page 1."));
+                    }
+                }
+                for w in ranges.windows(2) {
+                    if w[1].start <= w[0].start {
+                        return Err(PwError::invalid(
+                            "labels.order",
+                            "Ranges must start on different pages, in page order.",
+                        ));
+                    }
+                }
+                for r in ranges {
+                    if r.prefix.chars().count() > MAX_LABEL_PREFIX_CHARS {
+                        return Err(PwError::invalid("labels.prefix", "A label prefix is too long."));
+                    }
+                    if r.prefix.chars().any(char::is_control) {
+                        return Err(PwError::invalid(
+                            "labels.prefix",
+                            "A label prefix can't contain control characters.",
+                        ));
+                    }
+                    if r.first == 0 || r.first > 1_000_000 {
+                        return Err(PwError::invalid("labels.first", "Numbering starts at 1 to 1,000,000."));
+                    }
+                    if r.style == LabelStyle::None && r.prefix.trim().is_empty() {
+                        return Err(PwError::invalid("labels.empty", "A range without numbers needs a prefix."));
+                    }
+                }
+            }
+            Operation::FindPatterns { patterns, custom, .. } => {
+                let custom = custom.as_deref().map(str::trim).filter(|c| !c.is_empty());
+                if patterns.is_empty() && custom.is_none() {
+                    return Err(PwError::invalid("pattern.none", "Choose what to look for."));
+                }
+                if custom.is_some_and(|c| c.chars().count() > MAX_PATTERN_CHARS) {
+                    return Err(PwError::invalid("pattern.too_long", "The pattern is too long."));
+                }
+            }
             Operation::Annotate { annotations, .. } => validate_annotations(annotations)?,
             Operation::FillForm { values, .. } => validate_form_values(values)?,
+            // Unsaved values are optional here; when present they follow the same rules.
+            Operation::ExportFormData { values, .. } if !values.is_empty() => validate_form_values(values)?,
             Operation::ExportImages { dpi, .. } => {
                 if !(36..=600).contains(dpi) {
                     return Err(PwError::invalid("export.dpi", "Choose a resolution from 36 to 600 dpi."));
@@ -1278,9 +1637,34 @@ impl Operation {
                     return Err(PwError::invalid("ocr.dpi", "Choose a recognition resolution from 100 to 400 dpi."));
                 }
             }
-            Operation::ApplyEdits { form_values, annotations, object_edits, .. } => {
-                if form_values.is_empty() && annotations.is_empty() && object_edits.iter().all(|p| p.edits.is_empty()) {
+            Operation::ApplyEdits { form_values, annotations, object_edits, annotation_changes, .. } => {
+                if form_values.is_empty()
+                    && annotations.is_empty()
+                    && annotation_changes.is_empty()
+                    && object_edits.iter().all(|p| p.edits.is_empty())
+                {
                     return Err(PwError::invalid("edits.empty", "There are no changes to save."));
+                }
+                if annotation_changes.len() > MAX_ANNOTATION_CHANGES {
+                    return Err(PwError::invalid("annotation.too_many", "Too many annotation changes in one request."));
+                }
+                let mut seen = std::collections::HashSet::new();
+                for c in annotation_changes {
+                    if !c.delete && c.text.is_none() {
+                        return Err(PwError::invalid(
+                            "annotation.no_change",
+                            "An annotation change has nothing to change.",
+                        ));
+                    }
+                    if c.text.as_ref().is_some_and(|t| t.chars().count() > MAX_NOTE_CHARS) {
+                        return Err(PwError::invalid("annotation.too_long", "A comment is too long."));
+                    }
+                    if !seen.insert((c.page, c.index)) {
+                        return Err(PwError::invalid(
+                            "annotation.duplicate",
+                            "An annotation is changed twice in one request.",
+                        ));
+                    }
                 }
                 if object_edits.iter().any(|p| !p.edits.is_empty()) {
                     validate_page_edits(object_edits)?;
@@ -1506,6 +1890,10 @@ fn validate_page_edits(pages: &[PageEdits]) -> PwResult<()> {
     Ok(())
 }
 
+fn normal_rate() -> f32 {
+    1.0
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -1613,6 +2001,7 @@ mod tests {
                 form_values,
                 annotations,
                 object_edits: vec![],
+                annotation_changes: vec![],
                 output: "o".into(),
             })
             .validate()

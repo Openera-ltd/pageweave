@@ -10,6 +10,8 @@ import { createContext, useContext } from "react";
 import type {
   AppInfo,
   AttachmentInfo,
+  ExistingAnnotation,
+  ResourceReport,
   AreaPreview,
   JobSnapshot,
   RedactArea,
@@ -17,6 +19,10 @@ import type {
   OperationRequest,
   FormInfo,
   PageText,
+  ReadingPage,
+  SpeechInfo,
+  TranslationDirection,
+  Spoken,
   RecoveredJob,
   SanitizeFindings,
   SignatureReport,
@@ -71,12 +77,31 @@ export interface Api {
   removeTrustedCertificate(fingerprint: string): Promise<boolean>;
   /** Files embedded in the document (read-only). */
   listAttachments(docId: number): Promise<AttachmentInfo[]>;
+  /** Installed resources checked against their pinned checksums. */
+  resourceStatus(): Promise<ResourceReport>;
+  /** Comments and markup already in the document (read-only). */
+  listAnnotations(docId: number): Promise<{ annotations: ExistingAnnotation[]; truncated: boolean }>;
   /** JPEG and PNG images. */
   pickImageFiles(): Promise<string[]>;
+  pickOfficeFile(): Promise<string | null>;
+  /** The installed LibreOffice ("LibreOffice 24.2…"), or null. */
+  officeEngine(): Promise<string | null>;
+  /** Translation directions and whether each model is installed. */
+  translationDirections(): Promise<TranslationDirection[]>;
+  /** The speech engine and its voices (fails with speech.unavailable when there is none). */
+  speechInfo(): Promise<SpeechInfo>;
+  /** One page's text in reading order with word positions. */
+  readingText(docId: number, page: number): Promise<ReadingPage>;
+  /** Speak a paragraph: audio plus timings. */
+  speakText(text: string, voice: string | null, rate: number): Promise<Spoken>;
   /** A signing certificate file (.pfx/.p12). */
   pickCertificateFile(): Promise<string | null>;
   /** Any files (no type filter), e.g. to attach. */
   pickAnyFiles(): Promise<string[]>;
+  /** A form data file to import (.xfdf, .xml, .json). */
+  pickFormDataFile(): Promise<string | null>;
+  /** A save location for a form data file. */
+  pickFormDataSavePath(defaultPath: string, format: "xfdf" | "json"): Promise<string | null>;
   /** A save location for a file of any type. */
   pickSaveAnyPath(defaultPath: string): Promise<string | null>;
   launchFiles(): Promise<string[]>;
@@ -130,6 +155,8 @@ export const tauriApi: Api = {
   redactionPreview: (docId, areas) => invoke("redaction_preview", { docId, areas }),
   sanitizeInspect: (docId) => invoke("sanitize_inspect", { docId }),
   listAttachments: (docId) => invoke("list_attachments", { docId }),
+  listAnnotations: (docId) => invoke("list_annotations", { docId }),
+  resourceStatus: () => invoke("resource_status"),
   trustedCertificates: () => invoke("trusted_certificates"),
   pageObjects: (docId, page) => invoke("page_objects", { docId, page }),
   previewPageEdits: (docId, page, edits, scalePermille) => invoke("preview_page_edits", { docId, page, edits, scalePermille }),
@@ -141,6 +168,19 @@ export const tauriApi: Api = {
     if (r === null) return [];
     return Array.isArray(r) ? r : [r];
   },
+  pickOfficeFile: async () => {
+    const r = await openDialog({
+      multiple: false,
+      directory: false,
+      filters: [{ name: "Office documents", extensions: ["docx", "doc", "odt", "rtf", "txt", "xlsx", "xls", "ods", "csv", "pptx", "ppt", "odp", "html", "htm"] }],
+    });
+    return typeof r === "string" ? r : null;
+  },
+  officeEngine: () => invoke("office_engine"),
+  speechInfo: () => invoke("speech_info"),
+  translationDirections: () => invoke("translation_directions"),
+  readingText: (docId, page) => invoke("reading_text", { docId, page }),
+  speakText: (text, voice, rate) => invoke("speak_text", { text, voice, rate }),
   pickCertificateFile: async () => {
     const r = await openDialog({ multiple: false, directory: false, filters: [{ name: "Certificate files", extensions: ["pfx", "p12"] }] });
     return typeof r === "string" ? r : null;
@@ -151,6 +191,12 @@ export const tauriApi: Api = {
     return Array.isArray(r) ? r : [r];
   },
   pickSaveAnyPath: (defaultPath) => saveDialog({ defaultPath }),
+  pickFormDataFile: async () => {
+    const r = await openDialog({ multiple: false, directory: false, filters: [{ name: "Form data", extensions: ["xfdf", "xml", "json"] }] });
+    return typeof r === "string" ? r : null;
+  },
+  pickFormDataSavePath: (defaultPath, format) =>
+    saveDialog({ defaultPath, filters: [format === "json" ? { name: "JSON form data", extensions: ["json"] } : { name: "XFDF form data", extensions: ["xfdf"] }] }),
   verifySignatures: (docId) => invoke("verify_signatures", { docId }),
   launchFiles: () => invoke("launch_files"),
   launchFileDone: (path) => invoke("launch_file_done", { path }),

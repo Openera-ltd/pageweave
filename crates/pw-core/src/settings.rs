@@ -57,6 +57,16 @@ pub struct Settings {
     /// Command ID → user shortcut override (empty string = unbound).
     pub shortcuts: BTreeMap<String, String>,
     pub restore_session: bool,
+    /// Read aloud: the chosen voice id (the system default when `None`).
+    #[serde(default)]
+    pub read_voice: Option<String>,
+    /// Read aloud speed, 0.5–2.0.
+    #[serde(default = "normal_rate")]
+    pub read_rate: f64,
+}
+
+fn normal_rate() -> f64 {
+    1.0
 }
 
 pub const DEFAULT_ACCENT: &str = "#2f6fde";
@@ -73,6 +83,8 @@ impl Default for Settings {
             recent_files: Vec::new(),
             shortcuts: BTreeMap::new(),
             restore_session: true,
+            read_voice: None,
+            read_rate: 1.0,
         }
     }
 }
@@ -165,6 +177,19 @@ impl Settings {
         }
         if let Some(x) = field(obj, "restore_session", &mut bad) {
             s.restore_session = x;
+        }
+        if let Some(x) = field::<Option<String>>(obj, "read_voice", &mut bad) {
+            match x {
+                Some(v) if v.is_empty() || v.len() > 512 || v.contains('\0') => bad.push("read_voice".into()),
+                v => s.read_voice = v,
+            }
+        }
+        if let Some(x) = field::<f64>(obj, "read_rate", &mut bad) {
+            if x.is_finite() && (0.5..=2.0).contains(&x) {
+                s.read_rate = x;
+            } else {
+                bad.push("read_rate".into());
+            }
         }
         (s, bad)
     }
@@ -300,6 +325,23 @@ mod tests {
         assert_eq!(s, Settings::default());
         assert_eq!(o, LoadOutcome::RecoveredDefaults { backup: Some("settings.corrupt.json".into()) });
         assert_eq!(fs::read(dir.path().join("settings.corrupt.json")).expect("backup"), b"{ not json");
+    }
+
+    #[test]
+    fn read_aloud_voice_and_speed_persist_and_bad_values_are_repaired() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p = dir.path().join("settings.json");
+        fs::write(&p, r#"{"version":1,"read_voice":"slt","read_rate":1.5}"#).expect("seed");
+        let (s, _) = SettingsStore::new(&p).load();
+        assert_eq!((s.read_voice.as_deref(), s.read_rate), (Some("slt"), 1.5));
+        fs::write(&p, r#"{"version":1,"read_voice":"","read_rate":7}"#).expect("seed");
+        let (s, o) = SettingsStore::new(&p).load();
+        assert_eq!((s.read_voice, s.read_rate), (None, 1.0));
+        assert!(matches!(o, LoadOutcome::Repaired { fields } if fields == ["read_voice", "read_rate"]));
+        // Older files without the fields get the defaults.
+        fs::write(&p, r#"{"version":1,"theme":"dark"}"#).expect("seed");
+        let (s, _) = SettingsStore::new(&p).load();
+        assert_eq!((s.read_voice, s.read_rate), (None, 1.0));
     }
 
     #[test]

@@ -541,12 +541,14 @@ pub fn split(
     let pdfium = engine()?;
     let src = load(&pdfium, input, opts)?;
     let count = src.pages().len().max(0) as u32;
-    let groups: Vec<Vec<u32>> = match split {
+    let stem = input.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "document".into());
+    let mut warnings = Vec::new();
+    let parts: Vec<SplitPart> = match split {
         SplitMode::EveryN { n } => {
             if *n == 0 {
                 return Err(PwError::invalid("split.n_zero", "Split size must be at least 1 page."));
             }
-            (0..count).collect::<Vec<_>>().chunks(*n as usize).map(|c| c.to_vec()).collect()
+            (0..count).collect::<Vec<_>>().chunks(*n as usize).map(|c| (c.to_vec(), None, None)).collect()
         }
         SplitMode::Ranges { ranges } => {
             if ranges.is_empty() {
@@ -557,29 +559,43 @@ pub fn split(
                 .enumerate()
                 .map(|(i, r)| {
                     parse_page_ranges(r, count)
+                        .map(|g| (g, None, None))
                         .map_err(|e| PwError { message: format!("Part {}: {}", i + 1, e.message), ..e })
                 })
                 .collect::<PwResult<_>>()?
         }
+        SplitMode::Bookmarks { level } => {
+            bookmark_parts(&src, count, *level)?.into_iter().map(|(g, t)| (g, Some(t), None)).collect()
+        }
+        SplitMode::MaxSize { max_bytes } => size_parts(&pdfium, &src, count, *max_bytes, cancelled, &mut warnings)?
+            .into_iter()
+            .map(|(g, b)| (g, None, Some(b)))
+            .collect(),
     };
-    if groups.len() > 10_000 {
+    if parts.len() > 10_000 {
         return Err(PwError::invalid("split.too_many_parts", "That would create more than 10,000 files."));
     }
-    let stem = input.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "document".into());
-    let width = groups.len().to_string().len().max(2);
-    let mut built = Vec::with_capacity(groups.len());
-    for g in &groups {
+    let width = parts.len().to_string().len().max(2);
+    let mut built = Vec::with_capacity(parts.len());
+    for (i, (g, title, bytes)) in parts.into_iter().enumerate() {
         if cancelled() {
             return Err(PwError::cancelled());
         }
-        let doc = copy_pages(&pdfium, &src, g)?;
-        built.push((save_bytes(&doc)?, g.len() as u32));
+        let bytes = match bytes {
+            Some(b) => b,
+            None => save_bytes(&copy_pages(&pdfium, &src, &g)?)?,
+        };
+        let name = match title {
+            Some(t) => format!("{stem}_{:0width$}_{}.pdf", i + 1, part_title(&t)),
+            None => format!("{stem}_part{:0width$}.pdf", i + 1),
+        };
+        built.push((bytes, g.len() as u32, name));
     }
     let src_encrypted = source_encrypted(&src);
     let mut any_unprotected = false;
     let mut committed: Vec<(CommittedOutput, u32)> = Vec::new();
-    for (i, (bytes, n)) in built.iter().enumerate() {
-        let name = output_dir.join(format!("{stem}_part{:0width$}.pdf", i + 1));
+    for (i, (bytes, n, name)) in built.iter().enumerate() {
+        let name = output_dir.join(name);
         let result = if cancelled() {
             Err(PwError::cancelled())
         } else {
@@ -602,7 +618,145 @@ pub fn split(
             }
         }
     }
-    Ok((committed, protection_warnings(src_encrypted, !any_unprotected)))
+    warnings.extend(protection_warnings(src_encrypted, !any_unprotected));
+    Ok((committed, warnings))
+}
+
+/// One part to write: its pages, the bookmark title for its name, and its saved bytes when they
+/// were already built (split by size measures them).
+type SplitPart = (Vec<u32>, Option<String>, Option<Vec<u8>>);
+
+/// A bookmark title as part of a file name: characters Windows forbids replaced, at most 60 characters.
+fn part_title(t: &str) -> String {
+    let s: String =
+        t.chars()
+            .map(|c| {
+                if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*' | '/' | '\\') {
+                    '_'
+                } else {
+                    c
+                }
+            })
+            .collect();
+    let s: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let s: String = s.trim_matches('.').chars().take(60).collect();
+    let s = s.trim_end_matches(['.', ' ']).to_string();
+    if s.is_empty() {
+        "section".into()
+    } else {
+        s
+    }
+}
+
+/// Page groups that start at each bookmark of `level` (1-based), with the bookmark's title.
+fn bookmark_parts(src: &PdfDocument, count: u32, level: u32) -> PwResult<Vec<(Vec<u32>, String)>> {
+    let mut all = Vec::new();
+    let mut truncated = false;
+    if let Some(root) = src.bookmarks().root() {
+        crate::document::collect_bookmarks(&root, 0, &mut all, &mut truncated);
+    }
+    let mut starts: Vec<(u32, String)> = all
+        .into_iter()
+        .filter(|b| b.depth + 1 == level)
+        .filter_map(|b| b.page.filter(|p| *p < count).map(|p| (p, b.title)))
+        .collect();
+    // Document order; bookmarks on the same page as an earlier one start no new part.
+    starts.sort_by_key(|(p, _)| *p);
+    starts.dedup_by_key(|(p, _)| *p);
+    if starts.is_empty() {
+        let msg = if level == 1 {
+            "This document has no bookmarks that point to a page.".to_string()
+        } else {
+            format!("This document has no level {level} bookmarks that point to a page.")
+        };
+        return Err(PwError::invalid("split.no_bookmarks", msg));
+    }
+    let mut out = Vec::with_capacity(starts.len());
+    for (i, (p, title)) in starts.iter().enumerate() {
+        let from = if i == 0 { 0 } else { *p };
+        let to = starts.get(i + 1).map(|(n, _)| *n).unwrap_or(count);
+        out.push(((from..to).collect(), title.clone()));
+    }
+    Ok(out)
+}
+
+/// Consecutive page groups whose saved size stays within `max_bytes`, with each group's bytes.
+/// Sizes are measured on the saved part (pages share fonts and images, so per-page sizes don't
+/// add up); the largest fitting group is found by doubling, then bisection.
+fn size_parts(
+    pdfium: &Pdfium,
+    src: &PdfDocument,
+    count: u32,
+    max_bytes: u64,
+    cancelled: &dyn Fn() -> bool,
+    warnings: &mut Vec<String>,
+) -> PwResult<Vec<(Vec<u32>, Vec<u8>)>> {
+    let build = |from: u32, n: u32| -> PwResult<Vec<u8>> {
+        if cancelled() {
+            return Err(PwError::cancelled());
+        }
+        save_bytes(&copy_pages(pdfium, src, &(from..from + n).collect::<Vec<_>>())?)
+    };
+    let fits = |b: &[u8]| b.len() as u64 <= max_bytes;
+    let mut out = Vec::new();
+    let mut oversized = Vec::new();
+    let mut start = 0;
+    while start < count {
+        let left = count - start;
+        let one = build(start, 1)?;
+        if !fits(&one) {
+            oversized.push(start + 1);
+            out.push((vec![start], one));
+            start += 1;
+            continue;
+        }
+        // good: largest n known to fit; bad: smallest n known not to fit (or left + 1).
+        let (mut good, mut good_bytes, mut bad) = (1, one, left + 1);
+        let mut probe = 2;
+        while probe <= left {
+            let b = build(start, probe)?;
+            if fits(&b) {
+                good = probe;
+                good_bytes = b;
+                probe = probe.saturating_mul(2);
+            } else {
+                bad = probe;
+                break;
+            }
+        }
+        if bad == left + 1 && good < left {
+            // Doubling stepped past the end; the remainder is the last candidate.
+            let b = build(start, left)?;
+            if fits(&b) {
+                good = left;
+                good_bytes = b;
+            } else {
+                bad = left;
+            }
+        }
+        while bad - good > 1 {
+            let mid = good + (bad - good) / 2;
+            let b = build(start, mid)?;
+            if fits(&b) {
+                good = mid;
+                good_bytes = b;
+            } else {
+                bad = mid;
+            }
+        }
+        out.push(((start..start + good).collect(), good_bytes));
+        start += good;
+    }
+    if !oversized.is_empty() {
+        let list: Vec<String> = oversized.iter().take(10).map(|p| p.to_string()).collect();
+        warnings.push(format!(
+            "{} page(s) are larger than the limit on their own and were saved as single-page parts (page {}{}).",
+            oversized.len(),
+            list.join(", "),
+            if oversized.len() > 10 { ", …" } else { "" }
+        ));
+    }
+    Ok(out)
 }
 
 /// Smallest page side a crop may leave, in points (a quarter inch).

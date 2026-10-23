@@ -11,6 +11,7 @@ import {
   ZoomOut,
   MoveHorizontal,
   PencilLine,
+  Volume2,
   Type as TypeIcon,
 } from "lucide-react";
 import { useApi } from "./api";
@@ -36,7 +37,7 @@ import {
   type PendingAnnotation,
   type PendingKind,
 } from "./annotations";
-import { missingRequired, setEdit, toFieldValues, fieldLabel, type FormEdits } from "./forms";
+import { clearedEdits, isFillable, resetEdits, missingRequired, setEdit, toFieldValues, fieldLabel, type FormEdits } from "./forms";
 import { COMMAND_BY_ID, COMMANDS, commandForShortcut, effectiveBindings, type CommandHandlers, type CommandId } from "./commands";
 import { clampZoom, fitWidthZoom, nextZoom, pageOrigin, screenRectToPdf, ZOOM_PRESETS, CSS_PX_PER_PT, displaySizePt } from "./geometry";
 import { basename, siblingOutput } from "./paths";
@@ -48,6 +49,7 @@ import { applyAppearance } from "./theme";
 import { toPwError, type AppInfo, type AttachmentInfo, type CollisionPolicy, type FormField, type FormInfo, type FormValue, type JobSnapshot, type OpenedDoc, type Operation, type PwError, type RecoveredJob, type RedactArea, type SearchHit, type SearchRect, type Settings, type SignatureReport } from "./types";
 import { CommandButton, Menu, type MenuItemOrSeparator } from "./components/ui";
 import { Viewer, type ScrollRequest } from "./components/Viewer";
+import { ReadAloudBar, type ReadStart } from "./components/ReadAloudBar";
 import { Sidebar, type SidebarView } from "./components/Sidebar";
 import { PageToolsDialog, type PageTool } from "./components/PageToolsDialog";
 import { OrganizeDialog } from "./components/OrganizeDialog";
@@ -61,10 +63,18 @@ import { SignDialog } from "./components/SignDialog";
 import { SignatureMarkDialog } from "./components/SignatureMarkDialog";
 import { TrustSignerDialog, TrustedCertificatesDialog } from "./components/TrustDialogs";
 import { UnprotectDialog } from "./components/UnprotectDialog";
+import { ExportFormDataDialog, ImportFormDataDialog } from "./components/FormDataDialogs";
+import { RedactPatternsDialog } from "./components/RedactPatternsDialog";
+import { toChanges, type AnnotChanges } from "./annotationChanges";
+import { AccessibilityDialog } from "./components/AccessibilityDialog";
+import { PageLabelsDialog } from "./components/PageLabelsDialog";
+import { BatchDialog } from "./components/BatchDialog";
+import type { ImportPlan } from "./formData";
 import { EditPropertiesDialog } from "./components/EditPropertiesDialog";
 import { SaveAttachmentDialog } from "./components/SaveAttachmentDialog";
 import { EditBookmarksDialog } from "./components/EditBookmarksDialog";
 import { ImagesToPdfDialog, isImagePath } from "./components/ImagesToPdfDialog";
+import { OfficeDialog, isOfficePath } from "./components/OfficeDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { NoteDialog, UnsavedDialog } from "./components/AnnotationDialogs";
 import { CommandPalette, Home, Notices, PasswordDialog, PropertiesDialog, SearchBar, StatusBar, type Notice, type NoticeAction, type SearchState } from "./components/Panels";
@@ -87,6 +97,12 @@ type DialogState =
   | { kind: "redact"; areas: RedactArea[] }
   | { kind: "protect" }
   | { kind: "sanitize" }
+  | { kind: "exportFormData" }
+  | { kind: "redactPatterns" }
+  | { kind: "accessibility" }
+  | { kind: "pageLabels" }
+  | { kind: "batch" }
+  | { kind: "importFormData" }
   | { kind: "compare" }
   | { kind: "print" }
   | { kind: "removeBlank" }
@@ -99,6 +115,7 @@ type DialogState =
   | { kind: "saveAttachment"; attachment: AttachmentInfo }
   | { kind: "bookmarks"; addOnOpen: boolean; page: number }
   | { kind: "images"; files: string[] }
+  | { kind: "office"; file: string | null }
   | { kind: "unsaved"; reason: "tab"; docId: number }
   | { kind: "unsaved"; reason: "quit" }
   | null;
@@ -108,6 +125,7 @@ type AfterSave = { kind: "close"; docId: number } | { kind: "quit" } | null;
 
 const NO_PENDING: PendingAnnotation[] = [];
 const NO_EDITS: FormEdits = {};
+const NO_ANNOT_CHANGES: AnnotChanges = {};
 
 const OPERATION_TITLES: Partial<Record<Operation["op"], string>> = {
   extract_pages: "Extract pages",
@@ -122,12 +140,15 @@ const OPERATION_TITLES: Partial<Record<Operation["op"], string>> = {
   sanitize: "Remove hidden information",
   unprotect: "Remove password",
   set_properties: "Edit document properties",
+  set_page_labels: "Set page labels",
   extract_attachment: "Save attached file",
   set_bookmarks: "Edit bookmarks",
   images_to_pdf: "Create PDF from images",
   add_attachments: "Attach files",
   watermark: "Add watermark",
   crop_pages: "Crop pages",
+  export_form_data: "Export form data",
+  import_form_data: "Fill form from data",
 };
 
 function operationTarget(op: Operation): string {
@@ -166,6 +187,28 @@ export function App() {
   const [notices, setNotices] = useState<Notice[]>([]);
   const [jobs, setJobs] = useState<Record<string, JobSnapshot>>({});
   const [dropActive, setDropActive] = useState(false);
+  // The installed LibreOffice for opening Office files (null: not installed; checked once).
+  const [officeEngine, setOfficeEngine] = useState<string | null>(null);
+  useEffect(() => {
+    api.officeEngine().then(setOfficeEngine).catch(() => setOfficeEngine(null));
+  }, [api]);
+  // Read aloud: whether the computer has a speech voice (true, or why not; checked once), the
+  // open reader (one document at a time) and what it highlights.
+  const [speechReady, setSpeechReady] = useState<true | string>("Checking for speech voices…");
+  useEffect(() => {
+    api.speechInfo().then(
+      () => setSpeechReady(true),
+      (e) => setSpeechReady(toPwError(e).message),
+    );
+  }, [api]);
+  const [reader, setReader] = useState<(ReadStart & { docId: number }) | null>(null);
+  const [readMark, setReadMark] = useState<{ page: number; rects: SearchRect[] } | null>(null);
+  const [readFollow, setReadFollow] = useState(true);
+  const stopFollowing = useCallback(() => setReadFollow(false), []);
+  // A closed document is no longer read.
+  useEffect(() => {
+    if (reader && !tabs.some((t) => t.doc_id === reader.docId)) setReader(null);
+  }, [reader, tabs]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState<SearchState>(EMPTY_SEARCH);
   const [hits, setHits] = useState<SearchHit[]>([]);
@@ -179,6 +222,8 @@ export function App() {
   const [editMode, setEditMode] = useState(false);
   const [addTextArmed, setAddTextArmed] = useState(false);
   const [objHist, setObjHist] = useState<Record<number, ObjHistory>>({});
+  /** Pending deletes / text changes of annotations already in each file. */
+  const [annotChanges, setAnnotChanges] = useState<Record<number, AnnotChanges>>({});
   const annGroup = useRef(1);
   /** Form fields per document (null: none, or still loading) and the user's unsaved field edits. */
   const [forms, setForms] = useState<Record<number, FormInfo | null>>({});
@@ -216,7 +261,8 @@ export function App() {
   const editsOf = (id: number) => formEdits[id] ?? NO_EDITS;
   const objEditsOf = (id: number) => objHist[id]?.items ?? NO_OBJ_EDITS.items;
   /** Unsaved changes of a document: pending annotations and redaction marks, changed form fields and content edits. */
-  const changesOf = (id: number) => pendingOf(id).length + Object.keys(editsOf(id)).length + objEditsOf(id).length;
+  const annotChangesOf = (id: number) => annotChanges[id] ?? NO_ANNOT_CHANGES;
+  const changesOf = (id: number) => pendingOf(id).length + Object.keys(editsOf(id)).length + objEditsOf(id).length + Object.keys(annotChangesOf(id)).length;
   const marksOf = (id: number) => pendingOf(id).filter(isRedactMark).length;
   /** Changes a saved copy can hold (redaction marks are applied, not saved). */
   const savableOf = (id: number) => changesOf(id) - marksOf(id);
@@ -301,6 +347,11 @@ export function App() {
   /* ---------- Documents ---------- */
   const openPath = useCallback(
     async (path: string, password?: string) => {
+      // Office files are converted to PDF first (Open an Office file).
+      if (isOfficePath(path)) {
+        setDialog((d) => (d ? d : { kind: "office", file: path }));
+        return;
+      }
       try {
         const doc = await api.openDocument(path, password);
         setDialog((d) => (d?.kind === "password" ? null : d));
@@ -363,6 +414,7 @@ export function App() {
       setAnnots(({ [id]: _dropped, ...rest }) => rest);
       setForms(({ [id]: _f, ...rest }) => rest);
       setFormEdits(({ [id]: _e, ...rest }) => rest);
+      setAnnotChanges(({ [id]: _c, ...rest }) => rest);
       if (id === activeId) {
         setSearchOpen(false);
         setHits([]);
@@ -372,13 +424,15 @@ export function App() {
     [api, activeId],
   );
 
-  /** Close a tab, asking first when it has unsaved annotations. */
+  /** Close a tab, asking first when it has any unsaved change (annotations, marks, fields, content or comment edits). */
   const closeTab = useCallback(
     (id: number) => {
-      if ((annots[id]?.items.length ?? 0) + Object.keys(formEdits[id] ?? {}).length > 0) setDialog({ kind: "unsaved", reason: "tab", docId: id });
+      const n =
+        (annots[id]?.items.length ?? 0) + Object.keys(formEdits[id] ?? {}).length + (objHist[id]?.items.length ?? 0) + Object.keys(annotChanges[id] ?? {}).length;
+      if (n > 0) setDialog({ kind: "unsaved", reason: "tab", docId: id });
       else closeTabNow(id);
     },
-    [annots, formEdits, closeTabNow],
+    [annots, formEdits, objHist, annotChanges, closeTabNow],
   );
 
   // Read a document's form fields the first time it is shown (only documents that have a form).
@@ -454,10 +508,13 @@ export function App() {
         else if (e.type === "leave") setDropActive(false);
         else if (e.type === "drop") {
           setDropActive(false);
-          // Dropped images go to "Create PDF from images"; everything else is opened.
+          // Dropped images go to "Create PDF from images", an Office file to "Open an Office
+          // file"; everything else is opened.
           const images = e.paths.filter(isImagePath);
-          for (const p of e.paths.filter((p) => !isImagePath(p))) await openPath(p);
+          const office = e.paths.filter(isOfficePath);
+          for (const p of e.paths.filter((p) => !isImagePath(p) && !isOfficePath(p))) await openPath(p);
           if (images.length) setDialog((d) => (d ? d : { kind: "images", files: images }));
+          else if (office.length) setDialog((d) => (d ? d : { kind: "office", file: office[0]! }));
         }
       })
       .then((u) => (off = u))
@@ -658,9 +715,11 @@ export function App() {
     const before = annots[docId];
     const beforeEdits = formEdits[docId];
     const beforeObjects = objHist[docId];
+    const beforeAnnotChanges = annotChanges[docId];
     setAnnots(({ [docId]: _gone, ...rest }) => rest);
     setFormEdits(({ [docId]: _gone, ...rest }) => rest);
     setObjHist(({ [docId]: _gone, ...rest }) => rest);
+    setAnnotChanges(({ [docId]: _gone, ...rest }) => rest);
     notify({
       kind: "info",
       title: `Discarded ${n} change${n === 1 ? "" : "s"}`,
@@ -671,6 +730,7 @@ export function App() {
             if (before) setAnnots((a) => ({ ...a, [docId]: before }));
             if (beforeEdits) setFormEdits((e) => ({ ...e, [docId]: beforeEdits }));
             if (beforeObjects) setObjHist((o) => ({ ...o, [docId]: beforeObjects }));
+            if (beforeAnnotChanges) setAnnotChanges((c) => ({ ...c, [docId]: beforeAnnotChanges }));
           },
         },
       ],
@@ -685,6 +745,70 @@ export function App() {
       notify({ kind: "warning", title: "Required fields are empty", detail: missing.slice(0, 5).map(fieldLabel).join(", ") + (missing.length > 5 ? ", …" : ""), persistent: false });
     }
     openTool("save");
+  };
+
+  /** Form data export/import needs a form PageWeave can fill. */
+  const formAvail = (): true | string => {
+    if (!active) return NO_DOC;
+    if ((active.info.form_type ?? "none") === "none") return "This document has no form fields.";
+    const f = forms[active.doc_id];
+    if (f === undefined) return "Reading the form fields…";
+    if (f === null) return "The form fields couldn’t be read.";
+    if (f.has_xfa) return "This form uses XFA, which PageWeave can’t fill.";
+    return f.fields.some(isFillable) ? true : "This document has no form fields.";
+  };
+
+  /** Put imported values into the form as unsaved edits, with Undo. */
+  const applyImport = (docId: number, plan: ImportPlan, source: string) => {
+    const before = formEdits[docId];
+    setFormEdits((all) => ({ ...all, [docId]: plan.edits }));
+    const n = plan.changes.length;
+    notify({
+      kind: "success",
+      title: `Filled ${n} field${n === 1 ? "" : "s"} from ${source}`,
+      detail: "Save a copy to keep them (Ctrl+S).",
+      actions: [{ label: "Undo", run: () => setFormEdits(({ [docId]: _new, ...rest }) => (before ? { ...rest, [docId]: before } : rest)) }],
+      persistent: false,
+    });
+  };
+
+  /** Empty the form's text fields and checkboxes as unsaved edits, with Undo. */
+  const clearForm = (docId: number) => {
+    const fields = forms[docId]?.fields ?? [];
+    const before = formEdits[docId];
+    const r = clearedEdits(before ?? {}, fields);
+    if (r.changed === 0) {
+      notify({ kind: "info", title: "The form is already empty", detail: r.kept ? `${r.kept} choice field${r.kept === 1 ? "" : "s"} can’t be emptied here.` : undefined, persistent: false });
+      return;
+    }
+    setFormEdits((all) => ({ ...all, [docId]: r.edits }));
+    notify({
+      kind: "success",
+      title: `Cleared ${r.changed} field${r.changed === 1 ? "" : "s"}`,
+      detail: r.kept ? `${r.kept} choice field${r.kept === 1 ? " keeps its" : "s keep their"} option (choices can’t be emptied here).` : "Save a copy to keep the empty form (Ctrl+S).",
+      actions: [{ label: "Undo", run: () => setFormEdits(({ [docId]: _new, ...rest }) => (before ? { ...rest, [docId]: before } : rest)) }],
+      persistent: false,
+    });
+  };
+
+  /** Put every field back to the document's default value as unsaved edits, with Undo. */
+  const resetForm = (docId: number) => {
+    const fields = forms[docId]?.fields ?? [];
+    const before = formEdits[docId];
+    const r = resetEdits(before ?? {}, fields);
+    const keptNote = r.kept ? `${r.kept} choice field${r.kept === 1 ? " has" : "s have"} no default and keep${r.kept === 1 ? "s its" : " their"} option.` : undefined;
+    if (r.changed === 0) {
+      notify({ kind: "info", title: "The form already shows its default values", detail: keptNote, persistent: false });
+      return;
+    }
+    setFormEdits((all) => ({ ...all, [docId]: r.edits }));
+    notify({
+      kind: "success",
+      title: `Reset ${r.changed} field${r.changed === 1 ? "" : "s"} to default values`,
+      detail: keptNote ?? "Save a copy to keep the reset form (Ctrl+S).",
+      actions: [{ label: "Undo", run: () => setFormEdits(({ [docId]: _new, ...rest }) => (before ? { ...rest, [docId]: before } : rest)) }],
+      persistent: false,
+    });
   };
 
   const selectionAvail = (): true | string => (pageSelection() ? true : "Select text on a page first.");
@@ -726,6 +850,7 @@ export function App() {
       available: all(needDoc, noDialog, () => (markMode ? true : roomAvail())),
     },
     "redact.markPage": { run: () => markPage(view.page), available: all(needDoc, noDialog, roomAvail) },
+    "redact.markPatterns": { run: () => setDialog({ kind: "redactPatterns" }), available: all(needDoc, noDialog, roomAvail) },
     "redact.markMatches": {
       run: markMatches,
       available: all(needDoc, noDialog, roomAvail, () => (searchOpen && hits.length ? true : "Find text first; every match is then marked.")),
@@ -753,6 +878,11 @@ export function App() {
     "file.properties": { run: () => setDialog({ kind: "properties" }), available: all(needDoc, noDialog) },
     "file.protect": { run: () => setDialog({ kind: "protect" }), available: all(needDoc, noDialog) },
     "file.sanitize": { run: () => setDialog({ kind: "sanitize" }), available: all(needDoc, noDialog) },
+    "file.accessibility": { run: () => setDialog({ kind: "accessibility" }), available: all(needDoc, noDialog) },
+    "file.exportFormData": { run: () => setDialog({ kind: "exportFormData" }), available: all(needDoc, noDialog, formAvail) },
+    "file.importFormData": { run: () => setDialog({ kind: "importFormData" }), available: all(needDoc, noDialog, formAvail) },
+    "edit.clearForm": { run: () => active && clearForm(active.doc_id), available: all(needDoc, noDialog, formAvail) },
+    "edit.resetForm": { run: () => active && resetForm(active.doc_id), available: all(needDoc, noDialog, formAvail) },
     "file.reduceSize": { run: () => openTool("optimize"), available: all(needDoc, noDialog) },
     "file.compare": { run: () => setDialog({ kind: "compare" }), available: all(needDoc, noDialog) },
     "file.print": { run: () => setDialog({ kind: "print" }), available: all(needDoc, noDialog) },
@@ -760,6 +890,8 @@ export function App() {
     "file.trustedCertificates": { run: () => setDialog({ kind: "trustedCertificates" }), available: noDialog },
     "file.signatureMark": { run: () => setDialog({ kind: "signatureMark" }), available: all(needDoc, noDialog) },
     "file.imagesToPdf": { run: () => setDialog({ kind: "images", files: [] }), available: noDialog },
+    "file.openOffice": { run: () => setDialog({ kind: "office", file: null }), available: noDialog },
+    "file.batch": { run: () => setDialog({ kind: "batch" }), available: noDialog },
     "file.editBookmarks": { run: () => setDialog({ kind: "bookmarks", addOnOpen: false, page: view.page }), available: all(needDoc, noDialog) },
     "file.attachFiles": { run: () => active && attachFiles(active), available: all(needDoc, noDialog) },
     "file.editProperties": { run: () => setDialog({ kind: "editProperties" }), available: all(needDoc, () => (dialog && dialog.kind !== "properties" ? "Close the open dialog first." : true)) },
@@ -832,6 +964,14 @@ export function App() {
     "pages.stamp": { run: () => openTool("stamp"), available: all(needDoc, noDialog) },
     "pages.exportImages": { run: () => openTool("images"), available: all(needDoc, noDialog) },
     "pages.exportText": { run: () => openTool("text"), available: all(needDoc, noDialog) },
+    "file.toWord": { run: () => openTool("word"), available: all(needDoc, noDialog) },
+    "file.toPowerPoint": { run: () => openTool("slides"), available: all(needDoc, noDialog) },
+    "file.translate": { run: () => openTool("translate"), available: all(needDoc, noDialog) },
+    "read.aloud": { run: () => startReading(), available: all(needDoc, () => speechReady) },
+    "read.stop": { run: () => setReader(null), available: () => (reader ? true : "Nothing is being read aloud.") },
+    "read.saveAudio": { run: () => openTool("audio"), available: all(needDoc, noDialog, () => speechReady) },
+    "file.exportTables": { run: () => openTool("tables"), available: all(needDoc, noDialog) },
+    "pages.labels": { run: () => setDialog({ kind: "pageLabels" }), available: all(needDoc, noDialog) },
     "pages.deskew": { run: () => openTool("deskew"), available: all(needDoc, noDialog) },
     "pages.orient": { run: () => openTool("orient"), available: all(needDoc, noDialog) },
     "pages.extractImages": { run: () => openTool("extractImages"), available: all(needDoc, noDialog) },
@@ -922,6 +1062,21 @@ export function App() {
     run: run ?? (() => runCommand(id)),
   });
 
+  /** Read aloud from the selection's first word, or from the top of `page` (default: the current page). */
+  const startReading = (page?: number, rects?: Map<number, SearchRect[]> | null) => {
+    if (!active) return;
+    const sel = rects ?? (pageSelection() ? selectionRects() : null);
+    const first = sel ? [...sel.entries()].sort((a, b) => a[0] - b[0])[0] : undefined;
+    setReadFollow(true);
+    setReader((r) => ({
+      docId: active.doc_id,
+      page: page ?? first?.[0] ?? view.page,
+      at: null,
+      rect: page === undefined ? first?.[1][0] : undefined,
+      nonce: (r?.nonce ?? 0) + 1,
+    }));
+  };
+
   const pageMenu = (page: number, x: number, y: number) => {
     const n = page + 1;
     const multi = (active?.info.page_count ?? 0) > 1;
@@ -955,6 +1110,7 @@ export function App() {
         ...(selected
           ? [
               { ...(item("edit.copy", "Copy", () => copySelection(selected), true) as Exclude<MenuItemOrSeparator, "separator">), shortcut: "Ctrl+C" },
+              { ...(item("read.aloud", "Read aloud from here", () => startReading(undefined, rects), speechReady) as Exclude<MenuItemOrSeparator, "separator">), shortcut: bindings["read.aloud"]?.[0] },
               "separator" as const,
               { ...(item("annotate.highlight", "Highlight", () => annotateSelection("highlight", rects!), room) as Exclude<MenuItemOrSeparator, "separator">), shortcut: bindings["annotate.highlight"]?.[0] },
               { ...(item("annotate.underline", "Underline", () => annotateSelection("underline", rects!), room) as Exclude<MenuItemOrSeparator, "separator">), shortcut: bindings["annotate.underline"]?.[0] },
@@ -969,9 +1125,11 @@ export function App() {
         item("pages.delete", `Delete page ${n}…`, () => openTool("delete", String(n)), multi ? true : "A one-page document has no pages to delete."),
         item("pages.organize"),
         item("file.editBookmarks", `Add bookmark for page ${n}…`, () => setDialog({ kind: "bookmarks", addOnOpen: true, page }), dialog ? "Close the open dialog first." : true),
+        ...(selected ? [] : [item("read.aloud", `Read page ${n} aloud`, () => startReading(page), speechReady)]),
         "separator",
         item("redact.markPage", `Mark page ${n} for redaction`, () => markPage(page), room),
         item("redact.markArea", markMode ? "Stop marking areas" : "Mark areas for redaction"),
+        item("redact.markPatterns"),
         item("redact.apply"),
         "separator",
         item("view.zoomIn"),
@@ -1023,6 +1181,16 @@ export function App() {
           setActiveId(doc.doc_id);
           setDialog({ kind: "sanitize" });
         }, dialog ? "Close the open dialog first." : true),
+        ...(doc.doc_id === activeId && (doc.info.form_type ?? "none") !== "none"
+          ? [
+              item("file.importFormData", "Import form data…", () => setDialog({ kind: "importFormData" }), dialog ? "Close the open dialog first." : formAvail()),
+              item("file.exportFormData", "Export form data…", () => setDialog({ kind: "exportFormData" }), dialog ? "Close the open dialog first." : formAvail()),
+            ]
+          : []),
+        item("file.accessibility", "Check accessibility…", () => {
+          setActiveId(doc.doc_id);
+          setDialog({ kind: "accessibility" });
+        }, dialog ? "Close the open dialog first." : true),
         item("file.compare", "Compare with…", () => {
           setActiveId(doc.doc_id);
           setDialog({ kind: "compare" });
@@ -1036,7 +1204,7 @@ export function App() {
 
   const pagesMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
-    setMenu({ label: "Page tools", x: r.left, y: r.bottom + 2, items: [item("pages.organize"), "separator", item("pages.extract"), item("pages.delete"), item("pages.rotate"), item("pages.split"), item("pages.stamp"), item("pages.watermark"), item("pages.crop"), item("pages.exportImages"), item("pages.extractImages"), item("pages.exportText"), item("pages.ocr"), item("pages.deskew"), item("pages.orient"), item("pages.removeBlank"), "separator", item("pages.merge")] });
+    setMenu({ label: "Page tools", x: r.left, y: r.bottom + 2, items: [item("pages.organize"), "separator", item("pages.extract"), item("pages.delete"), item("pages.rotate"), item("pages.split"), item("pages.stamp"), item("pages.watermark"), item("pages.crop"), item("pages.exportImages"), item("pages.extractImages"), item("pages.exportText"), item("file.toWord"), item("file.toPowerPoint"), item("file.exportTables"), item("file.translate"), item("read.saveAudio"), item("pages.labels"), item("pages.ocr"), item("pages.deskew"), item("pages.orient"), item("pages.removeBlank"), "separator", item("pages.merge")] });
   };
 
   /* ---------- Job results ---------- */
@@ -1054,6 +1222,8 @@ export function App() {
     const straightened = r.data?.straightened;
     const turned = r.data?.turned;
     const signer = r.operation === "sign" ? r.data?.signer : undefined;
+    const exported = r.operation === "export_form_data" ? r.data?.fields : undefined;
+    const tablesN = r.operation === "export_tables" ? r.data?.tables : undefined;
     const detail =
       typeof before === "number" && typeof after === "number"
         ? sizeChange(before, after)
@@ -1061,6 +1231,10 @@ export function App() {
           ? `${straightened} page${straightened === 1 ? "" : "s"} straightened`
           : typeof signer === "string"
             ? `Signed as ${signer}`
+          : typeof exported === "number"
+            ? `${exported} field value${exported === 1 ? "" : "s"}`
+          : typeof tablesN === "number"
+            ? `${tablesN} table${tablesN === 1 ? "" : "s"}`
             : typeof turned === "number"
             ? `${turned} page${turned === 1 ? "" : "s"} turned upright`
           : out?.pages != null && r.outputs.length === 1
@@ -1117,6 +1291,7 @@ export function App() {
     setAnnots(({ [docId]: _saved, ...rest }) => rest);
     setFormEdits(({ [docId]: _saved, ...rest }) => rest);
     setObjHist(({ [docId]: _saved, ...rest }) => rest);
+    setAnnotChanges(({ [docId]: _saved, ...rest }) => rest);
     const next = afterSave.current;
     afterSave.current = null;
     if (next?.kind === "close") return closeTabNow(next.docId);
@@ -1200,6 +1375,7 @@ export function App() {
             <Layers /> Pages
           </button>
           <CommandButton command="search.open" handlers={handlers} bindings={bindings} icon={<Search />} pressed={searchOpen} />
+          <CommandButton command={reader ? "read.stop" : "read.aloud"} handlers={handlers} bindings={bindings} icon={<Volume2 />} pressed={!!reader} />
           <CommandButton command="edit.toggleEditMode" handlers={handlers} bindings={bindings} icon={<PencilLine />} pressed={editMode} />
           {editMode && <CommandButton command="edit.addText" handlers={handlers} bindings={bindings} icon={<TypeIcon />} pressed={addTextArmed} />}
         </div>
@@ -1286,9 +1462,32 @@ export function App() {
               signaturesError={sigs?.docId === active.doc_id ? (sigs.error ?? null) : null}
               onTrustSigner={(index) => setDialog((d) => d ?? { kind: "trustSigner", index })}
               onManageTrust={() => setDialog((d) => d ?? { kind: "trustedCertificates" })}
+              annotChanges={annotChangesOf(active.doc_id)}
+              onAnnotChanges={(c) => setAnnotChanges((all) => ({ ...all, [active.doc_id]: c }))}
             />
           )}
           <div ref={viewerHost} style={{ display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0, minWidth: 0 }}>
+            <div>
+            {reader && reader.docId === active.doc_id && (
+              <ReadAloudBar
+                key={reader.docId}
+                docId={reader.docId}
+                pageCount={active.info.page_count}
+                start={reader}
+                voice={settings?.read_voice ?? null}
+                rate={settings?.read_rate ?? 1}
+                onSettings={(voice, rate) => {
+                  if (!settings) return;
+                  const next = { ...settings, read_voice: voice, read_rate: rate };
+                  setSettings(next);
+                  api.saveSettings(next).then(setSettings, (e) => notifyError("Couldn’t save the reading settings", e));
+                }}
+                onHighlight={setReadMark}
+                follow={readFollow}
+                onFollow={() => setReadFollow(true)}
+                onClose={() => setReader(null)}
+              />
+            )}
             {searchOpen ? (
               <SearchBar
                 state={search}
@@ -1311,9 +1510,8 @@ export function App() {
                 onMarkAll={markMatches}
                 markAllAvailable={handlers["redact.markMatches"].available()}
               />
-            ) : (
-              <div />
-            )}
+            ) : null}
+            </div>
             <Viewer
               key={active.doc_id}
               doc={active}
@@ -1323,6 +1521,8 @@ export function App() {
               scrollRequest={scrollRequest}
               hits={hits}
               currentHit={search.current}
+              reading={reader && reader.docId === active.doc_id ? { page: readMark?.page ?? reader.page, rects: readMark?.rects ?? [], follow: readFollow } : null}
+              onReadingInterrupted={stopFollowing}
               onPageContextMenu={pageMenu}
               annotations={activePending}
               form={forms[active.doc_id] ?? null}
@@ -1353,6 +1553,8 @@ export function App() {
             dropActive={dropActive}
             onOpen={openDialog}
             onImagesToPdf={() => setDialog({ kind: "images", files: [] })}
+            onOpenOffice={() => setDialog({ kind: "office", file: null })}
+            onBatch={() => setDialog({ kind: "batch" })}
             onOpenRecent={(p) => openPath(p)}
             onRemoveRecent={removeRecent}
             openShortcut={bindings["file.open"]?.[0]}
@@ -1380,7 +1582,10 @@ export function App() {
           annotations={dialog.tool === "save" ? annotationSpecs(activePending) : undefined}
           formValues={dialog.tool === "save" ? toFieldValues(editsOf(active.doc_id), forms[active.doc_id]?.fields ?? []) : undefined}
           objectEdits={dialog.tool === "save" ? toPageEdits(objEditsOf(active.doc_id)) : undefined}
+          annotationChanges={dialog.tool === "save" ? toChanges(annotChangesOf(active.doc_id)) : undefined}
           jobs={jobs}
+          readVoice={settings?.read_voice ?? null}
+          readRate={settings?.read_rate ?? 1}
           onClose={() => {
             afterSave.current = null;
             setDialog(null);
@@ -1429,11 +1634,44 @@ export function App() {
       )}
       {dialog?.kind === "protect" && active && <ProtectDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "images" && <ImagesToPdfDialog initialFiles={dialog.files} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
+      {dialog?.kind === "office" && (
+        <OfficeDialog
+          initialFile={dialog.file}
+          engine={officeEngine}
+          jobs={jobs}
+          onClose={() => setDialog(null)}
+          onFinished={(job) => {
+            for (const w of job.result?.warnings ?? []) notify({ kind: "info", title: "Converted", detail: w, persistent: false });
+            const out = job.result?.outputs[0]?.path;
+            if (out) void openPath(out);
+          }}
+        />
+      )}
       {dialog?.kind === "bookmarks" && active && <EditBookmarksDialog doc={active} currentPage={dialog.page} addOnOpen={dialog.addOnOpen} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "saveAttachment" && active && <SaveAttachmentDialog doc={active} attachment={dialog.attachment} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "editProperties" && active && <EditPropertiesDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "unprotect" && active && <UnprotectDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "sanitize" && active && <SanitizeDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
+      {dialog?.kind === "batch" && <BatchDialog openFiles={tabs.map((t) => t.path)} jobs={jobs} onClose={() => setDialog(null)} />}
+      {dialog?.kind === "pageLabels" && active && <PageLabelsDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
+      {dialog?.kind === "accessibility" && active && <AccessibilityDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onGoToPage={goToPage} />}
+      {dialog?.kind === "redactPatterns" && active && (
+        <RedactPatternsDialog
+          doc={active}
+          jobs={jobs}
+          onClose={() => setDialog(null)}
+          onMark={(found) => {
+            addMarks(found.map((h) => [h.page, h.rects]));
+            notify({ kind: "success", title: `Marked ${found.length} for redaction`, detail: "Review the marks, then Apply redactions.", persistent: false });
+          }}
+        />
+      )}
+      {dialog?.kind === "exportFormData" && active && forms[active.doc_id] && (
+        <ExportFormDataDialog doc={active} form={forms[active.doc_id]!} edits={editsOf(active.doc_id)} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />
+      )}
+      {dialog?.kind === "importFormData" && active && forms[active.doc_id] && (
+        <ImportFormDataDialog doc={active} form={forms[active.doc_id]!} edits={editsOf(active.doc_id)} jobs={jobs} onClose={() => setDialog(null)} onApply={(plan, source) => applyImport(active.doc_id, plan, source)} />
+      )}
       {dialog?.kind === "trustSigner" && active && (
         <TrustSignerDialog
           doc={active}

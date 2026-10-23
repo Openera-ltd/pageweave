@@ -24,6 +24,10 @@ interface ViewerProps {
   scrollRequest: ScrollRequest | null;
   hits: SearchHit[];
   currentHit: number;
+  /** What is being read aloud: highlighted, and kept in view while `follow` is on. */
+  reading?: { page: number; rects: SearchRect[]; follow: boolean } | null;
+  /** The user scrolled or moved through the pages themselves while reading (stops following). */
+  onReadingInterrupted?: () => void;
   onPageContextMenu: (page: number, x: number, y: number) => void;
   /** Unsaved annotations to draw over the pages. */
   annotations: PendingAnnotation[];
@@ -51,6 +55,7 @@ const PAGE_GAP = 16;
 const NO_ANNOTATIONS: PendingAnnotation[] = [];
 const NO_WIDGETS: PageWidget[] = [];
 const NO_EDITS: FormEdits = {};
+const NO_RECTS: SearchRect[] = [];
 
 interface PageWidget {
   field: FormField;
@@ -59,7 +64,7 @@ interface PageWidget {
 }
 let firstPageReported = false;
 
-export function Viewer({ doc, zoom, onZoomStep, onCurrentPage, scrollRequest, hits, currentHit, onPageContextMenu, annotations, form, formEdits, onFormEdit, onMeasured, markMode, onMarkArea, edit }: ViewerProps) {
+export function Viewer({ doc, zoom, onZoomStep, onCurrentPage, scrollRequest, hits, currentHit, reading, onReadingInterrupted, onPageContextMenu, annotations, form, formEdits, onFormEdit, onMeasured, markMode, onMarkArea, edit }: ViewerProps) {
   const ref = useRef<HTMLDivElement>(null);
   // Per-page lists with stable identity, so adding an annotation re-renders only its page.
   const byPage = useMemo(() => {
@@ -156,6 +161,43 @@ export function Viewer({ doc, zoom, onZoomStep, onCurrentPage, scrollRequest, hi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scrollRequest]);
 
+  // Read aloud: keep the spoken text in view (only when it is not already), unless the user took over.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !reading?.follow || !reading.rects[0]) return;
+    const node = el.querySelector<HTMLElement>(`[data-page="${reading.page}"]`);
+    const page = pages[reading.page];
+    if (!node || !page) return;
+    const r = pdfRectToScreen(reading.rects[0], page, zoom);
+    const top = node.offsetTop + r.top;
+    const margin = Math.min(80, el.clientHeight / 4);
+    if (top >= el.scrollTop + margin && top + r.height <= el.scrollTop + el.clientHeight - margin) return;
+    const reduced = document.documentElement.dataset.motion === "reduced" || (document.documentElement.dataset.motion !== "full" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
+    el.scrollTo({ top: Math.max(0, top - el.clientHeight / 3), behavior: reduced ? "auto" : "smooth" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reading]);
+
+  // Scrolling by hand while reading stops following (the reader offers to resume), also between
+  // highlights (before the first word is heard, or between paragraphs).
+  const readingActive = !!reading;
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !readingActive || !onReadingInterrupted) return;
+    const keys = new Set(["PageUp", "PageDown", "ArrowUp", "ArrowDown", "Home", "End", " "]);
+    const onWheel = () => onReadingInterrupted();
+    const onKey = (e: KeyboardEvent) => keys.has(e.key) && onReadingInterrupted();
+    // A press on the scroll bar (outside the pages' content box).
+    const onDown = (e: PointerEvent) => (e.offsetX > el.clientWidth || e.offsetY > el.clientHeight) && onReadingInterrupted();
+    el.addEventListener("wheel", onWheel, { passive: true });
+    el.addEventListener("keydown", onKey);
+    el.addEventListener("pointerdown", onDown);
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("keydown", onKey);
+      el.removeEventListener("pointerdown", onDown);
+    };
+  }, [readingActive, onReadingInterrupted]);
+
   const onKeyDown = (e: React.KeyboardEvent) => {
     if ((e.key === "F10" && e.shiftKey) || e.key === "ContextMenu") {
       e.preventDefault();
@@ -186,6 +228,7 @@ export function Viewer({ doc, zoom, onZoomStep, onCurrentPage, scrollRequest, hi
             root={ref}
             hits={hits}
             currentHit={currentHit}
+            readingRects={reading && reading.page === p.index && reading.rects.length ? reading.rects : NO_RECTS}
             onContextMenu={onPageContextMenu}
             annotations={byPage.get(p.index) ?? NO_ANNOTATIONS}
             widgets={widgetsByPage.get(p.index) ?? NO_WIDGETS}
@@ -207,6 +250,7 @@ interface PageProps {
   root: React.RefObject<HTMLDivElement | null>;
   hits: SearchHit[];
   currentHit: number;
+  readingRects: SearchRect[];
   onContextMenu: (page: number, x: number, y: number) => void;
   annotations: PendingAnnotation[];
   widgets: PageWidget[];
@@ -217,7 +261,7 @@ interface PageProps {
   edit?: EditProps;
 }
 
-const Page = memo(function Page({ docId, page, zoom, root, hits, currentHit, onContextMenu, annotations, widgets, formEdits, onFormEdit, onMarkArea, edit }: PageProps) {
+const Page = memo(function Page({ docId, page, zoom, root, hits, currentHit, readingRects, onContextMenu, annotations, widgets, formEdits, onFormEdit, onMarkArea, edit }: PageProps) {
   const api = useApi();
   const ref = useRef<HTMLDivElement>(null);
   const [near, setNear] = useState(false);
@@ -296,6 +340,10 @@ const Page = memo(function Page({ docId, page, zoom, root, hits, currentHit, onC
       {near && edit && <EditLayer docId={docId} page={page} zoom={zoom} items={edit.items} onEdit={edit.onEdit} addText={edit.addText} onAddTextDone={edit.onAddTextDone} />}
       {near && widgets.length > 0 && onFormEdit && <FormLayer docId={docId} page={page} zoom={zoom} widgets={widgets} edits={formEdits} onEdit={onFormEdit} />}
       {onMarkArea && <MarkCapture page={page} onMark={onMarkArea} />}
+      {readingRects.map((r, j) => {
+        const s = pdfRectToScreen(r, page, zoom);
+        return <div key={`read-${j}`} className="reading-mark" data-reading={page.index} style={{ left: s.left - 1, top: s.top - 1, width: Math.max(2, s.width) + 2, height: Math.max(2, s.height) + 2 }} />;
+      })}
       {pageHits.flatMap(({ h, i }) =>
         h.rects.map((r, j) => {
           const s = pdfRectToScreen(r, page, zoom);
@@ -447,6 +495,8 @@ function FormLayer({ docId, page, zoom, widgets, edits, onEdit }: { docId: numbe
           case "list":
             return (
               <select key={key} className="pw-field" style={style} {...common} size={Math.max(2, Math.min(field.options.length, Math.floor(box.height / (fontSize * 1.3)) || 2))} value={String(value)} onChange={(e) => onEdit(field, e.target.value)}>
+                {/* Without a matching option React would select the first one, showing a choice the document does not have. */}
+                {!field.options.includes(String(value)) && <option value={String(value)} hidden />}
                 {field.options.map((o) => <option key={o} value={o}>{o}</option>)}
               </select>
             );

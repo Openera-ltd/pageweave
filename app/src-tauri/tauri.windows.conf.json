@@ -11,7 +11,9 @@
       "../../third_party/ocr/win-x64/rec.onnx": "ocr/rec.onnx",
       "../../third_party/ocr/win-x64/rec_dict.txt": "ocr/rec_dict.txt",
       "../../third_party/licenses/onnxruntime/": "licenses/onnxruntime/",
-      "../../third_party/licenses/ppocr/": "licenses/ppocr/"
+      "../../third_party/licenses/ppocr/": "licenses/ppocr/",
+      "../../third_party/translate/": "translate/",
+      "../../third_party/licenses/opus-mt/": "licenses/opus-mt/"
     }
   }
 }

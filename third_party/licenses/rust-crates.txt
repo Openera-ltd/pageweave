@@ -6155,8 +6155,11 @@ MIT License (MIT) — used by:
   pageweave-app 0.1.0
   pw-cli 0.1.0
   pw-core 0.1.0
+  pw-mcp 0.1.0
   pw-ocr 0.1.0
   pw-pdf 0.1.0
+  pw-speech 0.1.0
+  pw-translate 0.1.0
   asn1-rs-impl 0.2.0
   brotli-decompressor 5.0.3
   brotli-decompressor 6.0.1
@@ -6525,6 +6528,7 @@ MIT License (MIT) — used by:
   thiserror-impl 2.0.21
   thiserror 1.0.69
   thiserror 2.0.21
+  typed-path 0.12.4
   typeid 1.0.3
   unicode-ident 1.0.27
   x11-dl 2.21.0
@@ -6761,6 +6765,7 @@ SOFTWARE.
 ==============================================================================
 MIT License (MIT) — used by:
   tracing-core 0.1.36
+  zip 9.0.5
 ==============================================================================
 The MIT License (MIT)
 
