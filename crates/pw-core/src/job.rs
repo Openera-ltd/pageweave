@@ -565,7 +565,9 @@ mod tests {
     fn panicking_job_fails_without_killing_worker() {
         let jm = JobManager::new(1);
         let id = jm.submit("panic", |_| panic!("boom"));
-        assert_eq!(jm.wait(id, T).expect("job").state, JobState::Failed);
+        // With RUST_BACKTRACE set, Windows CI spent ~18 s symbolizing the panic's backtrace
+        // before the job could be marked failed (CI #100), so this wait is longer.
+        assert_eq!(jm.wait(id, Duration::from_secs(120)).expect("job").state, JobState::Failed);
         let ok = jm.submit("after", |_| Ok(serde_json::Value::Null));
         assert_eq!(jm.wait(ok, T).expect("job").state, JobState::Succeeded);
     }

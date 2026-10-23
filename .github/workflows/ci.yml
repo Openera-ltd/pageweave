@@ -270,7 +270,22 @@ jobs:
           if (-not ($lines | Select-String '"event":"startup"')) { throw "no startup event" }
           if (-not ($lines | Select-String '"event":"open".*"ok":true.*"pages":5')) { throw "document did not open in the installed app" }
           if ($lines | Select-String "smoke input") { throw "file name leaked into the log" }
-          Stop-Process -Id $app.Id -Force
+          # The in-app update hand-off (D-024): with PageWeave running, the installer in update mode
+          # (/P passive, /UPDATE, /R restart) closes it, installs over it and starts it again;
+          # downloaded languages in the user's folder are kept.
+          $models = "$env:LOCALAPPDATA\io.github.kuyamcliff.pageweave\translate\keep-me"
+          New-Item -ItemType Directory -Force $models | Out-Null
+          Set-Content (Join-Path $models "marker.txt") "kept"
+          $u = Start-Process -FilePath $setup.FullName -ArgumentList "/P", "/UPDATE", "/R", "/D=$dir" -Wait -PassThru
+          if ($u.ExitCode -ne 0) { throw "update-mode installer exit $($u.ExitCode)" }
+          if (-not $app.HasExited) { throw "the running app was not closed by the update" }
+          $restarted = $null
+          for ($i = 0; $i -lt 30 -and -not $restarted; $i++) { Start-Sleep -Seconds 1; $restarted = Get-Process pageweave-app -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe.FullName } | Select-Object -First 1 }
+          if (-not $restarted) { throw "the app was not started again after the update" }
+          if ((Get-Content (Join-Path $models "marker.txt")) -ne "kept") { throw "the update touched downloaded languages" }
+          Write-Host "update hand-off: closed, installed over, restarted; user data kept"
+          Get-Process pageweave-app -ErrorAction SilentlyContinue | Stop-Process -Force
+          Remove-Item -Recurse -Force $models
           Start-Sleep -Seconds 2
           $un = Get-ChildItem $dir -Filter "uninstall*.exe" | Select-Object -First 1
           $u = Start-Process -FilePath $un.FullName -ArgumentList "/S" -Wait -PassThru

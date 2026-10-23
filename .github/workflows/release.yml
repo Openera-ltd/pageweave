@@ -1,6 +1,8 @@
 name: Release
 
 # Builds, checks, signs and publishes a Windows release when a version tag (v1.2.3) is pushed.
+# Only the NSIS installer is published: in-app updates run it, and an MSI (per-machine) install next
+# to it would give users two copies. CI keeps building the MSI.
 # The installer is signed with the update key (decision D-024); `latest.json` tells installed copies
 # about it, and they download only the new installer — downloaded languages and settings are kept.
 #
@@ -65,9 +67,9 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npx vitest run
-      - name: Build the installers (NSIS + MSI) with the update key built in
+      - name: Build the installer (NSIS) with the update key built in
         working-directory: app
-        run: npx tauri build
+        run: npx tauri build --bundles nsis
       - name: Build the release CLI (same key)
         run: cargo build --release -p pw-cli
       - name: Sign the installer for this version
@@ -154,6 +156,5 @@ jobs:
         run: |
           set -euo pipefail
           SETUP="target/release/bundle/nsis/PageWeave_${VERSION}_x64-setup.exe"
-          MSI=$(ls target/release/bundle/msi/*.msi | head -n 1)
           gh release create "$GITHUB_REF_NAME" --title "PageWeave $VERSION" --notes-file "docs/releases/v${VERSION}.md" \
-            "$SETUP" "$SETUP.sig" "$MSI" latest.json "dist/pageweave-cli-${VERSION}-windows-x64.zip"
+            "$SETUP" "$SETUP.sig" latest.json "dist/pageweave-cli-${VERSION}-windows-x64.zip"
