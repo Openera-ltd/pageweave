@@ -1,4 +1,4 @@
-//! Source-language detection for the languages PageWeave translates (en, de, fr, es, it): share
+//! Source-language detection for the languages PageWeave translates (en, de, fr, es, it, pt): share
 //! of each language's most frequent function words among the text's words. Returns `None` when the
 //! text is too short or no language clearly wins; the user then chooses (manual override always
 //! available).
@@ -40,6 +40,13 @@ const WORDS: &[(&str, &[&str])] = &[
             "da", "nel", "alla", "anche", "come", "più", "ma", "è", "dei", "questo", "questa", "delle", "lo", "ha",
         ],
     ),
+    (
+        "pt",
+        &[
+            "o", "os", "do", "da", "dos", "das", "e", "que", "em", "um", "uma", "para", "com", "não", "no", "na",
+            "nos", "nas", "ao", "mais", "mas", "foi", "são", "seu", "sua", "também", "pelo", "pela", "isso", "está",
+        ],
+    ),
 ];
 
 /// The most likely language of `text` and its share of function words, if clear.
@@ -76,6 +83,7 @@ mod tests {
             ("fr", "Les résultats de l'étude montrent que la rivière est plus propre que dans le passé."),
             ("es", "Los resultados del estudio muestran que el río está más limpio que en el pasado."),
             ("it", "I risultati dello studio mostrano che il fiume è più pulito che in passato e anche oggi."),
+            ("pt", "Os resultados do estudo mostram que o rio está mais limpo do que no passado e também hoje."),
         ];
         for (lang, text) in cases {
             assert_eq!(detect(text).map(|d| d.0), Some(lang), "{text}");

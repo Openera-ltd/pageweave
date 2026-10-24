@@ -208,6 +208,16 @@ pub fn check_files() -> PwResult<Vec<FileCheck>> {
 }
 
 /// The directions PageWeave offers, with whether each one is installed and its download size.
+/// Every direction served by the same model folder as `source` → `target` (itself included).
+pub fn sharing(source: &str, target: &str) -> PwResult<Vec<(String, String)>> {
+    let pairs = lock()?.pairs;
+    let Some(p) = pairs.iter().find(|p| p.source == source && p.target == target) else {
+        return Ok(Vec::new());
+    };
+    let folder = p.folder();
+    Ok(pairs.iter().filter(|q| q.folder() == folder).map(|q| (q.source.clone(), q.target.clone())).collect())
+}
+
 pub fn directions() -> PwResult<Vec<Direction>> {
     Ok(lock()?
         .pairs
@@ -545,6 +555,7 @@ pub fn language_name(code: &str) -> String {
         "fr" => "French",
         "es" => "Spanish",
         "it" => "Italian",
+        "pt" => "Portuguese",
         other => other,
     }
     .to_string()

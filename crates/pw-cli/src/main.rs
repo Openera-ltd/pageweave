@@ -1565,17 +1565,18 @@ fn run() -> ExitCode {
                 .split_once('-')
                 .ok_or_else(|| PwError::invalid("usage", "Give the direction as SOURCE-TARGET, for example en-de."))?;
             let removed = pw_translate::install::remove(source, target)?;
+            let shared: Vec<String> =
+                pw_translate::sharing(source, target)?.into_iter().map(|(s, t)| format!("{s}-{t}")).collect();
             if !cli.json {
-                println!(
-                    "{}",
-                    if removed {
-                        "Removed."
-                    } else {
-                        "It was not downloaded (shipped or development models are never removed)."
-                    }
-                );
+                if removed && shared.len() > 1 {
+                    println!("Removed. The same model also served: {}.", shared.join(", "));
+                } else if removed {
+                    println!("Removed.");
+                } else {
+                    println!("It was not downloaded (shipped or development models are never removed).");
+                }
             }
-            return Ok(json!({ "removed": removed }));
+            return Ok(json!({ "removed": removed, "directions": if removed { shared } else { Vec::new() } }));
         }
         if let Command::Translate { file: None, output: None, to: None, install: None, .. } = &cli.command {
             let dirs = pw_translate::directions()?;
@@ -1591,7 +1592,11 @@ fn run() -> ExitCode {
                         d.bytes / 1_000_000
                     );
                 }
-                println!("Other pairs of these languages are translated through English.");
+                let langs: std::collections::BTreeSet<&str> =
+                    dirs.iter().flat_map(|d| [d.source.as_str(), d.target.as_str()]).collect();
+                if dirs.len() < langs.len() * langs.len().saturating_sub(1) {
+                    println!("Other pairs of these languages are translated through English.");
+                }
                 println!("Download one with: pageweave translate --install en-de");
             }
             return Ok(json!({ "directions": dirs }));

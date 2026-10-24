@@ -166,9 +166,12 @@ jobs:
           if ($p.ExitCode -ne 0) { throw "installer exit $($p.ExitCode)" }
           if (Test-Path (Join-Path $dir "translate")) { throw "languages were left in the install folder" }
           $pairs = (Get-Content resources/translate.lock.json | ConvertFrom-Json).pairs
+          $checked = @{}
           foreach ($pair in $pairs) {
+            $folder = if ($pair.folder) { $pair.folder } else { "$($pair.source)-$($pair.target)" }
+            if ($checked.ContainsKey($folder)) { continue }
+            $checked[$folder] = $true
             foreach ($f in $pair.files.PSObject.Properties) {
-              $folder = if ($pair.folder) { $pair.folder } else { "$($pair.source)-$($pair.target)" }
               $path = Join-Path $langs "$folder\$($f.Name)"
               if (-not (Test-Path $path)) { throw "missing after install: $path" }
               if ((Get-Item $path).Length -ne $f.Value.bytes) { throw "wrong size after install: $path" }

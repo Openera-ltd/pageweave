@@ -136,6 +136,34 @@ pub fn install(
     Ok(dir)
 }
 
+/// Remove model folders of earlier versions (one folder per direction, named like `en-de`) that no
+/// pinned direction uses any more. Other folders are never touched. Returns the folders removed.
+pub fn prune() -> Vec<String> {
+    let (Some(root), Ok(l)) = (user_dir(), lock()) else { return Vec::new() };
+    prune_in(&root, &l.pairs.iter().map(|p| p.folder()).collect::<Vec<_>>())
+}
+
+fn prune_in(root: &Path, used: &[String]) -> Vec<String> {
+    let old_name = |n: &str| {
+        let b = n.as_bytes();
+        b.len() == 5 && b[2] == b'-' && b.iter().enumerate().all(|(i, c)| i == 2 || c.is_ascii_lowercase())
+    };
+    let Ok(entries) = std::fs::read_dir(root) else { return Vec::new() };
+    let mut removed = Vec::new();
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        if old_name(&name)
+            && !used.contains(&name)
+            && e.file_type().is_ok_and(|t| t.is_dir())
+            && std::fs::remove_dir_all(e.path()).is_ok()
+        {
+            removed.push(name);
+        }
+    }
+    removed.sort();
+    removed
+}
+
 /// Delete a downloaded direction (bundled or development models are never touched).
 pub fn remove(source: &str, target: &str) -> PwResult<bool> {
     let p = pinned(source, target)?;
@@ -151,6 +179,20 @@ pub fn remove(source: &str, target: &str) -> PwResult<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_unused_per_direction_folders_of_earlier_versions_are_pruned() {
+        let d = tempfile::tempdir().expect("tmp");
+        for n in ["en-de", "fr-en", "mul-itc", "keep-me", "en-dee"] {
+            std::fs::create_dir(d.path().join(n)).expect("dir");
+        }
+        std::fs::write(d.path().join("it-en"), "a file, not a folder").expect("file");
+        let removed = prune_in(d.path(), &["mul-itc".into(), "fr-en".into()]);
+        assert_eq!(removed, ["en-de"]);
+        for n in ["fr-en", "mul-itc", "keep-me", "en-dee", "it-en"] {
+            assert!(d.path().join(n).exists(), "{n} kept");
+        }
+    }
 
     #[test]
     fn unknown_directions_are_refused() {

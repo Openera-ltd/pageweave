@@ -28,12 +28,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
       - name: Pinned conversion tools
         run: |
           python -m pip install --quiet --index-url https://download.pytorch.org/whl/cpu torch==2.14.1
-          python -m pip install --quiet transformers==4.57.6 optimum==2.1.0 onnxruntime==1.31.0 onnx==1.23.2 onnx-ir==1.1.0 \
-            sentencepiece==0.2.2 huggingface_hub==0.36.2 tokenizers==0.22.2 safetensors==0.8.0
+          python -m pip install --quiet transformers==4.57.6 optimum==2.1.0 optimum-onnx==0.1.0 onnxruntime==1.31.0 onnx==1.23.2 onnx-ir==1.1.0 \
+            sentencepiece==0.2.2 huggingface_hub==0.36.2 tokenizers==0.22.2 safetensors==0.8.0 numpy==2.5.4 protobuf==7.36.2
       - name: Convert, check and publish each model
         env:
           GH_TOKEN: ${{ github.token }}

@@ -708,6 +708,8 @@ pub fn run() {
             app.manage(state);
             // Installers left from an update that has finished are removed.
             std::thread::spawn(|| pw_update::clean(env!("CARGO_PKG_VERSION")));
+            // Translation models of earlier versions that no direction uses any more.
+            std::thread::spawn(pw_translate::install::prune);
             // The main window is created here (config has `create: false`) so WebView2 arguments
             // can be supplied; everything else comes from tauri.conf.json.
             let config = app

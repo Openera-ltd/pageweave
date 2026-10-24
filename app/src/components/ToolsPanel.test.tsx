@@ -34,7 +34,7 @@ describe("All tools pane", () => {
     fireEvent.change(screen.getByTestId("tools-filter"), { target: { value: "to word" } });
     const items = document.querySelectorAll(".tool-item");
     expect(items).toHaveLength(1);
-    fireEvent.click(items[0]);
+    fireEvent.click(items[0]!);
     expect(run).toHaveBeenCalledWith("file.toWord");
     fireEvent.change(screen.getByTestId("tools-filter"), { target: { value: "zzzz" } });
     expect(screen.getByText(/No tool matches/)).toBeTruthy();
