@@ -148,8 +148,9 @@ enum Command {
         #[arg(short, long)]
         output: PathBuf,
     },
-    /// Translate pages with the local translation models into a Word document (-o file.docx,
-    /// layout kept) or a text file (-o file.txt). Without a file, list the language directions.
+    /// Translate pages with the local translation models into a PDF with the same layout
+    /// (-o file.pdf), a Word document (-o file.docx) or a text file (-o file.txt). Without a
+    /// file, list the language directions.
     Translate {
         file: Option<PathBuf>,
         #[arg(long)]
@@ -168,6 +169,12 @@ enum Command {
         /// Delete a downloaded language direction's model.
         #[arg(long, value_name = "SOURCE-TARGET")]
         remove: Option<String>,
+    },
+    /// Show which LibreOffice opens Office files; with --install (Windows), download the pinned
+    /// LibreOffice package and unpack it into PageWeave's data folder.
+    Office {
+        #[arg(long)]
+        install: bool,
     },
     /// Check whether a newer PageWeave version is published (reads this project's release page on
     /// GitHub; nothing else is sent). The desktop app downloads and installs it.
@@ -661,6 +668,8 @@ fn capabilities() -> serde_json::Value {
 fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
     let op = match &cli.command {
         Command::Capabilities | Command::Mcp { .. } | Command::Resources | Command::Update { .. } => return Ok(None),
+        Command::Office { install: true } => Operation::InstallOffice,
+        Command::Office { install: false } => return Ok(None),
         Command::Run { request } => {
             let text = if request.as_os_str() == "-" {
                 let mut s = String::new();
@@ -1556,17 +1565,18 @@ fn run() -> ExitCode {
                 .split_once('-')
                 .ok_or_else(|| PwError::invalid("usage", "Give the direction as SOURCE-TARGET, for example en-de."))?;
             let removed = pw_translate::install::remove(source, target)?;
+            let shared: Vec<String> =
+                pw_translate::sharing(source, target)?.into_iter().map(|(s, t)| format!("{s}-{t}")).collect();
             if !cli.json {
-                println!(
-                    "{}",
-                    if removed {
-                        "Removed."
-                    } else {
-                        "It was not downloaded (shipped or development models are never removed)."
-                    }
-                );
+                if removed && shared.len() > 1 {
+                    println!("Removed. The same model also served: {}.", shared.join(", "));
+                } else if removed {
+                    println!("Removed.");
+                } else {
+                    println!("It was not downloaded (shipped or development models are never removed).");
+                }
             }
-            return Ok(json!({ "removed": removed }));
+            return Ok(json!({ "removed": removed, "directions": if removed { shared } else { Vec::new() } }));
         }
         if let Command::Translate { file: None, output: None, to: None, install: None, .. } = &cli.command {
             let dirs = pw_translate::directions()?;
@@ -1582,10 +1592,29 @@ fn run() -> ExitCode {
                         d.bytes / 1_000_000
                     );
                 }
-                println!("Other pairs of these languages are translated through English.");
+                let langs: std::collections::BTreeSet<&str> =
+                    dirs.iter().flat_map(|d| [d.source.as_str(), d.target.as_str()]).collect();
+                if dirs.len() < langs.len() * langs.len().saturating_sub(1) {
+                    println!("Other pairs of these languages are translated through English.");
+                }
                 println!("Download one with: pageweave translate --install en-de");
             }
             return Ok(json!({ "directions": dirs }));
+        }
+        if let Command::Office { install: false } = &cli.command {
+            let found = pw_pdf::office::find_office();
+            let pkg = pw_pdf::office::office_package()?;
+            if !cli.json {
+                match &found {
+                    Some(e) => println!("{} at {}", e.version, e.program.display()),
+                    None if cfg!(windows) => println!(
+                        "LibreOffice is not installed. Download it with: pageweave office --install ({} MB)",
+                        pkg.bytes / 1_000_000
+                    ),
+                    None => println!("LibreOffice is not installed. Install it with your package manager."),
+                }
+            }
+            return Ok(json!({ "engine": found, "package": pkg }));
         }
         if let Command::Update { verify: Some(file), signature: Some(sig), version: Some(v) } = &cli.command {
             let key = pw_update::public_key().ok_or_else(|| {

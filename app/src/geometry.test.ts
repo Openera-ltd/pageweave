@@ -6,6 +6,7 @@ import {
   fitWidthZoom,
   mostVisiblePage,
   nextZoom,
+  wheelZoom,
   pdfRectToScreen,
   screenRectToPdf,
   renderScalePermille,
@@ -26,6 +27,19 @@ describe("zoom", () => {
     expect(nextZoom(1.1, -1)).toBe(1);
     expect(nextZoom(4, 1)).toBe(6);
     expect(nextZoom(0.25, -1)).toBe(0.1);
+  });
+
+  it("wheel zoom is smooth, follows the wheel's direction and stays in range", () => {
+    expect(wheelZoom(1, -100)).toBeCloseTo(Math.exp(0.2));
+    expect(wheelZoom(1, 100)).toBeCloseTo(Math.exp(-0.2));
+    // Trackpad pinches send many small steps: each moves a little.
+    expect(wheelZoom(1, -2)).toBeGreaterThan(1);
+    expect(wheelZoom(1, -2)).toBeLessThan(1.01);
+    // Lines and huge deltas are capped at ×2 / ÷2 per event; limits hold.
+    expect(wheelZoom(1, -3, 1)).toBeCloseTo(Math.exp(0.24));
+    expect(wheelZoom(1, -10000)).toBe(2);
+    expect(wheelZoom(5, -10000)).toBe(6);
+    expect(wheelZoom(0.11, 10000)).toBe(0.1);
   });
 
   it("fit width uses the widest displayed page", () => {

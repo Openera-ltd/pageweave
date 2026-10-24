@@ -124,6 +124,9 @@ jobs:
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Rust tests
+        env:
+          # Fixture text only: name the line a translated PDF is missing when verification fails.
+          PW_DEBUG_VERIFY: "1"
         run: cargo test --workspace --no-fail-fast
       - name: Build the real app (embedded UI)
         working-directory: app
@@ -179,6 +182,7 @@ jobs:
         # LibreOffice is not installed on the Windows runner; the Word round trip runs on Linux.
         env:
           PW_SKIP_SOFFICE: "1"
+          PW_DEBUG_VERIFY: "1"
         run: cargo test --workspace --no-fail-fast
       - name: Build release CLI
         run: cargo build --release -p pw-cli
@@ -235,6 +239,36 @@ jobs:
           set +e; ./app/pageweave.exe --json inspect "in put.pdf"; code=$?; set -e
           test "$code" = 10 || { echo "expected missing-engine exit 10, got $code"; exit 1; }
           echo "package smoke test passed"
+      - name: Cache the pinned LibreOffice package
+        uses: actions/cache@v4
+        with:
+          path: office-msi
+          key: office-${{ hashFiles('resources/office.lock.json') }}
+      - name: The app's own LibreOffice download unpacks it without administrator rights, and Office files convert
+        shell: pwsh
+        timeout-minutes: 25
+        run: |
+          $ErrorActionPreference = "Stop"
+          $lock = Get-Content resources/office.lock.json | ConvertFrom-Json
+          $data = Join-Path $env:LOCALAPPDATA "io.github.kuyamcliff.pageweave"
+          New-Item -ItemType Directory -Force $data, office-msi | Out-Null
+          $name = "LibreOffice_$($lock.version).msi"
+          # A cached copy of the package spares the 370 MB download; the app checks its SHA-256 either way.
+          if (Test-Path "office-msi/$name") { Copy-Item "office-msi/$name" (Join-Path $data $name) }
+          ./dist/pageweave-cli-windows-x64/pageweave.exe office --install
+          if ($LASTEXITCODE -ne 0) { throw "office --install failed ($LASTEXITCODE)" }
+          ./dist/pageweave-cli-windows-x64/pageweave.exe office | Tee-Object -Variable found
+          if (-not ("$found" -match "LibreOffice 26" -and "$found" -match [regex]::Escape($data))) { throw "PageWeave's own LibreOffice not used: $found" }
+          if (-not (Test-Path "office-msi/$name")) {
+            # Keep the package for the next run's cache (the app deleted its copy after unpacking).
+            Invoke-WebRequest $lock.windows_x64.url -OutFile "office-msi/$name" -UseBasicParsing
+          }
+          Set-Content -Path (Join-Path $env:RUNNER_TEMP "smoke office.csv") -Value "Item,Amount`nPWOFFICE,42"
+          ./dist/pageweave-cli-windows-x64/pageweave.exe from-office -o (Join-Path $env:RUNNER_TEMP "smoke office.pdf") (Join-Path $env:RUNNER_TEMP "smoke office.csv")
+          if ($LASTEXITCODE -ne 0) { throw "conversion failed" }
+          $t = ./dist/pageweave-cli-windows-x64/pageweave.exe --json text (Join-Path $env:RUNNER_TEMP "smoke office.pdf")
+          if (-not ("$t" -match "PWOFFICE")) { throw "converted PDF lacks the text: $t" }
+          Write-Host "LibreOffice downloaded, unpacked into the user folder and used"
       - uses: actions/upload-artifact@v4
         with:
           name: pageweave-cli-windows-x64

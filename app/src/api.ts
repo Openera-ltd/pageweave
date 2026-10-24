@@ -7,6 +7,7 @@ import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialo
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { createContext, useContext } from "react";
+import { OFFICE_EXTENSIONS } from "./office";
 import type {
   AppInfo,
   AttachmentInfo,
@@ -24,6 +25,7 @@ import type {
   TranslationDirection,
   UpdateInfo,
   AvailableUpdate,
+  OfficePackage,
   Spoken,
   RecoveredJob,
   SanitizeFindings,
@@ -86,6 +88,8 @@ export interface Api {
   /** JPEG and PNG images. */
   pickImageFiles(): Promise<string[]>;
   pickOfficeFile(): Promise<string | null>;
+  /** The LibreOffice package PageWeave can download (Windows). */
+  officePackage(): Promise<OfficePackage>;
   /** The installed LibreOffice ("LibreOffice 24.2…"), or null. */
   officeEngine(): Promise<string | null>;
   /** This version and whether it can install updates itself. */
@@ -184,11 +188,12 @@ export const tauriApi: Api = {
     const r = await openDialog({
       multiple: false,
       directory: false,
-      filters: [{ name: "Office documents", extensions: ["docx", "doc", "odt", "rtf", "txt", "xlsx", "xls", "ods", "csv", "pptx", "ppt", "odp", "html", "htm"] }],
+      filters: [{ name: "Office documents", extensions: OFFICE_EXTENSIONS }],
     });
     return typeof r === "string" ? r : null;
   },
   officeEngine: () => invoke("office_engine"),
+  officePackage: () => invoke("office_package"),
   speechInfo: () => invoke("speech_info"),
   updateInfo: () => invoke("update_info"),
   checkForUpdate: () => invoke("check_for_update"),

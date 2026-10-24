@@ -13,6 +13,7 @@ pub mod layout;
 pub mod reader;
 pub mod tables;
 pub mod translate;
+mod translate_pdf;
 pub mod writer;
 
 use crate::document::{load, OpenOptions};
@@ -193,6 +194,237 @@ fn path_rules(path: &PdfPagePathObject, rot: u32, w: f32, h: f32, origin: (f32, 
     out
 }
 
+/// Filled axis-aligned rectangles and stroked horizontal lines a path draws, with their colours
+/// (page coordinates as displayed). Other shapes are left out.
+fn path_paints(path: &PdfPagePathObject, rot: u32, w: f32, h: f32, origin: (f32, f32)) -> Vec<layout::Paint> {
+    let stroked = path.is_stroked().unwrap_or(false);
+    let filled = !matches!(path.fill_mode(), Ok(PdfPathFillMode::None) | Err(_));
+    let Ok(m) = path.matrix() else { return Vec::new() };
+    let segs = path.segments().transform(m);
+    let n = segs.len();
+    if n > 400 || (!stroked && !filled) {
+        return Vec::new();
+    }
+    let rgb =
+        |c: Result<PdfColor, PdfiumError>| c.ok().filter(|c| c.alpha() > 0).map(|c| [c.red(), c.green(), c.blue()]);
+    let fill = if filled { rgb(path.fill_color()) } else { None };
+    let stroke = if stroked { rgb(path.stroke_color()) } else { None };
+    let width = path.stroke_width().map(|p| p.value).unwrap_or(1.0).max(0.1);
+    let disp = |x: PdfPoints, y: PdfPoints| page_to_display(rot, w, h, x.value - origin.0, y.value - origin.1);
+    let mut out = Vec::new();
+    // Sub-paths: each an axis-aligned rectangle (four corners) or a line.
+    let mut sub: Vec<(f32, f32)> = Vec::new();
+    let mut curvy = false;
+    let flush = |sub: &mut Vec<(f32, f32)>, curvy: &mut bool, out: &mut Vec<layout::Paint>| {
+        if *curvy && sub.len() >= 4 {
+            // A rounded rectangle: every point near the edge of its bounds.
+            let (l, r) =
+                (sub.iter().map(|p| p.0).fold(f32::MAX, f32::min), sub.iter().map(|p| p.0).fold(f32::MIN, f32::max));
+            let (b, t) =
+                (sub.iter().map(|p| p.1).fold(f32::MAX, f32::min), sub.iter().map(|p| p.1).fold(f32::MIN, f32::max));
+            let tol = (0.25 * (r - l).min(t - b)).max(2.0);
+            let edge = sub.iter().all(|p| {
+                (p.0 - l).abs() <= tol || (r - p.0).abs() <= tol || (p.1 - b).abs() <= tol || (t - p.1).abs() <= tol
+            });
+            if let (true, Some(c)) = (edge && r - l > 0.5 && t - b > 0.5, fill) {
+                out.push(layout::Paint { rect: Rect { left: l, bottom: b, right: r, top: t }, color: c, line: false });
+            }
+            sub.clear();
+            *curvy = false;
+            return;
+        }
+        *curvy = false;
+        if sub.len() >= 2 {
+            let xs: Vec<f32> = sub.iter().map(|p| p.0).collect();
+            let ys: Vec<f32> = sub.iter().map(|p| p.1).collect();
+            let (l, r) = (xs.iter().copied().fold(f32::MAX, f32::min), xs.iter().copied().fold(f32::MIN, f32::max));
+            let (b, t) = (ys.iter().copied().fold(f32::MAX, f32::min), ys.iter().copied().fold(f32::MIN, f32::max));
+            let axis = sub.windows(2).all(|q| (q[0].0 - q[1].0).abs() < 0.3 || (q[0].1 - q[1].1).abs() < 0.3);
+            if axis && sub.len() >= 4 && r - l > 0.5 && t - b > 0.5 {
+                if let Some(c) = fill {
+                    out.push(layout::Paint {
+                        rect: Rect { left: l, bottom: b, right: r, top: t },
+                        color: c,
+                        line: false,
+                    });
+                }
+            } else if axis && t - b < 0.3 && r - l > 10.0 {
+                if let Some(c) = stroke {
+                    let y = (t + b) / 2.0;
+                    out.push(layout::Paint {
+                        rect: Rect { left: l, bottom: y - width / 2.0, right: r, top: y + width / 2.0 },
+                        color: c,
+                        line: true,
+                    });
+                }
+            } else if axis && r - l < 0.3 && t - b > 10.0 {
+                // A vertical line (a box's bar drawn as a thick stroke).
+                if let Some(c) = stroke {
+                    let x = (l + r) / 2.0;
+                    out.push(layout::Paint {
+                        rect: Rect { left: x - width / 2.0, bottom: b, right: x + width / 2.0, top: t },
+                        color: c,
+                        line: true,
+                    });
+                }
+            }
+        }
+        sub.clear();
+    };
+    for i in 0..n {
+        let Ok(seg) = segs.get(i) else { continue };
+        let (x, y) = seg.point();
+        let p = disp(x, y);
+        match seg.segment_type() {
+            PdfPathSegmentType::MoveTo => {
+                flush(&mut sub, &mut curvy, &mut out);
+                sub.push(p);
+            }
+            PdfPathSegmentType::LineTo => sub.push(p),
+            _ => {
+                curvy = true;
+                sub.push(p);
+            }
+        }
+    }
+    flush(&mut sub, &mut curvy, &mut out);
+    out
+}
+
+/// Colours from the page applied to the layout (Word): table cells take the fill under them; a
+/// paragraph inside a shaded box takes its colour, and the box's narrow coloured bar on the left
+/// becomes a left border; a line drawn just below a paragraph becomes its bottom border.
+pub(crate) fn decorate(lay: &mut layout::PageLayout, paints: &[layout::Paint]) {
+    let white = |c: &[u8; 3]| c.iter().all(|&v| v >= 250);
+    let fills: Vec<&layout::Paint> = paints.iter().filter(|p| !p.line && !white(&p.color)).collect();
+    let inside = |outer: &Rect, inner: &Rect, slack: f32| {
+        inner.left >= outer.left - slack
+            && inner.right <= outer.right + slack
+            && inner.bottom >= outer.bottom - slack
+            && inner.top <= outer.top + slack
+    };
+    let area = |r: &Rect| (r.right - r.left).max(0.0) * (r.top - r.bottom).max(0.0);
+    // Strokes that belong to a table (its borders) are never a paragraph's rule.
+    let tables: Vec<Rect> = lay
+        .bands
+        .iter()
+        .flat_map(|b| b.columns.iter())
+        .flat_map(|c| c.items.iter())
+        .filter_map(|it| match it {
+            layout::Item::Table { table, .. } => Some(table.rect),
+            _ => None,
+        })
+        .collect();
+    for b in &mut lay.bands {
+        for c in &mut b.columns {
+            for it in &mut c.items {
+                match it {
+                    layout::Item::Table { table, .. } => {
+                        let (xs, ys) = {
+                            let mut xs = vec![table.rect.left];
+                            for w in &table.widths {
+                                xs.push(xs.last().copied().unwrap_or(0.0) + w);
+                            }
+                            let mut ys = vec![table.rect.top];
+                            for h in &table.heights {
+                                ys.push(ys.last().copied().unwrap_or(0.0) - h);
+                            }
+                            (xs, ys)
+                        };
+                        for cell in &mut table.cells {
+                            let r = Rect {
+                                left: xs[cell.col],
+                                right: xs[(cell.col + cell.col_span).min(xs.len() - 1)],
+                                top: ys[cell.row],
+                                bottom: ys[(cell.row + cell.row_span).min(ys.len() - 1)],
+                            };
+                            let (cx, cy) = ((r.left + r.right) / 2.0, (r.top + r.bottom) / 2.0);
+                            // The smallest fill under the cell's centre that covers most of it.
+                            cell.fill = fills
+                                .iter()
+                                .filter(|f| {
+                                    f.rect.left <= cx && f.rect.right >= cx && f.rect.bottom <= cy && f.rect.top >= cy
+                                })
+                                .filter(|f| {
+                                    area(&f.rect) >= 0.5 * area(&r) && area(&f.rect) <= 40.0 * area(&r).max(1.0)
+                                })
+                                .min_by(|a, b| area(&a.rect).total_cmp(&area(&b.rect)))
+                                .map(|f| f.color);
+                        }
+                        let lines: Vec<[u8; 3]> = paints
+                            .iter()
+                            .filter(|p| {
+                                inside(&table.rect, &p.rect, 2.0)
+                                    && (p.line || p.rect.right - p.rect.left < 2.0 || p.rect.top - p.rect.bottom < 2.0)
+                            })
+                            .map(|p| p.color)
+                            .collect();
+                        if let Some(first) = lines.first() {
+                            if lines.iter().all(|c| c == first) {
+                                table.border = Some(*first);
+                            }
+                        }
+                    }
+                    layout::Item::Para(p) => {
+                        let r = p.rect;
+                        if area(&r) <= 0.0 {
+                            continue;
+                        }
+                        // A shaded box holding the paragraph (not a page-sized background).
+                        let page_area = lay.width * lay.height;
+                        if let Some(boxf) = fills
+                            .iter()
+                            .filter(|f| {
+                                inside(&f.rect, &r, 1.5)
+                                    && area(&f.rect) < 0.6 * page_area
+                                    && f.rect.right - f.rect.left > 20.0
+                            })
+                            .min_by(|a, b| area(&a.rect).total_cmp(&area(&b.rect)))
+                        {
+                            p.deco.shade = Some(boxf.color);
+                            // Its bar: narrow, tall, at the box's left edge, overlapping it vertically.
+                            p.deco.left_bar = paints
+                                .iter()
+                                .filter(|f| !white(&f.color))
+                                .filter(|f| {
+                                    let w = f.rect.right - f.rect.left;
+                                    w <= 6.0
+                                        && (f.rect.left - boxf.rect.left).abs() < 8.0
+                                        && f.rect.top >= r.bottom
+                                        && f.rect.bottom <= r.top
+                                })
+                                .map(|f| (f.color, f.rect.right - f.rect.left))
+                                .next();
+                        }
+                        // A line under it, nearly as wide as its column, within a line's height.
+                        let col = (c.right - c.left).max(1.0);
+                        let size = p.runs.iter().map(|r| r.size).fold(0.0, f32::max).max(6.0);
+                        p.deco.rule_below = paints
+                            .iter()
+                            .filter(|q| {
+                                let h = q.rect.top - q.rect.bottom;
+                                h <= 4.0
+                                    && q.rect.top <= r.bottom + 0.5
+                                    && q.rect.top >= r.bottom - 1.2 * size
+                                    && q.rect.right - q.rect.left >= 0.6 * col
+                                    && q.rect.left <= r.left + 10.0
+                                    && !tables.iter().any(|t| {
+                                        q.rect.left < t.right + 3.0
+                                            && q.rect.right > t.left - 3.0
+                                            && q.rect.bottom < t.top + 6.0
+                                            && q.rect.top > t.bottom - 6.0
+                                    })
+                            })
+                            .max_by(|a, b| a.rect.top.total_cmp(&b.rect.top))
+                            .map(|q| (q.color, (q.rect.top - q.rect.bottom).max(0.5)));
+                    }
+                    layout::Item::Pictures { .. } => {}
+                }
+            }
+        }
+    }
+}
+
 /// How displayed coordinates relate to the page's own (unrotated) coordinates.
 #[derive(Debug, Clone, Copy)]
 struct Frame {
@@ -229,6 +461,8 @@ struct Extracted {
     drawings: usize,
     /// Drawn lines of each path object (for telling table lines from other drawings).
     path_rules: Vec<Vec<Rule>>,
+    /// Filled rectangles and lines with their colours (Word shading and borders).
+    paints: Vec<layout::Paint>,
     pictures_left_out: usize,
     turned_upright: bool,
     comments: usize,
@@ -382,6 +616,7 @@ fn extract_page(page: &PdfPage, doc: &PdfDocument, shared: &mut Shared, with_pic
     let mut pictures = Vec::new();
     let mut rules: Vec<Rule> = Vec::new();
     let mut path_rules_all: Vec<Vec<Rule>> = Vec::new();
+    let mut paints: Vec<layout::Paint> = Vec::new();
     let mut drawings = 0;
     let mut pictures_left_out = 0;
     let mut place = |img: &PdfPageImageObject, r: PdfRect, pictures: &mut Vec<Picture>, left_out: &mut usize| {
@@ -418,6 +653,7 @@ fn extract_page(page: &PdfPage, doc: &PdfDocument, shared: &mut Shared, with_pic
                 let r = path_rules(path, rot, w, h, origin);
                 rules.extend(r.iter().copied());
                 path_rules_all.push(r);
+                paints.extend(path_paints(path, rot, w, h, origin));
             }
             PdfPageObject::Shading(_) => drawings += 1,
             _ => {}
@@ -435,6 +671,7 @@ fn extract_page(page: &PdfPage, doc: &PdfDocument, shared: &mut Shared, with_pic
         input: PageInput { width: dw, height: dh, glyphs, pictures, rules },
         frame: Frame { rot, w, h, origin },
         path_rules: path_rules_all,
+        paints,
         turned_upright,
         comments,
         fields,
@@ -478,6 +715,9 @@ fn add_turned(layout: &mut PageLayout, turned: &[String]) {
                 pitch: 12.0,
                 heading: None,
                 tabs: Vec::new(),
+                frame: None,
+                line_baselines: Vec::new(),
+                deco: layout::Deco::default(),
                 rect: Rect { left: 0.0, bottom: 0.0, right: 0.0, top: 0.0 },
                 boxes: Vec::new(),
             })
@@ -667,6 +907,7 @@ pub(crate) fn analyze(
             }
         }
         let mut lay = layout::layout_page(&ex.input);
+        decorate(&mut lay, &ex.paints);
         add_turned(&mut lay, &ex.turned);
         if lay.bands.iter().any(|b| b.columns.len() > 1) {
             report.pages_with_columns.push(p + 1);

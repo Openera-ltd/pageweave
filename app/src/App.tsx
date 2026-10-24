@@ -5,7 +5,8 @@ import {
   Layers,
   PanelLeft,
   Search,
-  Settings as SettingsIcon,
+  Menu as MenuIcon,
+  LayoutPanelLeft,
   X,
   ZoomIn,
   ZoomOut,
@@ -49,6 +50,7 @@ import { applyAppearance } from "./theme";
 import { toPwError, type AppInfo, type AttachmentInfo, type AvailableUpdate, type CollisionPolicy, type FormField, type FormInfo, type FormValue, type JobSnapshot, type OpenedDoc, type Operation, type PwError, type RecoveredJob, type RedactArea, type SearchHit, type SearchRect, type Settings, type SignatureReport } from "./types";
 import { CommandButton, Menu, type MenuItemOrSeparator } from "./components/ui";
 import { Viewer, type ScrollRequest } from "./components/Viewer";
+import { ToolsPanel } from "./components/ToolsPanel";
 import { ReadAloudBar, type ReadStart } from "./components/ReadAloudBar";
 import { Sidebar, type SidebarView } from "./components/Sidebar";
 import { PageToolsDialog, type PageTool } from "./components/PageToolsDialog";
@@ -180,6 +182,27 @@ export function App() {
   const [activeId, setActiveId] = useState<number | null>(null);
   const [views, setViews] = useState<Record<number, ViewState>>({});
   const [showThumbs, setShowThumbs] = useState(true);
+  // The tools pane (remembered per computer; open by default on wide windows).
+  const [showTools, setShowToolsState] = useState<boolean>(() => {
+    try {
+      const v = localStorage.getItem("pw.showTools");
+      if (v !== null) return v === "1";
+    } catch {
+      /* storage unavailable: default */
+    }
+    return window.innerWidth >= 1200;
+  });
+  const setShowTools = useCallback((f: (v: boolean) => boolean) => {
+    setShowToolsState((v) => {
+      const n = f(v);
+      try {
+        localStorage.setItem("pw.showTools", n ? "1" : "0");
+      } catch {
+        /* not remembered */
+      }
+      return n;
+    });
+  }, []);
   const [sidebarView, setSidebarView] = useState<SidebarView>("pages");
   /** Signature check of the active document (undefined while it runs). */
   const [sigs, setSigs] = useState<{ docId: number; report?: SignatureReport; error?: PwError } | null>(null);
@@ -556,6 +579,7 @@ export function App() {
     [active],
   );
   const zoomStep = useCallback((d: 1 | -1) => setView({ zoom: nextZoom(view.zoom, d) }), [setView, view.zoom]);
+  const zoomTo = useCallback((zoom: number) => setView({ zoom }), [setView]);
   const goToPage = useCallback(
     (page: number) => {
       if (!active) return;
@@ -949,6 +973,7 @@ export function App() {
       available: needDoc,
     },
     "view.toggleThumbnails": { run: () => setShowThumbs((s) => !s), available: needDoc },
+    "view.toggleTools": { run: () => setShowTools((s) => !s), available: needDoc },
     "view.showSignatures": {
       run: () => {
         setShowThumbs(true);
@@ -1007,6 +1032,7 @@ export function App() {
     "app.settings": { run: () => settings && setDialog({ kind: "settings", tab: "appearance", original: settings }), available: () => (settings ? noDialog() : "Settings are still loading.") },
     "app.shortcuts": { run: () => settings && setDialog({ kind: "settings", tab: "shortcuts", original: settings }), available: () => (settings ? noDialog() : "Settings are still loading.") },
     "app.commandPalette": { run: () => setDialog({ kind: "palette" }), available: noDialog },
+    "app.updates": { run: () => settings && setDialog({ kind: "settings", tab: "updates", original: settings }), available: () => (settings ? noDialog() : "Settings are still loading.") },
     "app.openLogs": {
       run: async () => {
         try {
@@ -1227,6 +1253,32 @@ export function App() {
       ],
     });
 
+  const appMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    setMenu({
+      label: "Menu",
+      x: r.left,
+      y: r.bottom + 2,
+      items: [
+        item("file.open"),
+        item("file.openOffice"),
+        item("file.imagesToPdf"),
+        item("file.batch"),
+        "separator",
+        item("file.saveCopy"),
+        item("file.print"),
+        item("file.properties"),
+        item("file.reveal"),
+        item("file.close"),
+        "separator",
+        item("app.settings"),
+        item("app.shortcuts"),
+        item("app.updates"),
+        item("app.openLogs"),
+      ],
+    });
+  };
+
   const pagesMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
     setMenu({ label: "Page tools", x: r.left, y: r.bottom + 2, items: [item("pages.organize"), "separator", item("pages.extract"), item("pages.delete"), item("pages.rotate"), item("pages.split"), item("pages.stamp"), item("pages.watermark"), item("pages.crop"), item("pages.exportImages"), item("pages.extractImages"), item("pages.exportText"), item("file.toWord"), item("file.toPowerPoint"), item("file.exportTables"), item("file.translate"), item("read.saveAudio"), item("pages.labels"), item("pages.ocr"), item("pages.deskew"), item("pages.orient"), item("pages.removeBlank"), "separator", item("pages.merge")] });
@@ -1363,31 +1415,22 @@ export function App() {
       <header className="toolbar-host">
       <div className="toolbar" role="toolbar" aria-label="Main toolbar">
         <div className="group">
+          <button
+            type="button"
+            className="btn"
+            aria-haspopup="menu"
+            aria-expanded={menu?.label === "Menu"}
+            title="Menu: files, preferences and help"
+            data-testid="app-menu"
+            onClick={(e) => appMenu(e)}
+          >
+            <MenuIcon /> Menu
+          </button>
           <CommandButton command="file.open" handlers={handlers} bindings={bindings} icon={<FolderOpen />} showLabel label="Open" />
         </div>
         <div className="divider" aria-hidden="true" />
         <div className="group">
           <CommandButton command="view.toggleThumbnails" handlers={handlers} bindings={bindings} icon={<PanelLeft />} pressed={!!active && showThumbs} />
-          <CommandButton command="view.zoomOut" handlers={handlers} bindings={bindings} icon={<ZoomOut />} />
-          <select
-            className="select"
-            aria-label="Zoom level"
-            title={active ? "Zoom level" : NO_DOC}
-            disabled={!active}
-            value={zoomPct}
-            onChange={(e) => setView({ zoom: clampZoom(Number(e.target.value) / 100) })}
-          >
-            {zoomOptions.map((z) => (
-              <option key={z} value={z}>
-                {z}%
-              </option>
-            ))}
-          </select>
-          <CommandButton command="view.zoomIn" handlers={handlers} bindings={bindings} icon={<ZoomIn />} />
-          <CommandButton command="view.fitWidth" handlers={handlers} bindings={bindings} icon={<MoveHorizontal />} />
-        </div>
-        <div className="divider" aria-hidden="true" />
-        <div className="group">
           <button
             type="button"
             className="btn"
@@ -1407,7 +1450,7 @@ export function App() {
         <span className="spacer" />
         <div className="group">
           <CommandButton command="app.commandPalette" handlers={handlers} bindings={bindings} icon={<CommandIcon />} />
-          <CommandButton command="app.settings" handlers={handlers} bindings={bindings} icon={<SettingsIcon />} />
+          <CommandButton command="view.toggleTools" handlers={handlers} bindings={bindings} icon={<LayoutPanelLeft />} showLabel label="All tools" pressed={!!active && showTools} />
         </div>
       </div>
       </header>
@@ -1470,7 +1513,7 @@ export function App() {
       )}
 
       {active ? (
-        <main className="workspace" aria-label={active.name} style={showThumbs ? undefined : { gridTemplateColumns: "1fr" }}>
+        <main className="workspace" aria-label={active.name} style={{ gridTemplateColumns: `${showThumbs ? "auto " : ""}1fr${showTools ? " auto" : ""}` }}>
           <h1 className="sr-only">{active.name}</h1>
           {showThumbs && (
             <Sidebar
@@ -1491,7 +1534,25 @@ export function App() {
               onAnnotChanges={(c) => setAnnotChanges((all) => ({ ...all, [active.doc_id]: c }))}
             />
           )}
-          <div ref={viewerHost} style={{ display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0, minWidth: 0 }}>
+          <div ref={viewerHost} style={{ display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0, minWidth: 0, position: "relative" }}>
+            <div className="viewer-float" role="toolbar" aria-label="Zoom">
+              <CommandButton command="view.zoomOut" handlers={handlers} bindings={bindings} icon={<ZoomOut />} />
+              <select
+                className="select"
+                aria-label="Zoom level"
+                title="Zoom level (or hold Ctrl and turn the mouse wheel, or pinch on a touchpad)"
+                value={zoomPct}
+                onChange={(e) => setView({ zoom: clampZoom(Number(e.target.value) / 100) })}
+              >
+                {zoomOptions.map((z) => (
+                  <option key={z} value={z}>
+                    {z}%
+                  </option>
+                ))}
+              </select>
+              <CommandButton command="view.zoomIn" handlers={handlers} bindings={bindings} icon={<ZoomIn />} />
+              <CommandButton command="view.fitWidth" handlers={handlers} bindings={bindings} icon={<MoveHorizontal />} />
+            </div>
             <div>
             {reader && reader.docId === active.doc_id && (
               <ReadAloudBar
@@ -1542,6 +1603,7 @@ export function App() {
               doc={active}
               zoom={view.zoom}
               onZoomStep={zoomStep}
+              onZoomTo={zoomTo}
               onCurrentPage={(page) => setView({ page })}
               scrollRequest={scrollRequest}
               hits={hits}
@@ -1570,6 +1632,7 @@ export function App() {
               }}
             />
           </div>
+          {showTools && <ToolsPanel handlers={handlers} bindings={bindings} onClose={() => setShowTools(() => false)} />}
         </main>
       ) : (
         <div ref={viewerHost} style={{ display: "grid", minHeight: 0 }}>

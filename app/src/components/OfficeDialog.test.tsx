@@ -4,24 +4,26 @@ import { ApiContext, type Api } from "../api";
 import type { JobSnapshot, OperationRequest } from "../types";
 import { OfficeDialog, isOfficePath } from "./OfficeDialog";
 
-function setup(initial: string | null, engine: string | null, jobs: Record<string, JobSnapshot> = {}) {
+function setup(initial: string | null, engine: string | null, jobs: Record<string, JobSnapshot> = {}, canInstall = true) {
   const startOperation = vi.fn(async (_r: OperationRequest) => "job-1");
   const pickOfficeFile = vi.fn(async () => "/docs/Budget 2026.xlsx");
-  const api = { startOperation, cancelJob: vi.fn(), pickOfficeFile } as unknown as Api;
+  const officePackage = vi.fn(async () => ({ version: "26.2.6", bytes: 373_252_096, can_install: canInstall }));
+  const officeEngine = vi.fn(async () => "LibreOffice 26.2.6.2");
+  const api = { startOperation, cancelJob: vi.fn(), pickOfficeFile, officePackage, officeEngine } as unknown as Api;
   const onFinished = vi.fn();
   const view = render(
     <ApiContext.Provider value={api}>
       <OfficeDialog initialFile={initial} engine={engine} jobs={jobs} onClose={() => undefined} onFinished={onFinished} />
     </ApiContext.Provider>,
   );
-  return { startOperation, pickOfficeFile, onFinished, view, api };
+  return { startOperation, pickOfficeFile, onFinished, view, api, officeEngine };
 }
 
 afterEach(cleanup);
 
 describe("Open an Office file", () => {
   it("recognises Office files by name", () => {
-    for (const p of ["/a/Report.DOCX", "/a/b.odt", "/a/c.pptx", "/a/d.csv", "/a/e.htm"]) expect(isOfficePath(p)).toBe(true);
+    for (const p of ["/a/Report.DOCX", "/a/b.odt", "/a/c.pptx", "/a/d.csv", "/a/e.htm", "/a/m.docm", "/a/s.xlsb", "/a/t.potx", "/a/v.vsdx", "/a/p.pub"]) expect(isOfficePath(p)).toBe(true);
     for (const p of ["/a/b.pdf", "/a/b.exe", "/a/docx"]) expect(isOfficePath(p)).toBe(false);
   });
 
@@ -75,5 +77,36 @@ describe("Open an Office file", () => {
       fireEvent.click(screen.getByRole("button", { name: "Keep both" }));
     });
     expect(startOperation.mock.calls[1]![0].collision).toBe("rename");
+  });
+
+  it("offers a one-time LibreOffice download when it is missing, then converts", async () => {
+    const snap = (state: JobSnapshot["state"], extra: Partial<JobSnapshot> = {}): JobSnapshot => ({ id: "job-1", label: "install_office", state, phase: "", progress: { kind: "indeterminate" }, result: null, error: null, warnings: [], elapsed_ms: 0, ...extra });
+    const { startOperation, view, api, officeEngine } = setup("/docs/a.docx", null);
+    await act(async () => undefined);
+    expect(screen.getByTestId("office-download").textContent).toContain("LibreOffice 26.2.6 once (373 MB");
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("office-download-start"));
+    });
+    expect(startOperation.mock.calls[0]![0].operation).toEqual({ op: "install_office" });
+    const rerender = (jobs: Record<string, JobSnapshot>) =>
+      view.rerender(
+        <ApiContext.Provider value={api}>
+          <OfficeDialog initialFile="/docs/a.docx" engine={null} jobs={jobs} onClose={() => undefined} onFinished={() => undefined} />
+        </ApiContext.Provider>,
+      );
+    await act(async () => rerender({ "job-1": snap("running", { progress: { kind: "determinate", done: 100_000_000, total: 373_252_096, unit: "bytes" } }) }));
+    expect(screen.getByTestId("office-download").textContent).toContain("Downloading LibreOffice 26.2.6: 100 MB of 373 MB");
+    await act(async () => rerender({ "job-1": snap("succeeded") }));
+    expect(officeEngine).toHaveBeenCalled();
+    await act(async () => undefined);
+    expect(screen.queryByTestId("office-missing")).toBeNull();
+    expect(screen.getByTestId("office-start").getAttribute("aria-disabled")).toBeNull();
+  });
+
+  it("elsewhere it says to use the package manager", async () => {
+    setup("/docs/a.docx", null, {}, false);
+    await act(async () => undefined);
+    expect(screen.queryByTestId("office-download-start")).toBeNull();
+    expect(screen.getByText(/package manager/)).toBeTruthy();
   });
 });

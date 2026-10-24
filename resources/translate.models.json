@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "decision": "D-027",
+  "release": "translate-models-1",
+  "note": "Models converted by tools/convert_translate.py in the Translation models workflow and published on this repository's release named above. tools/lock_translate.py pins each direction below in resources/translate.lock.json from that release's manifest.json. Scores: docs/AI_AND_RESOURCES.md (FLORES-200 devtest, first 200 sentences).",
+  "models": [
+    {
+      "name": "mul-itc",
+      "repo": "Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "commit": "1159ef376d48fd8d4a11b88917e7a8a1022beb6f",
+      "license": "Apache-2.0",
+      "quant": "int8",
+      "directions": [
+        ["en", "fr"], ["en", "es"], ["en", "it"], ["en", "pt"],
+        ["de", "fr"], ["de", "es"], ["de", "it"], ["de", "pt"],
+        ["fr", "es"], ["fr", "it"], ["fr", "pt"],
+        ["es", "fr"], ["es", "it"], ["es", "pt"],
+        ["pt", "fr"], ["pt", "es"], ["pt", "it"]
+      ]
+    },
+    {
+      "name": "itc-mul",
+      "repo": "Helsinki-NLP/opus-mt-tc-bible-big-itc-deu_eng_fra_por_spa",
+      "commit": "4bcdcc2580bef62cae46ec574655c22219f3aaf3",
+      "license": "Apache-2.0",
+      "quant": "int8",
+      "directions": [
+        ["fr", "en"], ["es", "en"], ["it", "en"], ["pt", "en"],
+        ["fr", "de"], ["es", "de"], ["it", "de"], ["pt", "de"],
+        ["it", "fr"], ["it", "es"], ["it", "pt"]
+      ]
+    },
+    {
+      "name": "gmw-gmw",
+      "repo": "Helsinki-NLP/opus-mt-tc-big-gmw-gmw",
+      "commit": "b162f23f2a033c84b67fa66903b33231bf835097",
+      "license": "CC-BY-4.0",
+      "quant": "int8",
+      "directions": [["en", "de"], ["de", "en"]]
+    }
+  ]
+}

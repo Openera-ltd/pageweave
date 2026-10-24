@@ -1,239 +1,997 @@
 {
   "schema_version": 1,
   "component": "translate",
-  "decision": "D-022",
+  "decision": "D-027",
   "runtime": "the ONNX Runtime pinned in resources/ocr.lock.json",
-  "license": "CC-BY-4.0 (OPUS-MT models by Helsinki-NLP / University of Helsinki, Language Technology Research Group; ONNX conversion by Xenova). Attribution: Jörg Tiedemann and Santhosh Thottingal, 'OPUS-MT — Building open translation services for the World', EAMT 2020.",
+  "license": "Apache-2.0 (OPUS-MT tc-bible-big models) and CC-BY-4.0 (OPUS-MT tc-big gmw-gmw), Helsinki-NLP / University of Helsinki, Language Technology Research Group; converted to ONNX for PageWeave by tools/convert_translate.py. Attribution: Jörg Tiedemann et al., 'Democratizing neural machine translation with OPUS-MT', Language Resources and Evaluation 58, 2024; Tiedemann and Thottingal, 'OPUS-MT — Building open translation services for the World', EAMT 2020.",
   "pairs": [
     {
       "source": "en",
-      "target": "de",
-      "model": "Helsinki-NLP/opus-mt-en-de",
-      "repository": "https://huggingface.co/Xenova/opus-mt-en-de",
-      "commit": "1ca130c44c4c5441ef16d48aae521a424ab644f7",
-      "files": {
-        "encoder.onnx": {
-          "from": "onnx/encoder_model_quantized.onnx",
-          "sha256": "15834b45fabd2dfb8c6c029b3ca3e7289aeefd90ece798ce42bcf548d1bd3b8d",
-          "bytes": 49366942
-        },
-        "decoder.onnx": {
-          "from": "onnx/decoder_model_merged_quantized.onnx",
-          "sha256": "8b46a825964cdd182fe47cc780f0fb87d357eae1f47cf20aa63c1c09be5b510c",
-          "bytes": 56652404
-        },
-        "tokenizer.json": {
-          "from": "tokenizer.json",
-          "sha256": "8e0fcf45621ea87fa680c7f9969c37a7f819c1f4c7658a2e6e0879b866a14b17",
-          "bytes": 5498450
-        },
-        "config.json": {
-          "from": "config.json",
-          "sha256": "517955ebf66cd6523f9982851dd41771b74fb2d9c00b4933ba2922ac7a63336f",
-          "bytes": 1411
-        }
-      }
-    },
-    {
-      "source": "de",
-      "target": "en",
-      "model": "Helsinki-NLP/opus-mt-de-en",
-      "repository": "https://huggingface.co/Xenova/opus-mt-de-en",
-      "commit": "399dfd68706739fffd503f876093e455ae268a06",
-      "files": {
-        "encoder.onnx": {
-          "from": "onnx/encoder_model_quantized.onnx",
-          "sha256": "4cedda8f8c89b72a42b3c6cd1e7a27f2de24457093e3bf80cb3e46829641fcd8",
-          "bytes": 49366942
-        },
-        "decoder.onnx": {
-          "from": "onnx/decoder_model_merged_quantized.onnx",
-          "sha256": "4712800584b2d77c2f9e620bf29523e2b20b62f65ade5011ee01780e2b0ea5d3",
-          "bytes": 56652404
-        },
-        "tokenizer.json": {
-          "from": "tokenizer.json",
-          "sha256": "8e0fcf45621ea87fa680c7f9969c37a7f819c1f4c7658a2e6e0879b866a14b17",
-          "bytes": 5498450
-        },
-        "config.json": {
-          "from": "config.json",
-          "sha256": "6754743ec4754957d8552dad869d1314f3af6626b67446ec4cebe5e2fbaa0fc4",
-          "bytes": 1376
-        }
-      }
-    },
-    {
-      "source": "en",
       "target": "fr",
-      "model": "Helsinki-NLP/opus-mt-en-fr",
-      "repository": "https://huggingface.co/Xenova/opus-mt-en-fr",
-      "commit": "28726206f80896b90035bd99cccd5cc1e151f916",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "commit": "1159ef376d48fd8d4a11b88917e7a8a1022beb6f",
+      "license": "Apache-2.0",
+      "folder": "mul-itc",
+      "prefix": ">>fra<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
       "files": {
         "encoder.onnx": {
-          "from": "onnx/encoder_model_quantized.onnx",
-          "sha256": "0a81bdba62f53223740a8c6c6f58e716eba8ea1f92dfa569caf27ed5e3b6a0f7",
-          "bytes": 50090398
+          "from": "mul-itc-encoder.onnx",
+          "bytes": 123894718,
+          "sha256": "c13b0b1643eeaf31377bc0c093718f632ad19fdfd941e421ef909439f7010ef0"
         },
         "decoder.onnx": {
-          "from": "onnx/decoder_model_merged_quantized.onnx",
-          "sha256": "333b244bce16023df04541c8cf9fd60aec9b0569da393c4b831d561897b0bda8",
-          "bytes": 57381512
+          "from": "mul-itc-decoder.onnx",
+          "bytes": 196931392,
+          "sha256": "0f3caca42ed1fbc2c55dc68ade147675b61280a5c51b5a4cdc3d2c66e7579da1"
         },
         "tokenizer.json": {
-          "from": "tokenizer.json",
-          "sha256": "8391785c1a2139e7af4678571ccd8dc654ecbb72e4be186940f65d7c604f0246",
-          "bytes": 5637839
+          "from": "mul-itc-tokenizer.json",
+          "bytes": 1442097,
+          "sha256": "ebdbe083edc5060de57c4b3a0119a360787f8eb5276a1b350640f0c93d91f1ed"
         },
         "config.json": {
-          "from": "config.json",
-          "sha256": "b522b73fcc86f77981349c1df2a2e041eed0dbcbea4acf2635019cf21d51ffc0",
-          "bytes": 1411
-        }
-      }
-    },
-    {
-      "source": "fr",
-      "target": "en",
-      "model": "Helsinki-NLP/opus-mt-fr-en",
-      "repository": "https://huggingface.co/Xenova/opus-mt-fr-en",
-      "commit": "6b166a182780e118c997879d0ad5be4b53671644",
-      "files": {
-        "encoder.onnx": {
-          "from": "onnx/encoder_model_quantized.onnx",
-          "sha256": "e727cb26ac6bf816394c49671af69c9ae5798868fed1e40849872415dffc1772",
-          "bytes": 50090398
-        },
-        "decoder.onnx": {
-          "from": "onnx/decoder_model_merged_quantized.onnx",
-          "sha256": "73bc7ac8e29c42e6f212ebcc29a2991d3646a04aabb642c0036aa54b40e4e1a9",
-          "bytes": 57381512
-        },
-        "tokenizer.json": {
-          "from": "tokenizer.json",
-          "sha256": "8391785c1a2139e7af4678571ccd8dc654ecbb72e4be186940f65d7c604f0246",
-          "bytes": 5637839
-        },
-        "config.json": {
-          "from": "config.json",
-          "sha256": "6c2851f154d7b88c7767e4fdcf8a5694a36a456bfa6cbcde1b13fdbade3b56f6",
-          "bytes": 1411
+          "from": "mul-itc-config.json",
+          "bytes": 1175,
+          "sha256": "71aa9bfa8c2f410a9eb8538a11e5db85f93d44a3bc8566aec41eb2acebc1976c"
         }
       }
     },
     {
       "source": "en",
       "target": "es",
-      "model": "Helsinki-NLP/opus-mt-en-es",
-      "repository": "https://huggingface.co/Xenova/opus-mt-en-es",
-      "commit": "4b002a4c7edd54a7ced58877258b87f7efd3f892",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "commit": "1159ef376d48fd8d4a11b88917e7a8a1022beb6f",
+      "license": "Apache-2.0",
+      "folder": "mul-itc",
+      "prefix": ">>spa<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
       "files": {
         "encoder.onnx": {
-          "from": "onnx/encoder_model_quantized.onnx",
-          "sha256": "03434edd1147e6c49e22066e9dc5888235e99cc35a6711d1c4ea5b06455d5da9",
-          "bytes": 52899742
+          "from": "mul-itc-encoder.onnx",
+          "bytes": 123894718,
+          "sha256": "c13b0b1643eeaf31377bc0c093718f632ad19fdfd941e421ef909439f7010ef0"
         },
         "decoder.onnx": {
-          "from": "onnx/decoder_model_merged_quantized.onnx",
-          "sha256": "58ee5ddd6e22d1693d8722b90c1486afb93700a4376cf28fd74175052ad530ae",
-          "bytes": 60212804
+          "from": "mul-itc-decoder.onnx",
+          "bytes": 196931392,
+          "sha256": "0f3caca42ed1fbc2c55dc68ade147675b61280a5c51b5a4cdc3d2c66e7579da1"
         },
         "tokenizer.json": {
-          "from": "tokenizer.json",
-          "sha256": "285eb29e7155ee48851a77960797813f86a125f70d2c1a124f613f1fbd2b19c3",
-          "bytes": 6262682
+          "from": "mul-itc-tokenizer.json",
+          "bytes": 1442097,
+          "sha256": "ebdbe083edc5060de57c4b3a0119a360787f8eb5276a1b350640f0c93d91f1ed"
         },
         "config.json": {
-          "from": "config.json",
-          "sha256": "499eae1f97eeba63172fc884f92fd727ae803b7ceb79c0f653aa4b011152af2f",
-          "bytes": 1468
-        }
-      }
-    },
-    {
-      "source": "es",
-      "target": "en",
-      "model": "Helsinki-NLP/opus-mt-es-en",
-      "repository": "https://huggingface.co/Xenova/opus-mt-es-en",
-      "commit": "eadfd7c658a9d8929ac3b8e996b68a68e2c7d480",
-      "files": {
-        "encoder.onnx": {
-          "from": "onnx/encoder_model_quantized.onnx",
-          "sha256": "c01e70f8455efc350831aa2af7ed187b16829241f0018ba07d1ba643a391bc18",
-          "bytes": 52899742
-        },
-        "decoder.onnx": {
-          "from": "onnx/decoder_model_merged_quantized.onnx",
-          "sha256": "4cd91ab30240d295ce907b5100826031838c672005e57e524d711122d75605fa",
-          "bytes": 60212804
-        },
-        "tokenizer.json": {
-          "from": "tokenizer.json",
-          "sha256": "285eb29e7155ee48851a77960797813f86a125f70d2c1a124f613f1fbd2b19c3",
-          "bytes": 6262682
-        },
-        "config.json": {
-          "from": "config.json",
-          "sha256": "fab3a7f93185bc5aa7b419f6a1e6e74d98c8f2a506c94493d3019bf46da3478d",
-          "bytes": 1433
+          "from": "mul-itc-config.json",
+          "bytes": 1175,
+          "sha256": "71aa9bfa8c2f410a9eb8538a11e5db85f93d44a3bc8566aec41eb2acebc1976c"
         }
       }
     },
     {
       "source": "en",
       "target": "it",
-      "model": "Helsinki-NLP/opus-mt-en-it",
-      "repository": "https://huggingface.co/Xenova/opus-mt-en-it",
-      "commit": "075406e3c8c2c30634d4a1bd8f00c21d9e162011",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "commit": "1159ef376d48fd8d4a11b88917e7a8a1022beb6f",
+      "license": "Apache-2.0",
+      "folder": "mul-itc",
+      "prefix": ">>ita<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
       "files": {
         "encoder.onnx": {
-          "from": "onnx/encoder_model_quantized.onnx",
-          "sha256": "b51c5110c7ba356ef01ee400d427afe162e657de1d7a2e9a40deedd811b49e6f",
-          "bytes": 60597150
+          "from": "mul-itc-encoder.onnx",
+          "bytes": 123894718,
+          "sha256": "c13b0b1643eeaf31377bc0c093718f632ad19fdfd941e421ef909439f7010ef0"
         },
         "decoder.onnx": {
-          "from": "onnx/decoder_model_merged_quantized.onnx",
-          "sha256": "f9db146ed7665ea7d437dc4df564e3af5df923366de4d52aaf2c4b4e3e4ae4f1",
-          "bytes": 67970348
+          "from": "mul-itc-decoder.onnx",
+          "bytes": 196931392,
+          "sha256": "0f3caca42ed1fbc2c55dc68ade147675b61280a5c51b5a4cdc3d2c66e7579da1"
         },
         "tokenizer.json": {
-          "from": "tokenizer.json",
-          "sha256": "fb93411d5198eb85753bbd68e9ac24ccb42071003214851b2f37c81f2ea50416",
-          "bytes": 7904597
+          "from": "mul-itc-tokenizer.json",
+          "bytes": 1442097,
+          "sha256": "ebdbe083edc5060de57c4b3a0119a360787f8eb5276a1b350640f0c93d91f1ed"
         },
         "config.json": {
-          "from": "config.json",
-          "sha256": "1cf40ab3aa16e8b6ea7c9766981de1da705a161564c0d5ad187c1e62e5c8ee85",
-          "bytes": 1376
+          "from": "mul-itc-config.json",
+          "bytes": 1175,
+          "sha256": "71aa9bfa8c2f410a9eb8538a11e5db85f93d44a3bc8566aec41eb2acebc1976c"
+        }
+      }
+    },
+    {
+      "source": "en",
+      "target": "pt",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "commit": "1159ef376d48fd8d4a11b88917e7a8a1022beb6f",
+      "license": "Apache-2.0",
+      "folder": "mul-itc",
+      "prefix": ">>por<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
+      "files": {
+        "encoder.onnx": {
+          "from": "mul-itc-encoder.onnx",
+          "bytes": 123894718,
+          "sha256": "c13b0b1643eeaf31377bc0c093718f632ad19fdfd941e421ef909439f7010ef0"
+        },
+        "decoder.onnx": {
+          "from": "mul-itc-decoder.onnx",
+          "bytes": 196931392,
+          "sha256": "0f3caca42ed1fbc2c55dc68ade147675b61280a5c51b5a4cdc3d2c66e7579da1"
+        },
+        "tokenizer.json": {
+          "from": "mul-itc-tokenizer.json",
+          "bytes": 1442097,
+          "sha256": "ebdbe083edc5060de57c4b3a0119a360787f8eb5276a1b350640f0c93d91f1ed"
+        },
+        "config.json": {
+          "from": "mul-itc-config.json",
+          "bytes": 1175,
+          "sha256": "71aa9bfa8c2f410a9eb8538a11e5db85f93d44a3bc8566aec41eb2acebc1976c"
+        }
+      }
+    },
+    {
+      "source": "de",
+      "target": "fr",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "commit": "1159ef376d48fd8d4a11b88917e7a8a1022beb6f",
+      "license": "Apache-2.0",
+      "folder": "mul-itc",
+      "prefix": ">>fra<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
+      "files": {
+        "encoder.onnx": {
+          "from": "mul-itc-encoder.onnx",
+          "bytes": 123894718,
+          "sha256": "c13b0b1643eeaf31377bc0c093718f632ad19fdfd941e421ef909439f7010ef0"
+        },
+        "decoder.onnx": {
+          "from": "mul-itc-decoder.onnx",
+          "bytes": 196931392,
+          "sha256": "0f3caca42ed1fbc2c55dc68ade147675b61280a5c51b5a4cdc3d2c66e7579da1"
+        },
+        "tokenizer.json": {
+          "from": "mul-itc-tokenizer.json",
+          "bytes": 1442097,
+          "sha256": "ebdbe083edc5060de57c4b3a0119a360787f8eb5276a1b350640f0c93d91f1ed"
+        },
+        "config.json": {
+          "from": "mul-itc-config.json",
+          "bytes": 1175,
+          "sha256": "71aa9bfa8c2f410a9eb8538a11e5db85f93d44a3bc8566aec41eb2acebc1976c"
+        }
+      }
+    },
+    {
+      "source": "de",
+      "target": "es",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "commit": "1159ef376d48fd8d4a11b88917e7a8a1022beb6f",
+      "license": "Apache-2.0",
+      "folder": "mul-itc",
+      "prefix": ">>spa<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
+      "files": {
+        "encoder.onnx": {
+          "from": "mul-itc-encoder.onnx",
+          "bytes": 123894718,
+          "sha256": "c13b0b1643eeaf31377bc0c093718f632ad19fdfd941e421ef909439f7010ef0"
+        },
+        "decoder.onnx": {
+          "from": "mul-itc-decoder.onnx",
+          "bytes": 196931392,
+          "sha256": "0f3caca42ed1fbc2c55dc68ade147675b61280a5c51b5a4cdc3d2c66e7579da1"
+        },
+        "tokenizer.json": {
+          "from": "mul-itc-tokenizer.json",
+          "bytes": 1442097,
+          "sha256": "ebdbe083edc5060de57c4b3a0119a360787f8eb5276a1b350640f0c93d91f1ed"
+        },
+        "config.json": {
+          "from": "mul-itc-config.json",
+          "bytes": 1175,
+          "sha256": "71aa9bfa8c2f410a9eb8538a11e5db85f93d44a3bc8566aec41eb2acebc1976c"
+        }
+      }
+    },
+    {
+      "source": "de",
+      "target": "it",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "commit": "1159ef376d48fd8d4a11b88917e7a8a1022beb6f",
+      "license": "Apache-2.0",
+      "folder": "mul-itc",
+      "prefix": ">>ita<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
+      "files": {
+        "encoder.onnx": {
+          "from": "mul-itc-encoder.onnx",
+          "bytes": 123894718,
+          "sha256": "c13b0b1643eeaf31377bc0c093718f632ad19fdfd941e421ef909439f7010ef0"
+        },
+        "decoder.onnx": {
+          "from": "mul-itc-decoder.onnx",
+          "bytes": 196931392,
+          "sha256": "0f3caca42ed1fbc2c55dc68ade147675b61280a5c51b5a4cdc3d2c66e7579da1"
+        },
+        "tokenizer.json": {
+          "from": "mul-itc-tokenizer.json",
+          "bytes": 1442097,
+          "sha256": "ebdbe083edc5060de57c4b3a0119a360787f8eb5276a1b350640f0c93d91f1ed"
+        },
+        "config.json": {
+          "from": "mul-itc-config.json",
+          "bytes": 1175,
+          "sha256": "71aa9bfa8c2f410a9eb8538a11e5db85f93d44a3bc8566aec41eb2acebc1976c"
+        }
+      }
+    },
+    {
+      "source": "de",
+      "target": "pt",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "commit": "1159ef376d48fd8d4a11b88917e7a8a1022beb6f",
+      "license": "Apache-2.0",
+      "folder": "mul-itc",
+      "prefix": ">>por<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
+      "files": {
+        "encoder.onnx": {
+          "from": "mul-itc-encoder.onnx",
+          "bytes": 123894718,
+          "sha256": "c13b0b1643eeaf31377bc0c093718f632ad19fdfd941e421ef909439f7010ef0"
+        },
+        "decoder.onnx": {
+          "from": "mul-itc-decoder.onnx",
+          "bytes": 196931392,
+          "sha256": "0f3caca42ed1fbc2c55dc68ade147675b61280a5c51b5a4cdc3d2c66e7579da1"
+        },
+        "tokenizer.json": {
+          "from": "mul-itc-tokenizer.json",
+          "bytes": 1442097,
+          "sha256": "ebdbe083edc5060de57c4b3a0119a360787f8eb5276a1b350640f0c93d91f1ed"
+        },
+        "config.json": {
+          "from": "mul-itc-config.json",
+          "bytes": 1175,
+          "sha256": "71aa9bfa8c2f410a9eb8538a11e5db85f93d44a3bc8566aec41eb2acebc1976c"
+        }
+      }
+    },
+    {
+      "source": "fr",
+      "target": "es",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "commit": "1159ef376d48fd8d4a11b88917e7a8a1022beb6f",
+      "license": "Apache-2.0",
+      "folder": "mul-itc",
+      "prefix": ">>spa<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
+      "files": {
+        "encoder.onnx": {
+          "from": "mul-itc-encoder.onnx",
+          "bytes": 123894718,
+          "sha256": "c13b0b1643eeaf31377bc0c093718f632ad19fdfd941e421ef909439f7010ef0"
+        },
+        "decoder.onnx": {
+          "from": "mul-itc-decoder.onnx",
+          "bytes": 196931392,
+          "sha256": "0f3caca42ed1fbc2c55dc68ade147675b61280a5c51b5a4cdc3d2c66e7579da1"
+        },
+        "tokenizer.json": {
+          "from": "mul-itc-tokenizer.json",
+          "bytes": 1442097,
+          "sha256": "ebdbe083edc5060de57c4b3a0119a360787f8eb5276a1b350640f0c93d91f1ed"
+        },
+        "config.json": {
+          "from": "mul-itc-config.json",
+          "bytes": 1175,
+          "sha256": "71aa9bfa8c2f410a9eb8538a11e5db85f93d44a3bc8566aec41eb2acebc1976c"
+        }
+      }
+    },
+    {
+      "source": "fr",
+      "target": "it",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "commit": "1159ef376d48fd8d4a11b88917e7a8a1022beb6f",
+      "license": "Apache-2.0",
+      "folder": "mul-itc",
+      "prefix": ">>ita<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
+      "files": {
+        "encoder.onnx": {
+          "from": "mul-itc-encoder.onnx",
+          "bytes": 123894718,
+          "sha256": "c13b0b1643eeaf31377bc0c093718f632ad19fdfd941e421ef909439f7010ef0"
+        },
+        "decoder.onnx": {
+          "from": "mul-itc-decoder.onnx",
+          "bytes": 196931392,
+          "sha256": "0f3caca42ed1fbc2c55dc68ade147675b61280a5c51b5a4cdc3d2c66e7579da1"
+        },
+        "tokenizer.json": {
+          "from": "mul-itc-tokenizer.json",
+          "bytes": 1442097,
+          "sha256": "ebdbe083edc5060de57c4b3a0119a360787f8eb5276a1b350640f0c93d91f1ed"
+        },
+        "config.json": {
+          "from": "mul-itc-config.json",
+          "bytes": 1175,
+          "sha256": "71aa9bfa8c2f410a9eb8538a11e5db85f93d44a3bc8566aec41eb2acebc1976c"
+        }
+      }
+    },
+    {
+      "source": "fr",
+      "target": "pt",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "commit": "1159ef376d48fd8d4a11b88917e7a8a1022beb6f",
+      "license": "Apache-2.0",
+      "folder": "mul-itc",
+      "prefix": ">>por<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
+      "files": {
+        "encoder.onnx": {
+          "from": "mul-itc-encoder.onnx",
+          "bytes": 123894718,
+          "sha256": "c13b0b1643eeaf31377bc0c093718f632ad19fdfd941e421ef909439f7010ef0"
+        },
+        "decoder.onnx": {
+          "from": "mul-itc-decoder.onnx",
+          "bytes": 196931392,
+          "sha256": "0f3caca42ed1fbc2c55dc68ade147675b61280a5c51b5a4cdc3d2c66e7579da1"
+        },
+        "tokenizer.json": {
+          "from": "mul-itc-tokenizer.json",
+          "bytes": 1442097,
+          "sha256": "ebdbe083edc5060de57c4b3a0119a360787f8eb5276a1b350640f0c93d91f1ed"
+        },
+        "config.json": {
+          "from": "mul-itc-config.json",
+          "bytes": 1175,
+          "sha256": "71aa9bfa8c2f410a9eb8538a11e5db85f93d44a3bc8566aec41eb2acebc1976c"
+        }
+      }
+    },
+    {
+      "source": "es",
+      "target": "fr",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "commit": "1159ef376d48fd8d4a11b88917e7a8a1022beb6f",
+      "license": "Apache-2.0",
+      "folder": "mul-itc",
+      "prefix": ">>fra<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
+      "files": {
+        "encoder.onnx": {
+          "from": "mul-itc-encoder.onnx",
+          "bytes": 123894718,
+          "sha256": "c13b0b1643eeaf31377bc0c093718f632ad19fdfd941e421ef909439f7010ef0"
+        },
+        "decoder.onnx": {
+          "from": "mul-itc-decoder.onnx",
+          "bytes": 196931392,
+          "sha256": "0f3caca42ed1fbc2c55dc68ade147675b61280a5c51b5a4cdc3d2c66e7579da1"
+        },
+        "tokenizer.json": {
+          "from": "mul-itc-tokenizer.json",
+          "bytes": 1442097,
+          "sha256": "ebdbe083edc5060de57c4b3a0119a360787f8eb5276a1b350640f0c93d91f1ed"
+        },
+        "config.json": {
+          "from": "mul-itc-config.json",
+          "bytes": 1175,
+          "sha256": "71aa9bfa8c2f410a9eb8538a11e5db85f93d44a3bc8566aec41eb2acebc1976c"
+        }
+      }
+    },
+    {
+      "source": "es",
+      "target": "it",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "commit": "1159ef376d48fd8d4a11b88917e7a8a1022beb6f",
+      "license": "Apache-2.0",
+      "folder": "mul-itc",
+      "prefix": ">>ita<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
+      "files": {
+        "encoder.onnx": {
+          "from": "mul-itc-encoder.onnx",
+          "bytes": 123894718,
+          "sha256": "c13b0b1643eeaf31377bc0c093718f632ad19fdfd941e421ef909439f7010ef0"
+        },
+        "decoder.onnx": {
+          "from": "mul-itc-decoder.onnx",
+          "bytes": 196931392,
+          "sha256": "0f3caca42ed1fbc2c55dc68ade147675b61280a5c51b5a4cdc3d2c66e7579da1"
+        },
+        "tokenizer.json": {
+          "from": "mul-itc-tokenizer.json",
+          "bytes": 1442097,
+          "sha256": "ebdbe083edc5060de57c4b3a0119a360787f8eb5276a1b350640f0c93d91f1ed"
+        },
+        "config.json": {
+          "from": "mul-itc-config.json",
+          "bytes": 1175,
+          "sha256": "71aa9bfa8c2f410a9eb8538a11e5db85f93d44a3bc8566aec41eb2acebc1976c"
+        }
+      }
+    },
+    {
+      "source": "es",
+      "target": "pt",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "commit": "1159ef376d48fd8d4a11b88917e7a8a1022beb6f",
+      "license": "Apache-2.0",
+      "folder": "mul-itc",
+      "prefix": ">>por<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
+      "files": {
+        "encoder.onnx": {
+          "from": "mul-itc-encoder.onnx",
+          "bytes": 123894718,
+          "sha256": "c13b0b1643eeaf31377bc0c093718f632ad19fdfd941e421ef909439f7010ef0"
+        },
+        "decoder.onnx": {
+          "from": "mul-itc-decoder.onnx",
+          "bytes": 196931392,
+          "sha256": "0f3caca42ed1fbc2c55dc68ade147675b61280a5c51b5a4cdc3d2c66e7579da1"
+        },
+        "tokenizer.json": {
+          "from": "mul-itc-tokenizer.json",
+          "bytes": 1442097,
+          "sha256": "ebdbe083edc5060de57c4b3a0119a360787f8eb5276a1b350640f0c93d91f1ed"
+        },
+        "config.json": {
+          "from": "mul-itc-config.json",
+          "bytes": 1175,
+          "sha256": "71aa9bfa8c2f410a9eb8538a11e5db85f93d44a3bc8566aec41eb2acebc1976c"
+        }
+      }
+    },
+    {
+      "source": "pt",
+      "target": "fr",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "commit": "1159ef376d48fd8d4a11b88917e7a8a1022beb6f",
+      "license": "Apache-2.0",
+      "folder": "mul-itc",
+      "prefix": ">>fra<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
+      "files": {
+        "encoder.onnx": {
+          "from": "mul-itc-encoder.onnx",
+          "bytes": 123894718,
+          "sha256": "c13b0b1643eeaf31377bc0c093718f632ad19fdfd941e421ef909439f7010ef0"
+        },
+        "decoder.onnx": {
+          "from": "mul-itc-decoder.onnx",
+          "bytes": 196931392,
+          "sha256": "0f3caca42ed1fbc2c55dc68ade147675b61280a5c51b5a4cdc3d2c66e7579da1"
+        },
+        "tokenizer.json": {
+          "from": "mul-itc-tokenizer.json",
+          "bytes": 1442097,
+          "sha256": "ebdbe083edc5060de57c4b3a0119a360787f8eb5276a1b350640f0c93d91f1ed"
+        },
+        "config.json": {
+          "from": "mul-itc-config.json",
+          "bytes": 1175,
+          "sha256": "71aa9bfa8c2f410a9eb8538a11e5db85f93d44a3bc8566aec41eb2acebc1976c"
+        }
+      }
+    },
+    {
+      "source": "pt",
+      "target": "es",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "commit": "1159ef376d48fd8d4a11b88917e7a8a1022beb6f",
+      "license": "Apache-2.0",
+      "folder": "mul-itc",
+      "prefix": ">>spa<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
+      "files": {
+        "encoder.onnx": {
+          "from": "mul-itc-encoder.onnx",
+          "bytes": 123894718,
+          "sha256": "c13b0b1643eeaf31377bc0c093718f632ad19fdfd941e421ef909439f7010ef0"
+        },
+        "decoder.onnx": {
+          "from": "mul-itc-decoder.onnx",
+          "bytes": 196931392,
+          "sha256": "0f3caca42ed1fbc2c55dc68ade147675b61280a5c51b5a4cdc3d2c66e7579da1"
+        },
+        "tokenizer.json": {
+          "from": "mul-itc-tokenizer.json",
+          "bytes": 1442097,
+          "sha256": "ebdbe083edc5060de57c4b3a0119a360787f8eb5276a1b350640f0c93d91f1ed"
+        },
+        "config.json": {
+          "from": "mul-itc-config.json",
+          "bytes": 1175,
+          "sha256": "71aa9bfa8c2f410a9eb8538a11e5db85f93d44a3bc8566aec41eb2acebc1976c"
+        }
+      }
+    },
+    {
+      "source": "pt",
+      "target": "it",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-deu_eng_fra_por_spa-itc",
+      "commit": "1159ef376d48fd8d4a11b88917e7a8a1022beb6f",
+      "license": "Apache-2.0",
+      "folder": "mul-itc",
+      "prefix": ">>ita<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
+      "files": {
+        "encoder.onnx": {
+          "from": "mul-itc-encoder.onnx",
+          "bytes": 123894718,
+          "sha256": "c13b0b1643eeaf31377bc0c093718f632ad19fdfd941e421ef909439f7010ef0"
+        },
+        "decoder.onnx": {
+          "from": "mul-itc-decoder.onnx",
+          "bytes": 196931392,
+          "sha256": "0f3caca42ed1fbc2c55dc68ade147675b61280a5c51b5a4cdc3d2c66e7579da1"
+        },
+        "tokenizer.json": {
+          "from": "mul-itc-tokenizer.json",
+          "bytes": 1442097,
+          "sha256": "ebdbe083edc5060de57c4b3a0119a360787f8eb5276a1b350640f0c93d91f1ed"
+        },
+        "config.json": {
+          "from": "mul-itc-config.json",
+          "bytes": 1175,
+          "sha256": "71aa9bfa8c2f410a9eb8538a11e5db85f93d44a3bc8566aec41eb2acebc1976c"
+        }
+      }
+    },
+    {
+      "source": "fr",
+      "target": "en",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-itc-deu_eng_fra_por_spa",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-itc-deu_eng_fra_por_spa",
+      "commit": "4bcdcc2580bef62cae46ec574655c22219f3aaf3",
+      "license": "Apache-2.0",
+      "folder": "itc-mul",
+      "prefix": ">>eng<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
+      "files": {
+        "encoder.onnx": {
+          "from": "itc-mul-encoder.onnx",
+          "bytes": 123785150,
+          "sha256": "2da07b2349c17f0f7b9e638440dfcaf5ab1f6e4aba86c62deb46548bbb960627"
+        },
+        "decoder.onnx": {
+          "from": "itc-mul-decoder.onnx",
+          "bytes": 196711186,
+          "sha256": "e54b8cbbd503162cf0c1d9fdfe4bbf35c72065b5c201d9b08b9ffb82e64b5113"
+        },
+        "tokenizer.json": {
+          "from": "itc-mul-tokenizer.json",
+          "bytes": 1440046,
+          "sha256": "b76cef750bd405cab72085c1c5a5129e0a17c5bdd0ebf68638db581e46bef5da"
+        },
+        "config.json": {
+          "from": "itc-mul-config.json",
+          "bytes": 1175,
+          "sha256": "b478cb8c0a35a2707b29921178b3d59bb2277c4dd049af14c268391158b5b7bf"
+        }
+      }
+    },
+    {
+      "source": "es",
+      "target": "en",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-itc-deu_eng_fra_por_spa",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-itc-deu_eng_fra_por_spa",
+      "commit": "4bcdcc2580bef62cae46ec574655c22219f3aaf3",
+      "license": "Apache-2.0",
+      "folder": "itc-mul",
+      "prefix": ">>eng<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
+      "files": {
+        "encoder.onnx": {
+          "from": "itc-mul-encoder.onnx",
+          "bytes": 123785150,
+          "sha256": "2da07b2349c17f0f7b9e638440dfcaf5ab1f6e4aba86c62deb46548bbb960627"
+        },
+        "decoder.onnx": {
+          "from": "itc-mul-decoder.onnx",
+          "bytes": 196711186,
+          "sha256": "e54b8cbbd503162cf0c1d9fdfe4bbf35c72065b5c201d9b08b9ffb82e64b5113"
+        },
+        "tokenizer.json": {
+          "from": "itc-mul-tokenizer.json",
+          "bytes": 1440046,
+          "sha256": "b76cef750bd405cab72085c1c5a5129e0a17c5bdd0ebf68638db581e46bef5da"
+        },
+        "config.json": {
+          "from": "itc-mul-config.json",
+          "bytes": 1175,
+          "sha256": "b478cb8c0a35a2707b29921178b3d59bb2277c4dd049af14c268391158b5b7bf"
         }
       }
     },
     {
       "source": "it",
       "target": "en",
-      "model": "Helsinki-NLP/opus-mt-it-en",
-      "repository": "https://huggingface.co/Xenova/opus-mt-it-en",
-      "commit": "fd0b89b9c052adc1f2f64152f555aa17353728be",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-itc-deu_eng_fra_por_spa",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-itc-deu_eng_fra_por_spa",
+      "commit": "4bcdcc2580bef62cae46ec574655c22219f3aaf3",
+      "license": "Apache-2.0",
+      "folder": "itc-mul",
+      "prefix": ">>eng<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
       "files": {
         "encoder.onnx": {
-          "from": "onnx/encoder_model_quantized.onnx",
-          "sha256": "a025d2d85c90da23880116b67175e43e71921d8d2bf446b9f1eacdc86015aa4c",
-          "bytes": 60773278
+          "from": "itc-mul-encoder.onnx",
+          "bytes": 123785150,
+          "sha256": "2da07b2349c17f0f7b9e638440dfcaf5ab1f6e4aba86c62deb46548bbb960627"
         },
         "decoder.onnx": {
-          "from": "onnx/decoder_model_merged_quantized.onnx",
-          "sha256": "aebc2789cd2ef8062fbda020bac90b61e68458ba98a4c43cea63c1d2310ba2b8",
-          "bytes": 68147852
+          "from": "itc-mul-decoder.onnx",
+          "bytes": 196711186,
+          "sha256": "e54b8cbbd503162cf0c1d9fdfe4bbf35c72065b5c201d9b08b9ffb82e64b5113"
         },
         "tokenizer.json": {
-          "from": "tokenizer.json",
-          "sha256": "c19e1dac8287ec5c5d47a0d81be5e0fd11755666b996c764ef4d13bb8117e3a2",
-          "bytes": 7942314
+          "from": "itc-mul-tokenizer.json",
+          "bytes": 1440046,
+          "sha256": "b76cef750bd405cab72085c1c5a5129e0a17c5bdd0ebf68638db581e46bef5da"
         },
         "config.json": {
-          "from": "config.json",
-          "sha256": "4b82a23b7a91b213a934db70d0a33712a739fdd7c5686b02d89642d7dcfc7ac4",
-          "bytes": 1376
+          "from": "itc-mul-config.json",
+          "bytes": 1175,
+          "sha256": "b478cb8c0a35a2707b29921178b3d59bb2277c4dd049af14c268391158b5b7bf"
+        }
+      }
+    },
+    {
+      "source": "pt",
+      "target": "en",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-itc-deu_eng_fra_por_spa",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-itc-deu_eng_fra_por_spa",
+      "commit": "4bcdcc2580bef62cae46ec574655c22219f3aaf3",
+      "license": "Apache-2.0",
+      "folder": "itc-mul",
+      "prefix": ">>eng<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
+      "files": {
+        "encoder.onnx": {
+          "from": "itc-mul-encoder.onnx",
+          "bytes": 123785150,
+          "sha256": "2da07b2349c17f0f7b9e638440dfcaf5ab1f6e4aba86c62deb46548bbb960627"
+        },
+        "decoder.onnx": {
+          "from": "itc-mul-decoder.onnx",
+          "bytes": 196711186,
+          "sha256": "e54b8cbbd503162cf0c1d9fdfe4bbf35c72065b5c201d9b08b9ffb82e64b5113"
+        },
+        "tokenizer.json": {
+          "from": "itc-mul-tokenizer.json",
+          "bytes": 1440046,
+          "sha256": "b76cef750bd405cab72085c1c5a5129e0a17c5bdd0ebf68638db581e46bef5da"
+        },
+        "config.json": {
+          "from": "itc-mul-config.json",
+          "bytes": 1175,
+          "sha256": "b478cb8c0a35a2707b29921178b3d59bb2277c4dd049af14c268391158b5b7bf"
+        }
+      }
+    },
+    {
+      "source": "fr",
+      "target": "de",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-itc-deu_eng_fra_por_spa",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-itc-deu_eng_fra_por_spa",
+      "commit": "4bcdcc2580bef62cae46ec574655c22219f3aaf3",
+      "license": "Apache-2.0",
+      "folder": "itc-mul",
+      "prefix": ">>deu<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
+      "files": {
+        "encoder.onnx": {
+          "from": "itc-mul-encoder.onnx",
+          "bytes": 123785150,
+          "sha256": "2da07b2349c17f0f7b9e638440dfcaf5ab1f6e4aba86c62deb46548bbb960627"
+        },
+        "decoder.onnx": {
+          "from": "itc-mul-decoder.onnx",
+          "bytes": 196711186,
+          "sha256": "e54b8cbbd503162cf0c1d9fdfe4bbf35c72065b5c201d9b08b9ffb82e64b5113"
+        },
+        "tokenizer.json": {
+          "from": "itc-mul-tokenizer.json",
+          "bytes": 1440046,
+          "sha256": "b76cef750bd405cab72085c1c5a5129e0a17c5bdd0ebf68638db581e46bef5da"
+        },
+        "config.json": {
+          "from": "itc-mul-config.json",
+          "bytes": 1175,
+          "sha256": "b478cb8c0a35a2707b29921178b3d59bb2277c4dd049af14c268391158b5b7bf"
+        }
+      }
+    },
+    {
+      "source": "es",
+      "target": "de",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-itc-deu_eng_fra_por_spa",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-itc-deu_eng_fra_por_spa",
+      "commit": "4bcdcc2580bef62cae46ec574655c22219f3aaf3",
+      "license": "Apache-2.0",
+      "folder": "itc-mul",
+      "prefix": ">>deu<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
+      "files": {
+        "encoder.onnx": {
+          "from": "itc-mul-encoder.onnx",
+          "bytes": 123785150,
+          "sha256": "2da07b2349c17f0f7b9e638440dfcaf5ab1f6e4aba86c62deb46548bbb960627"
+        },
+        "decoder.onnx": {
+          "from": "itc-mul-decoder.onnx",
+          "bytes": 196711186,
+          "sha256": "e54b8cbbd503162cf0c1d9fdfe4bbf35c72065b5c201d9b08b9ffb82e64b5113"
+        },
+        "tokenizer.json": {
+          "from": "itc-mul-tokenizer.json",
+          "bytes": 1440046,
+          "sha256": "b76cef750bd405cab72085c1c5a5129e0a17c5bdd0ebf68638db581e46bef5da"
+        },
+        "config.json": {
+          "from": "itc-mul-config.json",
+          "bytes": 1175,
+          "sha256": "b478cb8c0a35a2707b29921178b3d59bb2277c4dd049af14c268391158b5b7bf"
+        }
+      }
+    },
+    {
+      "source": "it",
+      "target": "de",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-itc-deu_eng_fra_por_spa",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-itc-deu_eng_fra_por_spa",
+      "commit": "4bcdcc2580bef62cae46ec574655c22219f3aaf3",
+      "license": "Apache-2.0",
+      "folder": "itc-mul",
+      "prefix": ">>deu<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
+      "files": {
+        "encoder.onnx": {
+          "from": "itc-mul-encoder.onnx",
+          "bytes": 123785150,
+          "sha256": "2da07b2349c17f0f7b9e638440dfcaf5ab1f6e4aba86c62deb46548bbb960627"
+        },
+        "decoder.onnx": {
+          "from": "itc-mul-decoder.onnx",
+          "bytes": 196711186,
+          "sha256": "e54b8cbbd503162cf0c1d9fdfe4bbf35c72065b5c201d9b08b9ffb82e64b5113"
+        },
+        "tokenizer.json": {
+          "from": "itc-mul-tokenizer.json",
+          "bytes": 1440046,
+          "sha256": "b76cef750bd405cab72085c1c5a5129e0a17c5bdd0ebf68638db581e46bef5da"
+        },
+        "config.json": {
+          "from": "itc-mul-config.json",
+          "bytes": 1175,
+          "sha256": "b478cb8c0a35a2707b29921178b3d59bb2277c4dd049af14c268391158b5b7bf"
+        }
+      }
+    },
+    {
+      "source": "pt",
+      "target": "de",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-itc-deu_eng_fra_por_spa",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-itc-deu_eng_fra_por_spa",
+      "commit": "4bcdcc2580bef62cae46ec574655c22219f3aaf3",
+      "license": "Apache-2.0",
+      "folder": "itc-mul",
+      "prefix": ">>deu<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
+      "files": {
+        "encoder.onnx": {
+          "from": "itc-mul-encoder.onnx",
+          "bytes": 123785150,
+          "sha256": "2da07b2349c17f0f7b9e638440dfcaf5ab1f6e4aba86c62deb46548bbb960627"
+        },
+        "decoder.onnx": {
+          "from": "itc-mul-decoder.onnx",
+          "bytes": 196711186,
+          "sha256": "e54b8cbbd503162cf0c1d9fdfe4bbf35c72065b5c201d9b08b9ffb82e64b5113"
+        },
+        "tokenizer.json": {
+          "from": "itc-mul-tokenizer.json",
+          "bytes": 1440046,
+          "sha256": "b76cef750bd405cab72085c1c5a5129e0a17c5bdd0ebf68638db581e46bef5da"
+        },
+        "config.json": {
+          "from": "itc-mul-config.json",
+          "bytes": 1175,
+          "sha256": "b478cb8c0a35a2707b29921178b3d59bb2277c4dd049af14c268391158b5b7bf"
+        }
+      }
+    },
+    {
+      "source": "it",
+      "target": "fr",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-itc-deu_eng_fra_por_spa",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-itc-deu_eng_fra_por_spa",
+      "commit": "4bcdcc2580bef62cae46ec574655c22219f3aaf3",
+      "license": "Apache-2.0",
+      "folder": "itc-mul",
+      "prefix": ">>fra<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
+      "files": {
+        "encoder.onnx": {
+          "from": "itc-mul-encoder.onnx",
+          "bytes": 123785150,
+          "sha256": "2da07b2349c17f0f7b9e638440dfcaf5ab1f6e4aba86c62deb46548bbb960627"
+        },
+        "decoder.onnx": {
+          "from": "itc-mul-decoder.onnx",
+          "bytes": 196711186,
+          "sha256": "e54b8cbbd503162cf0c1d9fdfe4bbf35c72065b5c201d9b08b9ffb82e64b5113"
+        },
+        "tokenizer.json": {
+          "from": "itc-mul-tokenizer.json",
+          "bytes": 1440046,
+          "sha256": "b76cef750bd405cab72085c1c5a5129e0a17c5bdd0ebf68638db581e46bef5da"
+        },
+        "config.json": {
+          "from": "itc-mul-config.json",
+          "bytes": 1175,
+          "sha256": "b478cb8c0a35a2707b29921178b3d59bb2277c4dd049af14c268391158b5b7bf"
+        }
+      }
+    },
+    {
+      "source": "it",
+      "target": "es",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-itc-deu_eng_fra_por_spa",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-itc-deu_eng_fra_por_spa",
+      "commit": "4bcdcc2580bef62cae46ec574655c22219f3aaf3",
+      "license": "Apache-2.0",
+      "folder": "itc-mul",
+      "prefix": ">>spa<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
+      "files": {
+        "encoder.onnx": {
+          "from": "itc-mul-encoder.onnx",
+          "bytes": 123785150,
+          "sha256": "2da07b2349c17f0f7b9e638440dfcaf5ab1f6e4aba86c62deb46548bbb960627"
+        },
+        "decoder.onnx": {
+          "from": "itc-mul-decoder.onnx",
+          "bytes": 196711186,
+          "sha256": "e54b8cbbd503162cf0c1d9fdfe4bbf35c72065b5c201d9b08b9ffb82e64b5113"
+        },
+        "tokenizer.json": {
+          "from": "itc-mul-tokenizer.json",
+          "bytes": 1440046,
+          "sha256": "b76cef750bd405cab72085c1c5a5129e0a17c5bdd0ebf68638db581e46bef5da"
+        },
+        "config.json": {
+          "from": "itc-mul-config.json",
+          "bytes": 1175,
+          "sha256": "b478cb8c0a35a2707b29921178b3d59bb2277c4dd049af14c268391158b5b7bf"
+        }
+      }
+    },
+    {
+      "source": "it",
+      "target": "pt",
+      "model": "Helsinki-NLP/opus-mt-tc-bible-big-itc-deu_eng_fra_por_spa",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-bible-big-itc-deu_eng_fra_por_spa",
+      "commit": "4bcdcc2580bef62cae46ec574655c22219f3aaf3",
+      "license": "Apache-2.0",
+      "folder": "itc-mul",
+      "prefix": ">>por<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
+      "files": {
+        "encoder.onnx": {
+          "from": "itc-mul-encoder.onnx",
+          "bytes": 123785150,
+          "sha256": "2da07b2349c17f0f7b9e638440dfcaf5ab1f6e4aba86c62deb46548bbb960627"
+        },
+        "decoder.onnx": {
+          "from": "itc-mul-decoder.onnx",
+          "bytes": 196711186,
+          "sha256": "e54b8cbbd503162cf0c1d9fdfe4bbf35c72065b5c201d9b08b9ffb82e64b5113"
+        },
+        "tokenizer.json": {
+          "from": "itc-mul-tokenizer.json",
+          "bytes": 1440046,
+          "sha256": "b76cef750bd405cab72085c1c5a5129e0a17c5bdd0ebf68638db581e46bef5da"
+        },
+        "config.json": {
+          "from": "itc-mul-config.json",
+          "bytes": 1175,
+          "sha256": "b478cb8c0a35a2707b29921178b3d59bb2277c4dd049af14c268391158b5b7bf"
+        }
+      }
+    },
+    {
+      "source": "en",
+      "target": "de",
+      "model": "Helsinki-NLP/opus-mt-tc-big-gmw-gmw",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-big-gmw-gmw",
+      "commit": "b162f23f2a033c84b67fa66903b33231bf835097",
+      "license": "CC-BY-4.0",
+      "folder": "gmw-gmw",
+      "prefix": ">>deu<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
+      "files": {
+        "encoder.onnx": {
+          "from": "gmw-gmw-encoder.onnx",
+          "bytes": 113910718,
+          "sha256": "9c11b4db6108dd2eb95c52606e647ea0b2601a2f69c48e4b6fa44f07665935da"
+        },
+        "decoder.onnx": {
+          "from": "gmw-gmw-decoder.onnx",
+          "bytes": 176865892,
+          "sha256": "4192a3f6c596386c290bebe804cccc02fe0165e2804f0bfc5892b17f25ce9365"
+        },
+        "tokenizer.json": {
+          "from": "gmw-gmw-tokenizer.json",
+          "bytes": 1215363,
+          "sha256": "4c60a8e17dc342a7393678b2a21b3b440ceb228727108688843e63ef08819085"
+        },
+        "config.json": {
+          "from": "gmw-gmw-config.json",
+          "bytes": 1207,
+          "sha256": "c887cc308b6b2d115041aeda0b01c6efdda0d95a659c70d638b6b704f4850151"
+        }
+      }
+    },
+    {
+      "source": "de",
+      "target": "en",
+      "model": "Helsinki-NLP/opus-mt-tc-big-gmw-gmw",
+      "repository": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-big-gmw-gmw",
+      "commit": "b162f23f2a033c84b67fa66903b33231bf835097",
+      "license": "CC-BY-4.0",
+      "folder": "gmw-gmw",
+      "prefix": ">>eng<<",
+      "url": "https://github.com/kuyamcliff/pageweave/releases/download/translate-models-1",
+      "files": {
+        "encoder.onnx": {
+          "from": "gmw-gmw-encoder.onnx",
+          "bytes": 113910718,
+          "sha256": "9c11b4db6108dd2eb95c52606e647ea0b2601a2f69c48e4b6fa44f07665935da"
+        },
+        "decoder.onnx": {
+          "from": "gmw-gmw-decoder.onnx",
+          "bytes": 176865892,
+          "sha256": "4192a3f6c596386c290bebe804cccc02fe0165e2804f0bfc5892b17f25ce9365"
+        },
+        "tokenizer.json": {
+          "from": "gmw-gmw-tokenizer.json",
+          "bytes": 1215363,
+          "sha256": "4c60a8e17dc342a7393678b2a21b3b440ceb228727108688843e63ef08819085"
+        },
+        "config.json": {
+          "from": "gmw-gmw-config.json",
+          "bytes": 1207,
+          "sha256": "c887cc308b6b2d115041aeda0b01c6efdda0d95a659c70d638b6b704f4850151"
         }
       }
     }

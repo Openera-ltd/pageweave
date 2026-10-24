@@ -339,6 +339,7 @@ export type Operation =
   | { op: "convert_to_docx"; input: string; pages: string | null; output: string }
   | { op: "install_translation"; source: string; target: string }
   | { op: "download_update"; version: string }
+  | { op: "install_office" }
   | { op: "translate_document"; input: string; pages: string | null; source: string | null; target: string; output: string }
   | { op: "read_aloud_to_wav"; input: string; pages: string | null; voice: string | null; rate: number; output: string }
   | { op: "convert_to_pptx"; input: string; pages: string | null; output: string }
@@ -471,6 +472,13 @@ export interface JobSnapshot {
   error: PwError | null;
   warnings: string[];
   elapsed_ms: number;
+}
+
+export interface OfficePackage {
+  version: string;
+  bytes: number;
+  /** PageWeave can download and unpack it (Windows). */
+  can_install: boolean;
 }
 
 export interface UpdateInfo {

@@ -114,6 +114,44 @@ pub struct Paragraph {
     /// Where each character of the runs' text is on the page, in order (read-aloud highlighting).
     /// Spaces joining lines take the position of the character before them.
     pub boxes: Vec<Rect>,
+    /// Where the lines sit on the page (paragraphs read from a page; `None` for made-up ones), for
+    /// writing new text in their place (translation into a PDF).
+    pub frame: Option<Frame>,
+    /// Each line's baseline, top to bottom (paragraphs read from a page).
+    pub line_baselines: Vec<f32>,
+    /// Drawn around it on the page: a shaded box, its coloured left bar, a line below.
+    pub deco: Deco,
+}
+
+/// Colours drawn with a paragraph (Word: shading and borders).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Deco {
+    pub shade: Option<[u8; 3]>,
+    pub left_bar: Option<([u8; 3], f32)>,
+    pub rule_below: Option<([u8; 3], f32)>,
+}
+
+/// A filled rectangle or a drawn horizontal line on the page, with its colour.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Paint {
+    pub rect: Rect,
+    pub color: [u8; 3],
+    /// A stroked line (`rect` is the line with its width).
+    pub line: bool,
+}
+
+/// The space a paragraph's lines take on the page.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Frame {
+    /// First line's baseline.
+    pub baseline: f32,
+    /// The column (or table cell) the lines may use.
+    pub left: f32,
+    pub right: f32,
+    /// How many lines it had.
+    pub lines: usize,
+    /// Lowest point new lines may reach (a table cell's bottom), when known.
+    pub bottom_limit: Option<f32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -150,6 +188,12 @@ pub struct TableCell {
     pub row_span: usize,
     pub col_span: usize,
     pub paragraphs: Vec<Paragraph>,
+    /// Background colour.
+    pub fill: Option<[u8; 3]>,
+    /// Edges drawn without a line: [above, below] (the gaps between framed boxes).
+    pub open: [bool; 2],
+    /// Text centred between the cell's top and bottom.
+    pub middle: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -161,6 +205,8 @@ pub struct TableItem {
     pub cells: Vec<TableCell>,
     /// Where it is on the page (for slide export).
     pub rect: Rect,
+    /// Colour of its lines, when drawn in one colour.
+    pub border: Option<[u8; 3]>,
 }
 
 /// Inner space between a cell's lines and its text, points.
@@ -631,7 +677,29 @@ fn make_paragraph(
     (
         {
             let (runs, boxes) = runs_of(p);
-            Paragraph { runs, align, indent, first_line, space_before: 0.0, pitch, heading, tabs, rect, boxes }
+            let frame = Some(Frame {
+                baseline: p[0].baseline,
+                left: col_left,
+                right: col_right,
+                lines: p.len(),
+                bottom_limit: None,
+            });
+            let line_baselines = p.iter().map(|l| l.baseline).collect();
+            Paragraph {
+                runs,
+                align,
+                indent,
+                first_line,
+                space_before: 0.0,
+                pitch,
+                heading,
+                tabs,
+                rect,
+                boxes,
+                frame,
+                line_baselines,
+                deco: Deco::default(),
+            }
         },
         top,
         bottom,
@@ -650,24 +718,54 @@ fn table_item(t: &Table, cell_glyphs: Vec<Vec<Glyph>>, body: f32) -> TableItem {
             let (c0, c1) = (t.xs[c.col] + CELL_PAD, t.xs[c.col + c.col_span] - CELL_PAD);
             let mut lines = build_lines(&glyphs);
             lines.sort_by(|a, b| b.baseline.total_cmp(&a.baseline));
+            let middle = match (lines.first(), lines.last()) {
+                (Some(f), Some(l)) => {
+                    let (above, below) = (t.ys[c.row] - f.rect.top, l.rect.bottom - t.ys[c.row + c.row_span]);
+                    let h = t.ys[c.row] - t.ys[c.row + c.row_span];
+                    above > 4.0 && below > 4.0 && (above - below).abs() < 0.2 * h
+                }
+                _ => false,
+            };
             let mut paragraphs_out = Vec::new();
             let mut prev_base: Option<f32> = None;
+            let cell_bottom = t.ys[c.row + c.row_span] + CELL_PAD;
             for p in paragraphs(join_pieces(lines), c0, c1) {
                 let (mut par, _, _) = make_paragraph(&p, c0, c1, body, &[]);
+                if let Some(f) = par.frame.as_mut() {
+                    f.bottom_limit = Some(cell_bottom);
+                }
                 if let Some(b) = prev_base {
                     par.space_before = (b - p[0].baseline - par.pitch).max(0.0);
                 }
                 prev_base = p.last().map(|l| l.baseline);
                 paragraphs_out.push(par);
             }
-            TableCell { row: c.row, col: c.col, row_span: c.row_span, col_span: c.col_span, paragraphs: paragraphs_out }
+            TableCell {
+                row: c.row,
+                col: c.col,
+                row_span: c.row_span,
+                col_span: c.col_span,
+                paragraphs: paragraphs_out,
+                fill: None,
+                open: c.open,
+                middle,
+            }
         })
         .collect();
+    // Centred only when the whole row is (a one-line cell next to a two-line one is not).
+    let mut cells: Vec<TableCell> = cells;
+    for r in 0..heights.len() {
+        let all = cells.iter().filter(|c| c.row == r && !c.paragraphs.is_empty()).all(|c| c.middle);
+        if !all {
+            cells.iter_mut().filter(|c| c.row == r).for_each(|c| c.middle = false);
+        }
+    }
     TableItem {
         widths,
         heights,
         cells,
         rect: Rect { left: t.left(), bottom: t.bottom(), right: t.right(), top: t.top() },
+        border: None,
     }
 }
 

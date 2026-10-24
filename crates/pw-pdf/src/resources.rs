@@ -143,7 +143,8 @@ fn text_recognition() -> PwResult<Capability> {
     ))
 }
 
-/// Opening Office documents: LibreOffice installed on this computer (not bundled, D-019).
+/// Opening Office documents: LibreOffice — PageWeave's own copy (full download, or downloaded from
+/// here; D-026) or one installed on this computer (D-019).
 fn office_documents() -> Capability {
     match crate::office::find_office() {
         Some(e) => Capability {
@@ -160,7 +161,11 @@ fn office_documents() -> Capability {
             id: "office_documents".into(),
             title: "Office documents (optional)".into(),
             state: ResourceState::Missing,
-            detail: "To open Word, Excel and PowerPoint files, install LibreOffice (free). Everything else works without it.".into(),
+            detail: if cfg!(windows) {
+                "To open Word, Excel and PowerPoint files, download LibreOffice (free) once. Everything else works without it.".into()
+            } else {
+                "To open Word, Excel and PowerPoint files, install LibreOffice (free) with your package manager. Everything else works without it.".into()
+            },
             bytes: 0,
             location: None,
             files: vec![],

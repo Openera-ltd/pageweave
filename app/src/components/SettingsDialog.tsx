@@ -6,6 +6,7 @@ import { eventToShortcut, validateShortcut } from "../shortcuts";
 import { toPwError, type AvailableUpdate, type Density, type Motion, type PwError, type ResourceReport, type Settings, type Theme } from "../types";
 import { Dialog } from "./ui";
 import { UpdatesPanel } from "./UpdatesPanel";
+import { OfficeDownload } from "./OfficeDialog";
 
 export const ACCENTS = ["#2f6fde", "#0f7b8a", "#1c7c3d", "#7a4ddb", "#c2410c", "#b42318", "#4b5563"];
 
@@ -315,6 +316,7 @@ function ResourcesPanel() {
               {c.bytes > 0 && <span className="hint">{formatBytes(c.bytes)}</span>}
             </div>
             <div className="hint">{c.detail}</div>
+            {c.id === "office_documents" && c.state !== "ready" && <OfficeDownload onDone={check} />}
           </li>
         ))}
       </ul>

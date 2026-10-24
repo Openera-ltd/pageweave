@@ -259,6 +259,21 @@ async fn office_engine() -> CmdResult<Option<String>> {
     blocking(|| Ok(pw_pdf::office::find_office().map(|e| e.version))).await
 }
 
+#[derive(Serialize)]
+pub struct OfficePackageInfo {
+    version: String,
+    bytes: u64,
+    /// PageWeave can download and unpack it here (Windows).
+    can_install: bool,
+}
+
+/// The LibreOffice package PageWeave downloads when Office files should open.
+#[tauri::command]
+fn office_package() -> CmdResult<OfficePackageInfo> {
+    let p = pw_pdf::office::office_package()?;
+    Ok(OfficePackageInfo { version: p.version, bytes: p.bytes, can_install: cfg!(windows) })
+}
+
 /// Installed resources checked against their pinned checksums (read-only; reads ~60 MB once).
 #[tauri::command]
 async fn resource_status() -> CmdResult<pw_pdf::resources::ResourceReport> {
@@ -693,6 +708,8 @@ pub fn run() {
             app.manage(state);
             // Installers left from an update that has finished are removed.
             std::thread::spawn(|| pw_update::clean(env!("CARGO_PKG_VERSION")));
+            // Translation models of earlier versions that no direction uses any more.
+            std::thread::spawn(pw_translate::install::prune);
             // The main window is created here (config has `create: false`) so WebView2 arguments
             // can be supplied; everything else comes from tauri.conf.json.
             let config = app
@@ -721,6 +738,7 @@ pub fn run() {
             install_update,
             open_releases_page,
             office_engine,
+            office_package,
             speech_info,
             translation_directions,
             detect_language,

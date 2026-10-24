@@ -141,3 +141,36 @@ fn bad_requests_are_refused() {
     assert_eq!(err.category, pw_core::ErrorCategory::InvalidInput);
     assert_eq!(std::fs::read_dir(dir.path()).expect("ok").count(), 0);
 }
+
+#[test]
+fn text_inside_pictures_is_recognised_on_pages_with_text() {
+    if !have_resources() {
+        return;
+    }
+    let src = fixture("text-with-picture.pdf");
+    let dir = tempfile::tempdir().expect("ok");
+    let out = dir.path().join("o.pdf");
+    let r = execute(
+        &OperationRequest::new(Operation::OcrPages {
+            input: src.clone(),
+            pages: None,
+            skip_text_pages: true,
+            dpi: 300,
+            output: out.clone(),
+        }),
+        None,
+    )
+    .expect("ocr");
+    assert_eq!(r.data["pages_with_pictures_recognized"], 1, "{}", r.data);
+    assert!(r.warnings.iter().any(|w| w.contains("Text inside pictures")), "{:?}", r.warnings);
+    let before = page_text(&src, 0);
+    let after = page_text(&out, 0);
+    // The page's own text is there once (not recognised again on top of itself)…
+    assert!(before.contains("PWMIXED"));
+    assert_eq!(after.matches("PWMIXED").count(), 1, "{after}");
+    // …and the invoice in the picture is now text.
+    let got = words(&after);
+    for w in ["invoice", "description"] {
+        assert!(got.iter().any(|g| g == w), "{w} recognised in the picture: {after}");
+    }
+}

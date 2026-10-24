@@ -52,8 +52,14 @@ TURNED = [
 ]
 
 
+# A born-digital page with a picture of a scanned invoice under its text (OCR of pictures on pages
+# that already have text).
+MIXED = [("mixed", 2)]
+
+
 def main() -> int:
     fonts = corpus.load_fonts()
+    build(fonts, MIXED, "text-with-picture.pdf", None)
     build(fonts, PAGES, "scanned.pdf", "scanned.truth.json")
     build(fonts, SKEWED, "skewed-scan.pdf", None)
     build(fonts, TURNED, "turned-scan.pdf", None)
@@ -76,6 +82,20 @@ def build(fonts, pages, name: str, truth_name: str | None) -> None:
             content = b"BT /F1 12 Tf 72 720 Td (A born-digital page with its own text PWDIGITAL. It is never turned.) Tj ET"
             c = add(b"<< /Length %d >>\nstream\n" % len(content) + content + b"\nendstream")
             kids.append(add(b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 %d 0 R >> >> /Contents %d 0 R >>" % (pages_obj, font, c)))
+            continue
+        if spec[0] == "mixed":
+            rendered, gt = corpus.render_page(corpus.SPLITS["val"] + spec[1], fonts, "val")
+            img = rendered.image.convert("L")
+            w, h = img.size
+            data = zlib.compress(img.tobytes(), 9)
+            im = add(b"<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode /Length %d >>\nstream\n" % (w, h, len(data)) + data + b"\nendstream")
+            font = add(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+            # The picture at half size in the lower part of a Letter page; text above it.
+            pw, ph = w * 72 / corpus.DPI / 2, h * 72 / corpus.DPI / 2
+            content = (b"BT /F1 12 Tf 72 740 Td (Born-digital text above a picture PWMIXED. The picture below shows an invoice.) Tj ET "
+                       b"q %.4f 0 0 %.4f 72 60 cm /Im0 Do Q" % (pw, ph))
+            c = add(b"<< /Length %d >>\nstream\n" % len(content) + content + b"\nendstream")
+            kids.append(add(b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 %d 0 R >> /XObject << /Im0 %d 0 R >> >> /Contents %d 0 R >>" % (pages_obj, font, im, c)))
             continue
         idx, rot, keep_rotate = (*spec, True) if len(spec) == 2 else spec
         rendered, gt = corpus.render_page(corpus.SPLITS["val"] + idx, fonts, "val")

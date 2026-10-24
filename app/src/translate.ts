@@ -3,7 +3,7 @@
 
 import type { TranslationDirection } from "./types";
 
-export const LANGUAGE_NAMES: Record<string, string> = { en: "English", de: "German", fr: "French", es: "Spanish", it: "Italian" };
+export const LANGUAGE_NAMES: Record<string, string> = { en: "English", de: "German", fr: "French", es: "Spanish", it: "Italian", pt: "Portuguese" };
 
 export const languageName = (code: string): string => LANGUAGE_NAMES[code] ?? code;
 

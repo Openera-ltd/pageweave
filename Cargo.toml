@@ -34,11 +34,12 @@ ring = "0.17.14"
 # RSA verification is done locally with a big-integer modpow (public operations only): the rsa
 # crate carries RUSTSEC-2023-0071 (D-011).
 num-bigint = { version = "0.4", default-features = false, features = ["std"] }
-p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
-p384 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+p256 = { version = "0.14", default-features = false, features = ["ecdsa", "std"] }
+p384 = { version = "0.14", default-features = false, features = ["ecdsa", "std"] }
 sha1 = "0.10"
 # Myers diff for document comparison (Apache-2.0, no dependencies).
 similar = { version = "2", default-features = false }
+unicode-normalization = "0.1.25"
 # XFDF form data reading (MIT; already in the dependency graph via Tauri). No DTD or entity expansion.
 quick-xml = "=0.42.0"
 # Word (.docx) packages: writing and verifying them (MIT). Deflate only, no other codecs or encryption.

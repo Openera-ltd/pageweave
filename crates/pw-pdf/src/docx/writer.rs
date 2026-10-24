@@ -200,6 +200,32 @@ impl Ctx<'_> {
             let _ = write!(self.body, "<w:pStyle w:val=\"Heading{h}\"/>");
         }
         self.body.push_str("<w:widowControl w:val=\"0\"/>");
+        // Borders (a box's coloured bar, a line below) and shading, in schema order.
+        let hex = |c: [u8; 3]| format!("{:02X}{:02X}{:02X}", c[0], c[1], c[2]);
+        let eighths = |w: f32| ((w * 8.0).round() as i64).clamp(2, 96);
+        if p.deco.left_bar.is_some() || p.deco.rule_below.is_some() {
+            self.body.push_str("<w:pBdr>");
+            if let Some((c, w)) = p.deco.left_bar {
+                let _ = write!(
+                    self.body,
+                    "<w:left w:val=\"single\" w:sz=\"{}\" w:space=\"6\" w:color=\"{}\"/>",
+                    eighths(w),
+                    hex(c)
+                );
+            }
+            if let Some((c, w)) = p.deco.rule_below {
+                let _ = write!(
+                    self.body,
+                    "<w:bottom w:val=\"single\" w:sz=\"{}\" w:space=\"4\" w:color=\"{}\"/>",
+                    eighths(w),
+                    hex(c)
+                );
+            }
+            self.body.push_str("</w:pBdr>");
+        }
+        if let Some(c) = p.deco.shade {
+            let _ = write!(self.body, "<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"{}\"/>", hex(c));
+        }
         if !p.tabs.is_empty() {
             self.body.push_str("<w:tabs>");
             for t in &p.tabs {
@@ -276,7 +302,9 @@ impl Ctx<'_> {
         // The gap above (and any column break) goes in a spacer paragraph: tables have no spacing.
         self.spacer(space_before, prefix, None);
         let total: f32 = t.widths.iter().sum();
-        let border = "w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"";
+        let color =
+            t.border.map(|c| format!("{:02X}{:02X}{:02X}", c[0], c[1], c[2])).unwrap_or_else(|| "000000".into());
+        let border = format!("w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"{color}\"");
         let _ = write!(
             self.body,
             "<w:tbl><w:tblPr><w:tblW w:w=\"{}\" w:type=\"dxa\"/><w:tblInd w:w=\"{}\" w:type=\"dxa\"/>\
@@ -322,6 +350,26 @@ impl Ctx<'_> {
                 let first_row = cell.row == r;
                 if cell.row_span > 1 {
                     self.body.push_str(if first_row { "<w:vMerge w:val=\"restart\"/>" } else { "<w:vMerge/>" });
+                }
+                if cell.open.contains(&true) {
+                    self.body.push_str("<w:tcBorders>");
+                    if cell.open[0] {
+                        self.body.push_str("<w:top w:val=\"nil\"/>");
+                    }
+                    if cell.open[1] {
+                        self.body.push_str("<w:bottom w:val=\"nil\"/>");
+                    }
+                    self.body.push_str("</w:tcBorders>");
+                }
+                if let Some(c) = cell.fill {
+                    let _ = write!(
+                        self.body,
+                        "<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"{:02X}{:02X}{:02X}\"/>",
+                        c[0], c[1], c[2]
+                    );
+                }
+                if cell.middle {
+                    self.body.push_str("<w:vAlign w:val=\"center\"/>");
                 }
                 self.body.push_str("</w:tcPr>");
                 if first_row && !cell.paragraphs.is_empty() {

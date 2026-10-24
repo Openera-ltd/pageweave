@@ -52,6 +52,7 @@ export type CommandId =
   | "view.actualSize"
   | "view.fitWidth"
   | "view.toggleThumbnails"
+  | "view.toggleTools"
   | "view.showBookmarks"
   | "view.showSignatures"
   | "nav.nextPage"
@@ -91,6 +92,7 @@ export type CommandId =
   | "app.settings"
   | "app.shortcuts"
   | "app.commandPalette"
+  | "app.updates"
   | "app.openLogs";
 
 export interface CommandSpec {
@@ -152,6 +154,7 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "view.actualSize", label: "Actual size (100%)", category: "View", shortcuts: ["Ctrl+0"] },
   { id: "view.fitWidth", label: "Fit width", category: "View", shortcuts: ["Ctrl+2"] },
   { id: "view.toggleThumbnails", label: "Show or hide page thumbnails", category: "View", shortcuts: ["Ctrl+B"] },
+  { id: "view.toggleTools", label: "Show or hide all tools", category: "View", shortcuts: ["Ctrl+Shift+T"] },
   { id: "view.showBookmarks", label: "Show bookmarks", category: "View", shortcuts: ["Ctrl+Shift+B"] },
   { id: "view.showSignatures", label: "Show signatures", category: "View", shortcuts: [] },
   { id: "nav.nextPage", label: "Next page", category: "Navigate", shortcuts: ["Ctrl+PageDown"] },
@@ -188,7 +191,8 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "pages.ocr", label: "Recognize text (OCR)…", category: "Pages", shortcuts: [] },
   { id: "pages.watermark", label: "Watermark…", category: "Pages", shortcuts: [] },
   { id: "pages.crop", label: "Crop pages…", category: "Pages", shortcuts: [] },
-  { id: "app.settings", label: "Settings", category: "App", shortcuts: ["Ctrl+,"] },
+  { id: "app.settings", label: "Preferences", category: "App", shortcuts: ["Ctrl+,"] },
+  { id: "app.updates", label: "Check for updates", category: "App", shortcuts: [] },
   { id: "app.shortcuts", label: "Keyboard shortcuts", category: "App", shortcuts: [] },
   { id: "app.commandPalette", label: "Command palette", category: "App", shortcuts: ["Ctrl+K", "Ctrl+Shift+P"], allowInInput: true },
   { id: "app.openLogs", label: "Show log folder", category: "App", shortcuts: [] },

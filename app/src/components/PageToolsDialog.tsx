@@ -168,7 +168,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   // Translate: languages (source null = detect), output format, and the installed directions.
   const [trFrom, setTrFrom] = useState<string | null>(null);
   const [trTo, setTrTo] = useState("en");
-  const [trFormat, setTrFormat] = useState<"docx" | "txt">("docx");
+  const [trFormat, setTrFormat] = useState<"pdf" | "docx" | "txt">("pdf");
   const [trDirs, setTrDirs] = useState<TranslationDirection[] | null>(null);
   const [trDirsError, setTrDirsError] = useState<string | null>(null);
   const [trDetected, setTrDetected] = useState<string | null | undefined>(undefined);
@@ -227,7 +227,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
           : tool === "audio"
             ? join(dirname(doc.path), `${stem(doc.path)}.wav`)
           : tool === "translate"
-            ? join(dirname(doc.path), `${stem(doc.path)}-en.docx`)
+            ? join(dirname(doc.path), `${stem(doc.path)}-en.pdf`)
           : tool === "tables"
             ? join(dirname(doc.path), `${stem(doc.path)}.xlsx`)
             : siblingOutput(doc.path, suffix),
@@ -430,7 +430,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
       if (p) setOutput(/\.pptx$/i.test(p) ? p : `${p}.pptx`);
     } else if (tool === "translate") {
       const p = await api.pickSaveAnyPath(output);
-      const ext = trFormat === "docx" ? ".docx" : ".txt";
+      const ext = `.${trFormat}`;
       if (p) setOutput(p.toLowerCase().endsWith(ext) ? p : `${p}${ext}`);
     } else if (tool === "audio") {
       const p = await api.pickSaveAnyPath(output);
@@ -722,6 +722,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
             <div className="segmented" role="radiogroup" aria-labelledby="translate-format-label">
               {(
                 [
+                  ["pdf", "PDF (same layout)"],
                   ["docx", "Word document"],
                   ["txt", "Text"],
                 ] as const
