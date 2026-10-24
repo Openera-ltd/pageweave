@@ -19,6 +19,17 @@ export function clampZoom(z: number): number {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
 }
 
+/**
+ * Zoom after one wheel event with Ctrl held (or a trackpad pinch, which arrives as such):
+ * continuous, proportional to how far the wheel turned, at most ×2 or ÷2 per event.
+ * `deltaMode` 1 counts lines (about 40 px), 2 pages.
+ */
+export function wheelZoom(current: number, deltaY: number, deltaMode = 0): number {
+  const px = deltaMode === 1 ? deltaY * 40 : deltaMode === 2 ? deltaY * 800 : deltaY;
+  const factor = Math.min(2, Math.max(0.5, Math.exp(-px * 0.002)));
+  return clampZoom(current * factor);
+}
+
 export function nextZoom(current: number, direction: 1 | -1): number {
   if (direction > 0) {
     return clampZoom(ZOOM_PRESETS.find((p) => p > current + 1e-6) ?? MAX_ZOOM);

@@ -17,7 +17,7 @@ if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && command -v dbus-run-session >/dev/n
   tauri-driver --port 4444 > "'"$ART"'/tauri-driver.log" 2>&1 &
   DRIVER=$!
   for i in $(seq 1 50); do curl -sf http://127.0.0.1:4444/status >/dev/null && break; sleep 0.2; done
-  timeout 1800 node e2e/run.mjs "'"$APP"'" "'"$ART"'"; code=$?
+  timeout 1800 node "'"${E2E_SCRIPT:-e2e/run.mjs}"'" "'"$APP"'" "'"$ART"'" '"${E2E_ARGS:-}"'; code=$?
   [ "$code" = 124 ] && echo "E2E suite exceeded 30 minutes and was stopped" >&2
   kill $DRIVER 2>/dev/null || true
   exit $code

@@ -5,7 +5,7 @@ import type { ObjEntry } from "../objectEdits";
 import { EditLayer } from "./EditLayer";
 import { KIND_LABEL, type PendingAnnotation } from "../annotations";
 import { currentValue, fieldLabel, isFillable, type FormEdits } from "../forms";
-import { CSS_PX_PER_PT, displaySizePt, displaySizePx, mostVisiblePage, pageOrigin, pdfRectToScreen, renderScalePermille, screenRectToPdf, unrotatedLayer } from "../geometry";
+import { CSS_PX_PER_PT, displaySizePt, displaySizePx, mostVisiblePage, pageOrigin, pdfRectToScreen, renderScalePermille, screenRectToPdf, unrotatedLayer, wheelZoom } from "../geometry";
 import type { FormField, FormInfo, FormValue, FormWidget, OpenedDoc, PageInfo, PageText, SearchHit, SearchRect } from "../types";
 
 export interface ScrollRequest {
@@ -20,6 +20,8 @@ interface ViewerProps {
   doc: OpenedDoc;
   zoom: number;
   onZoomStep: (direction: 1 | -1, anchor?: { x: number; y: number }) => void;
+  /** Ctrl + wheel or a pinch: zoom to `zoom`, keeping the page point under the pointer still. */
+  onZoomTo?: (zoom: number) => void;
   onCurrentPage: (page: number) => void;
   scrollRequest: ScrollRequest | null;
   hits: SearchHit[];
@@ -64,7 +66,7 @@ interface PageWidget {
 }
 let firstPageReported = false;
 
-export function Viewer({ doc, zoom, onZoomStep, onCurrentPage, scrollRequest, hits, currentHit, reading, onReadingInterrupted, onPageContextMenu, annotations, form, formEdits, onFormEdit, onMeasured, markMode, onMarkArea, edit }: ViewerProps) {
+export function Viewer({ doc, zoom, onZoomStep, onZoomTo, onCurrentPage, scrollRequest, hits, currentHit, reading, onReadingInterrupted, onPageContextMenu, annotations, form, formEdits, onFormEdit, onMeasured, markMode, onMarkArea, edit }: ViewerProps) {
   const ref = useRef<HTMLDivElement>(null);
   // Per-page lists with stable identity, so adding an annotation re-renders only its page.
   const byPage = useMemo(() => {
@@ -89,15 +91,25 @@ export function Viewer({ doc, zoom, onZoomStep, onCurrentPage, scrollRequest, hi
   const zoomRef = useRef(zoom);
   const pages = doc.info.pages;
 
-  // Keep the reading position stable across zoom changes (proportional scroll).
+  // Where a wheel zoom was aimed (viewport offsets), so that point stays still.
+  const anchorRef = useRef<{ x: number; y: number } | null>(null);
+  // Keep the reading position stable across zoom changes (proportional scroll, or around the
+  // pointer for a wheel zoom).
   useLayoutEffect(() => {
     const el = ref.current;
     const prev = zoomRef.current;
     zoomRef.current = zoom;
+    const a = anchorRef.current;
+    anchorRef.current = null;
     if (!el || prev === zoom) return;
     const ratio = zoom / prev;
-    el.scrollTop = el.scrollTop * ratio;
-    el.scrollLeft = el.scrollLeft * ratio;
+    if (a) {
+      el.scrollTop = (el.scrollTop + a.y) * ratio - a.y;
+      el.scrollLeft = (el.scrollLeft + a.x) * ratio - a.x;
+    } else {
+      el.scrollTop = el.scrollTop * ratio;
+      el.scrollLeft = el.scrollLeft * ratio;
+    }
   }, [zoom]);
 
   const reportVisible = useCallback(() => {
@@ -129,18 +141,41 @@ export function Viewer({ doc, zoom, onZoomStep, onCurrentPage, scrollRequest, hi
     };
   }, [reportVisible, doc.doc_id]);
 
-  // Ctrl + wheel zooms; plain wheel scrolls natively.
+  // Ctrl + wheel (and a trackpad pinch, which arrives as one) zooms smoothly around the pointer,
+  // at most once per frame; plain wheel scrolls natively.
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
+    let frame = 0;
+    let target: number | null = null;
+    let at: { x: number; y: number } | null = null;
     const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey) return;
+      if (!e.ctrlKey && !e.metaKey) return;
       e.preventDefault();
-      onZoomStep(e.deltaY < 0 ? 1 : -1, { x: e.clientX, y: e.clientY });
+      if (!onZoomTo) {
+        onZoomStep(e.deltaY < 0 ? 1 : -1, { x: e.clientX, y: e.clientY });
+        return;
+      }
+      const r = el.getBoundingClientRect();
+      at = { x: e.clientX - r.left, y: e.clientY - r.top };
+      target = wheelZoom(target ?? zoomRef.current, e.deltaY, e.deltaMode);
+      if (!frame) {
+        frame = requestAnimationFrame(() => {
+          frame = 0;
+          if (target !== null && Math.abs(target - zoomRef.current) > 1e-4) {
+            anchorRef.current = at;
+            onZoomTo(target);
+          }
+          target = null;
+        });
+      }
     };
     el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, [onZoomStep]);
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      cancelAnimationFrame(frame);
+    };
+  }, [onZoomStep, onZoomTo]);
 
   useEffect(() => {
     const el = ref.current;

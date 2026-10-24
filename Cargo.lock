@@ -3840,6 +3840,7 @@ dependencies = [
  "parking_lot",
  "pdfium-render",
  "pw-core",
+ "pw-net",
  "pw-ocr",
  "pw-speech",
  "pw-translate",

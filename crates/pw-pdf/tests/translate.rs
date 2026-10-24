@@ -76,10 +76,53 @@ fn refusals_write_nothing() {
     assert_eq!(translate("five-pages.pdf", None, Some("en"), "en", &out).expect_err("same").code, "translate.same");
     assert_eq!(translate("five-pages.pdf", None, Some("en"), "ja", &out).expect_err("dir").code, "translate.direction");
     assert_eq!(
-        translate("five-pages.pdf", None, None, "de", &dir.path().join("x.pdf")).expect_err("ext").code,
+        translate("five-pages.pdf", None, None, "de", &dir.path().join("x.odt")).expect_err("ext").code,
         "translate.extension"
     );
     let e = translate("encrypted-rc4-user-password.pdf", None, None, "de", &out).expect_err("pw");
     assert_eq!(e.category, ErrorCategory::PasswordRequired);
     assert!(!out.exists());
+}
+
+/// Path drawing operators of a page (lines, rectangles, fills, strokes), counted with lopdf.
+fn drawing_ops(doc: &lopdf::Document, page: u32) -> usize {
+    let id = doc.get_pages()[&page];
+    let content = doc.get_and_decode_page_content(id).expect("content");
+    content
+        .operations
+        .iter()
+        .filter(|o| matches!(o.operator.as_str(), "re" | "m" | "l" | "c" | "f" | "f*" | "S" | "B" | "b"))
+        .count()
+}
+
+#[test]
+fn pdf_output_keeps_the_layout_and_replaces_the_text() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("t.pdf");
+    let r = translate("tables.pdf", None, Some("en"), "fr", &out).expect("translate");
+    let src = lopdf::Document::load(fixture("tables.pdf")).expect("source");
+    let doc = lopdf::Document::load(&out).expect("lopdf parses the translation");
+    assert_eq!(doc.get_pages().len(), src.get_pages().len());
+    // Drawings (the tables' rules and fills) are exactly as they were.
+    for p in src.get_pages().keys() {
+        assert_eq!(drawing_ops(&doc, *p), drawing_ops(&src, *p), "page {p} drawings");
+    }
+    let text = doc.extract_text(&[1]).expect("text");
+    for v in ["007", "2026-03-12", "PWTABLES"] {
+        assert!(text.contains(v), "{v} kept: {text}");
+    }
+    assert!(text.contains("trimestre"), "French text: {text}");
+    let before = src.extract_text(&[1]).expect("text");
+    assert!(before.contains("quarter") && !text.contains("quarter"), "English text replaced");
+    assert!(r.warnings.iter().any(|w| w.contains("Machine translation from English to French")));
+
+    // Columns stay columns: the first page's two halves keep their text apart.
+    let out2 = dir.path().join("a.pdf");
+    translate("article.pdf", Some("1"), Some("en"), "de", &out2).expect("article");
+    let doc = lopdf::Document::load(&out2).expect("parse");
+    let t = doc.extract_text(&[1]).expect("text");
+    assert!(t.contains("PWARTICLE"), "name kept: {t}");
+    // Page 2 was not asked for: unchanged.
+    let src = lopdf::Document::load(fixture("article.pdf")).expect("src");
+    assert_eq!(doc.extract_text(&[2]).expect("p2"), src.extract_text(&[2]).expect("p2"));
 }

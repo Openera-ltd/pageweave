@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "component": "office",
+  "decision": "D-026",
+  "product": "LibreOffice",
+  "version": "26.2.6",
+  "license": "MPL-2.0 (LibreOffice by The Document Foundation; https://www.libreoffice.org/about-us/licenses/)",
+  "note": "Official Windows x64 installer, verified against the SHA-256 The Document Foundation publishes; unpacked with msiexec /a (an administrative image: files only, nothing registered, no administrator rights).",
+  "windows_x64": {
+    "url": "https://download.documentfoundation.org/libreoffice/stable/26.2.6/win/x86_64/LibreOffice_26.2.6_Win_x86-64.msi",
+    "sha256": "f9877032fd908beb9c0ddf06df4af5c2e85f419c42e14876c4cce5aae5fb2660",
+    "bytes": 373252096
+  }
+}

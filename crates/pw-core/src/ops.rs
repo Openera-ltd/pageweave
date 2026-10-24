@@ -702,6 +702,9 @@ pub enum Operation {
     DownloadUpdate {
         version: String,
     },
+    /// Download the pinned LibreOffice package and unpack it into the user's data folder, so Word,
+    /// Excel and PowerPoint files open (Windows; decision D-026). Writes no document.
+    InstallOffice,
     /// Translate pages (all when `pages` is absent) with the local translation models into a Word
     /// document (`output` .docx, layout kept) or a text file (.txt). `source` is detected when
     /// absent; language codes are BCP 47 ("en", "de", …).
@@ -1021,6 +1024,7 @@ pub const OPERATION_IDS: &[&str] = &[
     "translate_document",
     "install_translation",
     "download_update",
+    "install_office",
     "convert_office_to_pdf",
     "export_tables",
     "optimize",
@@ -1084,6 +1088,7 @@ impl Operation {
             Operation::TranslateDocument { .. } => "translate_document",
             Operation::InstallTranslation { .. } => "install_translation",
             Operation::DownloadUpdate { .. } => "download_update",
+            Operation::InstallOffice => "install_office",
             Operation::ConvertOfficeToPdf { .. } => "convert_office_to_pdf",
             Operation::ExportTables { .. } => "export_tables",
             Operation::Optimize { .. } => "optimize",
@@ -1127,13 +1132,16 @@ impl Operation {
                 | Operation::ListPageObjects { .. }
                 | Operation::InstallTranslation { .. }
                 | Operation::DownloadUpdate { .. }
+                | Operation::InstallOffice
         )
     }
 
     /// All input paths, used to protect sources from being overwritten.
     pub fn inputs(&self) -> Vec<PathBuf> {
         match self {
-            Operation::InstallTranslation { .. } | Operation::DownloadUpdate { .. } => Vec::new(),
+            Operation::InstallTranslation { .. } | Operation::DownloadUpdate { .. } | Operation::InstallOffice => {
+                Vec::new()
+            }
             Operation::Merge { inputs, .. } | Operation::ImagesToPdf { inputs, .. } => inputs.clone(),
             Operation::Compare { old, new } => vec![old.clone(), new.clone()],
             // The data file is an input too: never overwritten by the output.
@@ -1226,7 +1234,8 @@ impl Operation {
             | Operation::FindBlankPages { .. }
             | Operation::ListPageObjects { .. }
             | Operation::InstallTranslation { .. }
-            | Operation::DownloadUpdate { .. } => None,
+            | Operation::DownloadUpdate { .. }
+            | Operation::InstallOffice => None,
             Operation::ExportTables { format: TableFormat::Csv, output, .. } => Some(output.clone()),
             Operation::ExportTables { output, .. } => parent(output),
             Operation::Split { output_dir, .. }
@@ -1336,12 +1345,13 @@ impl Operation {
                 }
             }
             Operation::TranslateDocument { output, source, target, .. } => {
-                let ok =
-                    output.extension().is_some_and(|e| e.eq_ignore_ascii_case("docx") || e.eq_ignore_ascii_case("txt"));
+                let ok = output.extension().is_some_and(|e| {
+                    e.eq_ignore_ascii_case("pdf") || e.eq_ignore_ascii_case("docx") || e.eq_ignore_ascii_case("txt")
+                });
                 if !ok {
                     return Err(PwError::invalid(
                         "translate.extension",
-                        "Save the translation as a Word document (.docx) or a text file (.txt).",
+                        "Save the translation as a PDF (.pdf, same layout), a Word document (.docx) or a text file (.txt).",
                     ));
                 }
                 let code = |c: &str| {

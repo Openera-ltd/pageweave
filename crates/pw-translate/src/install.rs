@@ -90,7 +90,7 @@ pub fn install(
             "There is no folder to store translation models in.",
         )
     })?;
-    let dir = root.join(format!("{source}-{target}"));
+    let dir = root.join(p.folder());
     std::fs::create_dir_all(&dir).map_err(|e| PwError::from_io(&e, "model folder"))?;
     // One download per direction at a time (app and command line may both try). An operating
     // system lock: released by itself when a process ends, even if it is killed.
@@ -121,7 +121,7 @@ pub fn install(
                 && sha256_file(&target_file)? == f.sha256;
             if !ok {
                 let _ = std::fs::remove_file(&target_file);
-                let url = format!("{}/resolve/{}/{}", p.repository, p.commit, f.from);
+                let url = p.file_url(f);
                 let base = done_before;
                 fetch(&url, &target_file, f.bytes, &f.sha256, cancelled, &|b| progress(base + b, total))?;
             }
@@ -138,9 +138,9 @@ pub fn install(
 
 /// Delete a downloaded direction (bundled or development models are never touched).
 pub fn remove(source: &str, target: &str) -> PwResult<bool> {
-    pinned(source, target)?;
+    let p = pinned(source, target)?;
     let Some(root) = user_dir() else { return Ok(false) };
-    let dir = root.join(format!("{source}-{target}"));
+    let dir = root.join(p.folder());
     if !dir.is_dir() {
         return Ok(false);
     }

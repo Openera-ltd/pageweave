@@ -15,8 +15,14 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 /// Extensions LibreOffice opens that PageWeave offers (lower case).
-pub const OFFICE_EXTENSIONS: &[&str] =
-    &["docx", "doc", "odt", "rtf", "txt", "xlsx", "xls", "ods", "csv", "pptx", "ppt", "odp", "html", "htm"];
+pub const OFFICE_EXTENSIONS: &[&str] = &[
+    // Word
+    "docx", "docm", "doc", "dotx", "dotm", "dot", "rtf", "txt", // Excel
+    "xlsx", "xlsm", "xlsb", "xls", "xltx", "xltm", "xlt", "csv", // PowerPoint
+    "pptx", "pptm", "ppt", "ppsx", "ppsm", "pps", "potx", "potm", "pot", // Visio and Publisher
+    "vsdx", "vsd", "pub", // OpenDocument and web pages
+    "odt", "ods", "odp", "odg", "html", "htm",
+];
 /// Inputs larger than this are refused.
 const MAX_INPUT_BYTES: u64 = 512 * 1024 * 1024;
 /// Explicit LibreOffice program (tests, unusual installs).
@@ -31,12 +37,37 @@ pub struct OfficeEngine {
     pub version: String,
 }
 
+/// Where PageWeave keeps its own LibreOffice (installed with the full download or downloaded from
+/// Settings): `%LOCALAPPDATA%\io.github.kuyamcliff.pageweave\office`.
+pub fn office_dir() -> Option<PathBuf> {
+    Some(pw_net::data_dir()?.join("office"))
+}
+
+/// The program inside an unpacked LibreOffice (an administrative image puts it under
+/// `LibreOffice\program` or `program`).
+fn program_in(dir: &Path) -> Vec<PathBuf> {
+    let exe = if cfg!(windows) { "soffice.exe" } else { "soffice" };
+    let mut v = vec![dir.join("program").join(exe)];
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            if e.path().is_dir() {
+                v.push(e.path().join("program").join(exe));
+            }
+        }
+    }
+    v
+}
+
 fn candidates() -> Vec<PathBuf> {
     let mut v = Vec::new();
     // An explicit setting is the only place looked at (empty or missing: treated as not installed).
     if let Some(p) = std::env::var_os(SOFFICE_ENV) {
         v.push(PathBuf::from(p));
         return v;
+    }
+    // PageWeave's own copy first (the version it was tested with).
+    if let Some(d) = office_dir() {
+        v.extend(program_in(&d));
     }
     let exe = if cfg!(windows) { "soffice.exe" } else { "soffice" };
     if let Some(path) = std::env::var_os("PATH") {
@@ -78,9 +109,133 @@ fn not_installed() -> PwError {
     PwError::new(
         ErrorCategory::MissingResource,
         "office.not_installed",
-        "Opening Word, Excel and PowerPoint files needs LibreOffice, which is not installed on this computer.",
+        "Opening Word, Excel and PowerPoint files needs LibreOffice, which is not installed yet.",
     )
-    .with_action("Install LibreOffice (free, from libreoffice.org), then try again.")
+    .with_action(if cfg!(windows) {
+        "Download it once from Settings ▸ Resources (or when opening an Office file), then try again."
+    } else {
+        "Install LibreOffice with your package manager, then try again."
+    })
+}
+
+/// The pinned LibreOffice package (resources/office.lock.json).
+#[derive(Debug, Clone, serde::Deserialize, Serialize)]
+pub struct OfficePackage {
+    pub version: String,
+    pub url: String,
+    pub sha256: String,
+    pub bytes: u64,
+}
+
+pub fn office_package() -> PwResult<OfficePackage> {
+    let v: serde_json::Value = serde_json::from_str(include_str!("../../../resources/office.lock.json"))
+        .map_err(|_| PwError::internal("office.lock", "The Office package pin is damaged."))?;
+    let w = &v["windows_x64"];
+    Ok(OfficePackage {
+        version: v["version"].as_str().unwrap_or_default().to_string(),
+        url: w["url"].as_str().unwrap_or_default().to_string(),
+        sha256: w["sha256"].as_str().unwrap_or_default().to_string(),
+        bytes: w["bytes"].as_u64().unwrap_or(0),
+    })
+}
+
+/// Download the pinned LibreOffice package (resumable, checked against its SHA-256) and unpack it
+/// into [`office_dir`] with `msiexec /a` (files only: nothing is registered with Windows and no
+/// administrator rights are needed). Windows only. Returns the program found.
+pub fn install_office(cancelled: &dyn Fn() -> bool, progress: &dyn Fn(u64, u64)) -> PwResult<OfficeEngine> {
+    if !cfg!(windows) {
+        return Err(PwError::new(
+            ErrorCategory::UnsupportedOperation,
+            "office.install_platform",
+            "PageWeave downloads LibreOffice on Windows only.",
+        )
+        .with_action("Install LibreOffice with your package manager."));
+    }
+    let pkg = office_package()?;
+    let dir = office_dir().ok_or_else(|| {
+        PwError::new(ErrorCategory::Permission, "office.no_folder", "There is no folder to install LibreOffice in.")
+    })?;
+    let parent = dir.parent().map(Path::to_path_buf).unwrap_or_else(|| dir.clone());
+    std::fs::create_dir_all(&parent).map_err(|e| PwError::from_io(&e, "data folder"))?;
+    let msi = parent.join(format!("LibreOffice_{}.msi", pkg.version));
+    const WHAT: pw_net::What = pw_net::What {
+        code: "office.download",
+        noun: "LibreOffice",
+        folder: "data folder",
+        user_agent: "PageWeave Office download",
+    };
+    if !(msi.is_file() && pw_net::sha256_file(&msi, WHAT.folder)? == pkg.sha256) {
+        pw_net::fetch(&WHAT, &pkg.url, &msi, pkg.bytes, &pkg.sha256, cancelled, &|b| progress(b, pkg.bytes))?;
+    }
+    progress(pkg.bytes, pkg.bytes);
+    if cancelled() {
+        return Err(PwError::cancelled());
+    }
+    // Unpack beside the final folder, then swap it in.
+    let staging = parent.join("office.unpacking");
+    let _ = std::fs::remove_dir_all(&staging);
+    std::fs::create_dir_all(&staging).map_err(|e| PwError::from_io(&e, "data folder"))?;
+    let system = std::env::var_os("SystemRoot").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+    let msiexec = system.join("System32").join("msiexec.exe");
+    let mut target = std::ffi::OsString::from("TARGETDIR=");
+    target.push(staging.as_os_str());
+    let mut child = Command::new(&msiexec)
+        .arg("/a")
+        .arg(&msi)
+        .arg("/qn")
+        .arg(target)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| PwError::from_io(&e, "Windows Installer"))?;
+    let started = Instant::now();
+    loop {
+        if let Some(status) = child.try_wait().map_err(|e| PwError::from_io(&e, "Windows Installer"))? {
+            if !status.success() {
+                let _ = std::fs::remove_dir_all(&staging);
+                return Err(PwError::new(
+                    ErrorCategory::EngineFailure,
+                    "office.unpack",
+                    format!("LibreOffice could not be unpacked (Windows Installer ended with {status})."),
+                )
+                .with_action("Try again. If it keeps failing, install LibreOffice from libreoffice.org."));
+            }
+            break;
+        }
+        if cancelled() || started.elapsed() > Duration::from_secs(900) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(if cancelled() {
+                PwError::cancelled()
+            } else {
+                PwError::new(
+                    ErrorCategory::Timeout,
+                    "office.unpack_timeout",
+                    "Unpacking LibreOffice took too long and was stopped.",
+                )
+            });
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    // The unpacked program must run before it replaces anything.
+    let found = program_in(&staging).into_iter().find(|p| p.is_file()).ok_or_else(|| {
+        PwError::new(ErrorCategory::CorruptResource, "office.unpack", "The unpacked LibreOffice has no program.")
+    })?;
+    let out = Command::new(&found).arg("--version").stdin(Stdio::null()).stderr(Stdio::null()).output();
+    if !out.as_ref().is_ok_and(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains("LibreOffice")) {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(PwError::new(
+            ErrorCategory::CorruptResource,
+            "office.unpack",
+            "The unpacked LibreOffice does not start.",
+        ));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::rename(&staging, &dir).map_err(|e| PwError::from_io(&e, "data folder"))?;
+    let _ = std::fs::remove_file(&msi);
+    find_office().ok_or_else(not_installed)
 }
 
 pub fn is_office_file(p: &Path) -> bool {

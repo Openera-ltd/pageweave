@@ -91,8 +91,13 @@ def main() -> int:
         pairs = [p for p in pairs if f"{p['source']}-{p['target']}" in wanted]
     DEST_ROOT.mkdir(parents=True, exist_ok=True)
     report = []
+    done = set()
     for p in pairs:
-        name = f"{p['source']}-{p['target']}"
+        # Directions sharing a multilingual model share its folder (fetched once).
+        name = p.get("folder") or f"{p['source']}-{p['target']}"
+        if name in done:
+            continue
+        done.add(name)
         dest = DEST_ROOT / name
         if dest.is_dir() and matches(dest, p["files"]):
             report.append({"pair": name, "status": "already_installed"})
@@ -101,7 +106,7 @@ def main() -> int:
             staging = Path(tmp) / name
             staging.mkdir()
             for fname, f in p["files"].items():
-                url = f"{p['repository']}/resolve/{p['commit']}/{f['from']}"
+                url = f"{p['url'].rstrip('/')}/{f['from']}" if p.get("url") else f"{p['repository']}/resolve/{p['commit']}/{f['from']}"
                 target = staging / fname
                 try:
                     download(url, target)

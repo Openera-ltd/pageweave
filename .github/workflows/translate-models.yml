@@ -1,0 +1,71 @@
+name: Translation models
+
+# Converts the OPUS-MT models listed in resources/translate.models.json into the files PageWeave
+# runs (tools/convert_translate.py, decision D-025) and publishes them on this repository's release
+# named in that file, with a manifest of sizes and SHA-256. resources/translate.lock.json is then
+# pinned to those files. Assets that are already published are kept (never replaced), so pinned
+# hashes stay valid.
+on:
+  push:
+    paths: ["resources/translate.models.json", "tools/convert_translate.py", ".github/workflows/translate-models.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: translate-models
+  cancel-in-progress: false
+
+jobs:
+  convert:
+    name: Convert and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Pinned conversion tools
+        run: |
+          python -m pip install --quiet --index-url https://download.pytorch.org/whl/cpu torch==2.14.1
+          python -m pip install --quiet transformers==4.57.6 optimum==2.1.0 onnxruntime==1.31.0 onnx==1.23.2 onnx-ir==1.1.0 \
+            sentencepiece==0.2.2 huggingface_hub==0.36.2 tokenizers==0.22.2 safetensors==0.8.0
+      - name: Convert, check and publish each model
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SPEC=resources/translate.models.json
+          REL=$(python -I -c "import json; print(json.load(open('$SPEC'))['release'])")
+          gh release view "$REL" >/dev/null 2>&1 || gh release create "$REL" --prerelease --target "$GITHUB_SHA" --title "Translation models ($REL)" \
+            --notes "OPUS-MT models (CC BY 4.0, Helsinki-NLP / University of Helsinki) converted for PageWeave by tools/convert_translate.py. Pinned by SHA-256 in resources/translate.lock.json."
+          have=$(gh release view "$REL" --json assets --jq '.assets[].name' || true)
+          mkdir -p out
+          for name in $(python -I -c "import json; print(' '.join(m['name'] for m in json.load(open('$SPEC'))['models']))"); do
+            if echo "$have" | grep -qx "$name-decoder.onnx"; then echo "$name already published"; continue; fi
+            read repo commit quant < <(python -I -c "import json; m=[m for m in json.load(open('$SPEC'))['models'] if m['name']=='$name'][0]; print(m['repo'], m['commit'], m.get('quant','int8'))")
+            echo "== $name ($repo@$commit, $quant)"
+            python -I tools/convert_translate.py "$repo" "$commit" "out/$name" --quant "$quant"
+            for f in encoder.onnx decoder.onnx tokenizer.json config.json; do cp "out/$name/$f" "out/$name-$f"; done
+            gh release upload "$REL" "out/$name-encoder.onnx" "out/$name-decoder.onnx" "out/$name-tokenizer.json" "out/$name-config.json"
+            rm -rf "out/$name" ~/.cache/huggingface
+          done
+          # Manifest of everything published (sizes and SHA-256 of the files as served).
+          rm -rf pub && mkdir pub && gh release download "$REL" --dir pub --pattern "*.onnx" --pattern "*.json" --skip-existing
+          python -I - "$REL" <<'PY'
+          import hashlib, json, os, sys
+          rel = sys.argv[1]
+          files = {}
+          for f in sorted(os.listdir("pub")):
+              if f == "manifest.json":
+                  continue
+              data = open(os.path.join("pub", f), "rb").read()
+              files[f] = {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+          json.dump({"release": rel, "url": f"https://github.com/kuyamcliff/pageweave/releases/download/{rel}", "files": files}, open("manifest.json", "w"), indent=1)
+          print(json.dumps(files, indent=1))
+          PY
+          gh release upload "$REL" manifest.json --clobber

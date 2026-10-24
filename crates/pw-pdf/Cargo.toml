@@ -13,6 +13,7 @@ pw-ocr.workspace = true
 pw-speech.workspace = true
 pw-translate.workspace = true
 pw-update.workspace = true
+pw-net.workspace = true
 pdfium-render.workspace = true
 image.workspace = true
 serde.workspace = true

@@ -27,6 +27,8 @@ const LOW_CONFIDENCE: f32 = 0.8;
 pub struct OcrSummary {
     pub pages_processed: u32,
     pub pages_skipped_with_text: u32,
+    /// Pages that had text where text inside their pictures was recognised.
+    pub pages_with_pictures_recognized: u32,
     pub pages_without_text_found: u32,
     pub lines: u32,
     pub characters: u64,
@@ -47,6 +49,8 @@ struct Placed {
     width: f32,
     /// Counter-clockwise angle of the line in page user space, degrees.
     angle: f32,
+    /// Bounds in page user space (left, bottom, right, top).
+    bounds: (f32, f32, f32, f32),
 }
 
 /// Characters the built-in Helvetica (WinAnsi) can carry: Latin-1 plus the WinAnsi extras.
@@ -79,7 +83,8 @@ pub fn ocr_pages(
         None => (0..total).collect(),
     };
     let mut summary = OcrSummary::default();
-    let mut placed: Vec<(u32, Vec<Placed>)> = Vec::new();
+    // (page, lines, the page already had text: keep only lines where it has none, i.e. in pictures)
+    let mut placed: Vec<(u32, Vec<Placed>, bool)> = Vec::new();
     let mut conf_sum = 0f64;
     for (k, &i) in indices.iter().enumerate() {
         if cancelled() {
@@ -96,7 +101,19 @@ pub fn ocr_pages(
                 .text()
                 .map(|t| t.inside_rect(everything).chars().filter(|c| !c.is_whitespace()).count())
                 .unwrap_or(0);
-            if skip_text_pages && existing >= TEXT_PAGE_MIN_CHARS {
+            let has_text = existing >= TEXT_PAGE_MIN_CHARS;
+            // A page with text is still read when it has pictures (text in screenshots, scanned
+            // figures); only lines where the page has no text are kept.
+            let pictures = page.objects().iter().any(|o| {
+                matches!(o, PdfPageObject::Image(_) | PdfPageObject::XObjectForm(_))
+                    && o.bounds()
+                        .map(|q| {
+                            let r = q.to_rect();
+                            (r.right().value - r.left().value) >= 40.0 && (r.top().value - r.bottom().value) >= 14.0
+                        })
+                        .unwrap_or(false)
+            });
+            if skip_text_pages && has_text && !pictures {
                 None
             } else {
                 let (dw, dh) = (page.width().value, page.height().value);
@@ -112,10 +129,10 @@ pub fn ocr_pages(
                     .bounding()
                     .map(|b| (b.bounds.left().value, b.bounds.bottom().value))
                     .unwrap_or((0.0, 0.0));
-                Some((img, rotation_of(&page), dw, dh, origin))
+                Some((img, rotation_of(&page), dw, dh, origin, skip_text_pages && has_text))
             }
         };
-        let Some((img, rot, dw, dh, origin)) = rendered else {
+        let Some((img, rot, dw, dh, origin, mixed)) = rendered else {
             summary.pages_skipped_with_text += 1;
             continue;
         };
@@ -162,9 +179,24 @@ pub fn ocr_pages(
             let (x1, y1) = to_page(base_end.0, base_end.1);
             let height = height_px / sy * 0.6;
             let width = width_px / sx;
-            out.push(Placed { text, x: x0, y: y0, height, width, angle: (y1 - y0).atan2(x1 - x0).to_degrees() });
+            let corners: Vec<(f32, f32)> = l.quad.iter().map(|q| to_page(q[0], q[1])).collect();
+            let bounds = (
+                corners.iter().map(|c| c.0).fold(f32::MAX, f32::min),
+                corners.iter().map(|c| c.1).fold(f32::MAX, f32::min),
+                corners.iter().map(|c| c.0).fold(f32::MIN, f32::max),
+                corners.iter().map(|c| c.1).fold(f32::MIN, f32::max),
+            );
+            out.push(Placed {
+                text,
+                x: x0,
+                y: y0,
+                height,
+                width,
+                angle: (y1 - y0).atan2(x1 - x0).to_degrees(),
+                bounds,
+            });
         }
-        placed.push((i, out));
+        placed.push((i, out, mixed));
     }
     progress(indices.len() as u64, indices.len() as u64);
     if summary.lines > 0 {
@@ -180,10 +212,33 @@ pub fn ocr_pages(
     let font = doc.fonts_mut().helvetica();
     let err = |e: PdfiumError| map_pdfium_error(&e, "ocr");
     let mut before: Vec<(u32, Vec<u8>)> = Vec::new();
-    for (i, lines) in &placed {
+    for (i, lines, mixed) in placed.iter_mut() {
         let mut page = doc.pages().get(*i as PdfPageIndex).map_err(err)?;
+        if *mixed {
+            // Keep only what the page's own text does not already say there.
+            let text = page.text().map_err(err)?;
+            let before_n = lines.len();
+            let before_c: usize = lines.iter().map(|l| l.text.chars().count()).sum();
+            lines.retain(|l| {
+                let (a, b, c, d) = l.bounds;
+                let have = text
+                    .inside_rect(PdfRect::new_from_values(b, a, d, c))
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .count();
+                have * 5 < l.text.chars().filter(|c| !c.is_whitespace()).count()
+            });
+            summary.lines -= (before_n - lines.len()) as u32;
+            summary.characters -= (before_c - lines.iter().map(|l| l.text.chars().count()).sum::<usize>()) as u64;
+            if !lines.is_empty() {
+                summary.pages_with_pictures_recognized += 1;
+            }
+        }
+        if lines.is_empty() {
+            continue;
+        }
         before.push((*i, thumbnail(&page)?));
-        for p in lines {
+        for p in lines.iter() {
             let size = p.height.max(1.0) / 0.93;
             // A trailing space keeps lines apart in extraction: PDFium does not break lines of
             // 90°-turned text, so line-end and line-start words would otherwise fuse.
@@ -225,7 +280,7 @@ pub fn ocr_pages(
         // Not `PdfPageText::all()`: it is bounded by the rotated page size and drops text on 90°/270°
         // pages (the checkpoint-19 extraction bug).
         let everything = PdfRect::new_from_values(-1.0e6, -1.0e6, 1.0e6, 1.0e6);
-        for ((i, lines), (_, thumb)) in placed.iter().zip(&before) {
+        for ((i, lines, _), (_, thumb)) in placed.iter().filter(|p| !p.1.is_empty()).zip(&before) {
             let page = reopened.pages().get(*i as PdfPageIndex).map_err(|_| fail("page unreadable"))?;
             let got = squash(&page.text().map_err(|_| fail("text unreadable"))?.inside_rect(everything));
             if lines.iter().any(|l| !got.contains(&squash(&l.text))) {
@@ -244,6 +299,13 @@ pub fn ocr_pages(
             summary.pages_skipped_with_text,
             if summary.pages_skipped_with_text == 1 { "" } else { "s" },
             if summary.pages_skipped_with_text == 1 { "was" } else { "were" }
+        ));
+    }
+    if summary.pages_with_pictures_recognized > 0 {
+        warnings.push(format!(
+            "Text inside pictures was recognised on {} page{} that already had text.",
+            summary.pages_with_pictures_recognized,
+            if summary.pages_with_pictures_recognized == 1 { "" } else { "s" }
         ));
     }
     if summary.characters_not_added > 0 {

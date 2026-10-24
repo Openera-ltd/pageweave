@@ -227,6 +227,19 @@ await test("zoom buttons, preset select and Ctrl+0", async () => {
     await s.waitUntil(async () => (await zoom()) === "75", "75% after zoom out twice");
     const w = await s.exec("return document.querySelector('[data-page=\"0\"]').getBoundingClientRect().width");
     assert(Math.abs(w - 612 * 0.75 * (96 / 72)) < 2, `page width at 75% (${w})`);
+    // Ctrl + wheel zooms smoothly (not only preset steps); the same without Ctrl scrolls instead.
+    const wheel = (dy, ctrl) =>
+      s.exec(`const v = document.querySelector('[data-testid="viewer"]'); const r = v.getBoundingClientRect();
+        v.dispatchEvent(new WheelEvent('wheel', { deltaY: ${dy}, ctrlKey: ${ctrl}, clientX: r.left + 100, clientY: r.top + 100, bubbles: true, cancelable: true }));`);
+    await wheel(-120, true);
+    await s.waitUntil(async () => Number(await zoom()) > 75, "Ctrl + wheel up zooms in");
+    const z1 = Number(await zoom());
+    await wheel(240, true);
+    await s.waitUntil(async () => Number(await zoom()) < z1, "Ctrl + wheel down zooms out");
+    const z2 = Number(await zoom());
+    await wheel(120, false);
+    await new Promise((r) => setTimeout(r, 300));
+    assert(Number(await zoom()) === z2, "plain wheel does not zoom");
   });
 });
 
@@ -1469,7 +1482,10 @@ await test("translate: page to German as Word (layout kept), language detected; 
     await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=tool-start]').title")) === "Choose two different languages.", "same language refused");
     // Detect the language, translate page 1 into German as a Word document.
     await s.exec("const f = document.querySelector('#translate-from'); f.value = ''; f.dispatchEvent(new Event('change', { bubbles: true }));");
-    assert((await s.exec("return document.querySelector('#output').value")).endsWith("five-pages-de.docx"), "default name");
+    // A PDF in the same layout is the default; this run saves a Word document.
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("five-pages-de.pdf"), "default name (same-layout PDF)");
+    await s.click('[data-testid="translate-format-docx"]');
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith("five-pages-de.docx"), "Word name");
     await s.exec("const c = [...document.querySelectorAll('[role=dialog] input[type=checkbox]')].find((x) => x.checked); if (c) c.click();");
     await s.type("#pages", "1");
     await s.waitUntil(async () => (await s.text("#pages-msg")) === "1 page selected", "page 1 chosen");
@@ -2924,6 +2940,37 @@ await test("settings ▸ resources: PDF engine and text recognition verified aga
     // Every installed file (about 1 GB with the translation models) is hashed; debug builds are slow at it.
     await s.waitUntil(async () => (await s.text('[data-testid="resources-check"]')) === "Check again", "check finished", 240000);
     await axeCheck(s, "settings-resources");
+  });
+});
+
+await test("all tools pane: every tool by category, filter, runs the tool, hides and comes back (view.toggleTools); Menu ▸ Check for updates (app.updates)", async () => {
+  await withApp([join(FIX, "five-pages.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    const open = () => s.exec("return !!document.querySelector('[data-testid=tools-pane]')");
+    if (!(await open())) await s.click('[data-command="view.toggleTools"]');
+    await s.waitUntil(open, "tools pane shown");
+    const groups = await s.exec("return [...document.querySelectorAll('.tools-group h3')].map(h => h.textContent)");
+    assert(groups.length >= 10 && groups.includes("Translate and read aloud") && groups.includes("Organize pages"), `groups: ${groups}`);
+    await s.type('[data-testid="tools-filter"]', "word");
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tool-item').length")) === 1, "filter narrows to one tool");
+    await s.click('[data-tool="file.toWord"]');
+    await s.waitFor("#output");
+    assert((await s.exec("return document.querySelector('#output').value")).endsWith(".docx"), "Convert to Word opened from the pane");
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('#output')")), "dialog closed");
+    await axeCheck(s, "tools-pane");
+    await s.click('[data-testid="tools-close"]');
+    await s.waitUntil(async () => !(await open()), "pane closed");
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "Shift", "T"]);
+    await s.waitUntil(open, "Ctrl+Shift+T shows it again");
+    // Settings moved into the Menu (Preferences); updates are there too.
+    await s.click('[data-testid="app-menu"]');
+    await s.waitFor('[role="menu"]');
+    const items = await s.text('[role="menu"]');
+    assert(items.includes("Preferences") && items.includes("Check for updates"), `menu: ${items}`);
+    await s.click('[role="menuitem"][data-command="app.updates"]');
+    await s.waitFor('[data-testid="updates-panel"]');
   });
 });
 

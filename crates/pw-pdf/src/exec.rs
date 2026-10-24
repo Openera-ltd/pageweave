@@ -558,6 +558,15 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
                 serde_json::json!({ "source": source, "target": target, "downloaded_bytes": bytes, "folder": dir }),
             )
         }
+        Operation::InstallOffice => {
+            let byte_progress = |done: u64, total: u64| {
+                if let Some(c) = ctx {
+                    c.set_progress(done, total, "bytes");
+                }
+            };
+            let e = crate::office::install_office(&cancelled, &byte_progress)?;
+            (vec![], serde_json::json!({ "engine": e.version, "program": e.program }))
+        }
         Operation::DownloadUpdate { version } => {
             let byte_progress = |done: u64, total: u64| {
                 if let Some(c) = ctx {
