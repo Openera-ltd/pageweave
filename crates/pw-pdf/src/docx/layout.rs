@@ -190,6 +190,10 @@ pub struct TableCell {
     pub paragraphs: Vec<Paragraph>,
     /// Background colour.
     pub fill: Option<[u8; 3]>,
+    /// Edges drawn without a line: [above, below] (the gaps between framed boxes).
+    pub open: [bool; 2],
+    /// Text centred between the cell's top and bottom.
+    pub middle: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -714,6 +718,14 @@ fn table_item(t: &Table, cell_glyphs: Vec<Vec<Glyph>>, body: f32) -> TableItem {
             let (c0, c1) = (t.xs[c.col] + CELL_PAD, t.xs[c.col + c.col_span] - CELL_PAD);
             let mut lines = build_lines(&glyphs);
             lines.sort_by(|a, b| b.baseline.total_cmp(&a.baseline));
+            let middle = match (lines.first(), lines.last()) {
+                (Some(f), Some(l)) => {
+                    let (above, below) = (t.ys[c.row] - f.rect.top, l.rect.bottom - t.ys[c.row + c.row_span]);
+                    let h = t.ys[c.row] - t.ys[c.row + c.row_span];
+                    above > 4.0 && below > 4.0 && (above - below).abs() < 0.2 * h
+                }
+                _ => false,
+            };
             let mut paragraphs_out = Vec::new();
             let mut prev_base: Option<f32> = None;
             let cell_bottom = t.ys[c.row + c.row_span] + CELL_PAD;
@@ -735,9 +747,19 @@ fn table_item(t: &Table, cell_glyphs: Vec<Vec<Glyph>>, body: f32) -> TableItem {
                 col_span: c.col_span,
                 paragraphs: paragraphs_out,
                 fill: None,
+                open: c.open,
+                middle,
             }
         })
         .collect();
+    // Centred only when the whole row is (a one-line cell next to a two-line one is not).
+    let mut cells: Vec<TableCell> = cells;
+    for r in 0..heights.len() {
+        let all = cells.iter().filter(|c| c.row == r && !c.paragraphs.is_empty()).all(|c| c.middle);
+        if !all {
+            cells.iter_mut().filter(|c| c.row == r).for_each(|c| c.middle = false);
+        }
+    }
     TableItem {
         widths,
         heights,

@@ -165,7 +165,7 @@ fn table_of(rows: &[Row], channels: &[(f32, f32)]) -> Option<Table> {
     let mut cells = Vec::with_capacity(rows.len() * cols);
     for row in 0..rows.len() {
         for col in 0..cols {
-            cells.push(Cell { row, col, row_span: 1, col_span: 1 });
+            cells.push(Cell { row, col, row_span: 1, col_span: 1, open: [false, false] });
         }
     }
     Some(Table { xs, ys, cells })
