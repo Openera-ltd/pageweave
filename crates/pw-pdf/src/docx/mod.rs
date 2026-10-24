@@ -304,6 +304,17 @@ pub(crate) fn decorate(lay: &mut layout::PageLayout, paints: &[layout::Paint]) {
             && inner.top <= outer.top + slack
     };
     let area = |r: &Rect| (r.right - r.left).max(0.0) * (r.top - r.bottom).max(0.0);
+    // Strokes that belong to a table (its borders) are never a paragraph's rule.
+    let tables: Vec<Rect> = lay
+        .bands
+        .iter()
+        .flat_map(|b| b.columns.iter())
+        .flat_map(|c| c.items.iter())
+        .filter_map(|it| match it {
+            layout::Item::Table { table, .. } => Some(table.rect),
+            _ => None,
+        })
+        .collect();
     for b in &mut lay.bands {
         for c in &mut b.columns {
             for it in &mut c.items {
@@ -397,6 +408,12 @@ pub(crate) fn decorate(lay: &mut layout::PageLayout, paints: &[layout::Paint]) {
                                     && q.rect.top >= r.bottom - 1.2 * size
                                     && q.rect.right - q.rect.left >= 0.6 * col
                                     && q.rect.left <= r.left + 10.0
+                                    && !tables.iter().any(|t| {
+                                        q.rect.left < t.right + 3.0
+                                            && q.rect.right > t.left - 3.0
+                                            && q.rect.bottom < t.top + 6.0
+                                            && q.rect.top > t.bottom - 6.0
+                                    })
                             })
                             .max_by(|a, b| a.rect.top.total_cmp(&b.rect.top))
                             .map(|q| (q.color, (q.rect.top - q.rect.bottom).max(0.5)));

@@ -400,6 +400,46 @@ fn token(doc: &mut PdfDocument, k: FontKey) -> PdfFontToken {
     }
 }
 
+/// `t` with every character the standard fonts can show (their WinAnsi set): others become
+/// their closest equivalent (a letter without its accent, a plain dash or quote) or are left out,
+/// so what is written is exactly what the page then holds.
+pub(super) fn standard_text(t: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    const EXTRA: &str = "€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ";
+    let ok = |c: char| (' '..='~').contains(&c) || ('\u{a0}'..='\u{ff}').contains(&c) || EXTRA.contains(c);
+    if t.chars().all(ok) {
+        return t.to_string();
+    }
+    let t: String = t.nfc().collect();
+    let mut out = String::with_capacity(t.len());
+    for c in t.chars() {
+        if ok(c) {
+            out.push(c);
+            continue;
+        }
+        let near = match c {
+            '\u{2010}'..='\u{2012}' | '\u{2212}' => Some('-'),
+            '\u{2032}' | '\u{201b}' => Some('\''),
+            '\u{2033}' | '\u{201f}' => Some('"'),
+            '\u{2002}'..='\u{200a}' | '\u{202f}' | '\u{205f}' => Some(' '),
+            '\u{2044}' => Some('/'),
+            _ => None,
+        };
+        if let Some(n) = near {
+            out.push(n);
+            continue;
+        }
+        // A letter with marks the fonts lack: its base letter (and any precomposed form they have).
+        let nfc: String = std::iter::once(c).nfc().collect();
+        if nfc.chars().all(ok) {
+            out.push_str(&nfc);
+        } else {
+            out.extend(std::iter::once(c).nfd().filter(|&d| ok(d) && d != ' '));
+        }
+    }
+    out
+}
+
 /// Space width per point of font size (standard font metrics).
 fn space_em(k: FontKey) -> f32 {
     match k.family {
@@ -517,7 +557,7 @@ pub(super) fn write_in_place(
         areas.entry(pl.page).or_default().push((r.left - 1.0, r.bottom - 1.0, r.right + 1.0, r.top + 1.0));
         let base_size = p.runs.iter().map(|r| r.size).fold(0.0, f32::max).max(1.0);
         let keys: Vec<FontKey> = words.iter().map(|w| font_key(&p.runs[w.style])).collect();
-        let unit: Vec<f32> = words.iter().zip(&keys).map(|(w, k)| measure.width(*k, &w.text)).collect();
+        let unit: Vec<f32> = words.iter().zip(&keys).map(|(w, k)| measure.width(*k, &standard_text(&w.text))).collect();
         let rel: Vec<f32> = words.iter().map(|w| p.runs[w.style].size / base_size).collect();
         // Horizontal room.
         let (first_left, rest_left, right) = match p.align {
@@ -584,7 +624,7 @@ pub(super) fn write_in_place(
                         text.push(' ');
                         w += spaces[j];
                     }
-                    text.push_str(&words[j].text);
+                    text.push_str(&standard_text(&words[j].text));
                     w += widths[j];
                     j += 1;
                 }
@@ -663,6 +703,9 @@ pub(super) fn verify_lines(doc: &PdfDocument, written: &Written) -> PwResult<()>
         let got = squash(&page.text().map_err(|e| map_pdfium_error(&e, "text"))?.inside_rect(everything));
         for l in lines {
             if !got.contains(&squash(l)) {
+                if std::env::var_os("PW_DEBUG_VERIFY").is_some() {
+                    eprintln!("missing line: {l:?}\npage text: {got:?}");
+                }
                 return Err(PwError::new(
                     ErrorCategory::ValidationFailed,
                     "output.verify",
@@ -675,4 +718,18 @@ pub(super) fn verify_lines(doc: &PdfDocument, written: &Written) -> PwResult<()>
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::standard_text;
+
+    #[test]
+    fn text_is_limited_to_what_the_standard_fonts_show() {
+        assert_eq!(standard_text("Größe – „Zins“ 5 €"), "Größe – „Zins“ 5 €");
+        assert_eq!(standard_text("a\u{2011}b \u{2212}3 x\u{202f}%"), "a-b -3 x %");
+        assert_eq!(standard_text("Łódź ćma"), "ódz cma");
+        assert_eq!(standard_text("e\u{301}te\u{301}"), "été");
+        assert_eq!(standard_text("日本"), "");
+    }
 }

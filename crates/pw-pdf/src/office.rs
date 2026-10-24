@@ -112,7 +112,7 @@ fn not_installed() -> PwError {
         "Opening Word, Excel and PowerPoint files needs LibreOffice, which is not installed yet.",
     )
     .with_action(if cfg!(windows) {
-        "Download it once from Settings ▸ Resources (or when opening an Office file), then try again."
+        "Download LibreOffice once from Settings ▸ Resources (or with `pageweave office --install`), then try again."
     } else {
         "Install LibreOffice with your package manager, then try again."
     })

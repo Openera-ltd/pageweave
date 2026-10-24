@@ -442,8 +442,9 @@ await test("unsupported file shows a specific error and app stays usable", async
 
 await test("disabled controls explain why (no document open)", async () => {
   await withApp([], async (s) => {
-    const title = await s.attr('[data-command="view.zoomIn"]', "title");
-    assert((await s.attr('[data-command="view.zoomIn"]', "aria-disabled")) === "true", "zoom disabled");
+    // The zoom bar appears with a document; Find is always in the toolbar.
+    const title = await s.attr('[data-command="search.open"]', "title");
+    assert((await s.attr('[data-command="search.open"]', "aria-disabled")) === "true", "find disabled");
     assert(title.includes("Open a PDF first"), `reason in tooltip: ${title}`);
     const looks = await s.exec(`return [...document.querySelectorAll('[aria-disabled="true"], select:disabled')].map(e => getComputedStyle(e).opacity)`);
     assert(looks.length > 0 && looks.every((o) => Number(o) < 0.6), `disabled controls look disabled (opacities ${looks})`);
@@ -2951,7 +2952,7 @@ await test("all tools pane: every tool by category, filter, runs the tool, hides
     await s.waitUntil(open, "tools pane shown");
     const groups = await s.exec("return [...document.querySelectorAll('.tools-group h3')].map(h => h.textContent)");
     assert(groups.length >= 10 && groups.includes("Translate and read aloud") && groups.includes("Organize pages"), `groups: ${groups}`);
-    await s.type('[data-testid="tools-filter"]', "word");
+    await s.type('[data-testid="tools-filter"]', "to word");
     await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tool-item').length")) === 1, "filter narrows to one tool");
     await s.click('[data-tool="file.toWord"]');
     await s.waitFor("#output");

@@ -148,8 +148,9 @@ enum Command {
         #[arg(short, long)]
         output: PathBuf,
     },
-    /// Translate pages with the local translation models into a Word document (-o file.docx,
-    /// layout kept) or a text file (-o file.txt). Without a file, list the language directions.
+    /// Translate pages with the local translation models into a PDF with the same layout
+    /// (-o file.pdf), a Word document (-o file.docx) or a text file (-o file.txt). Without a
+    /// file, list the language directions.
     Translate {
         file: Option<PathBuf>,
         #[arg(long)]

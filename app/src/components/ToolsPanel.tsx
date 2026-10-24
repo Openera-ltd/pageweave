@@ -46,6 +46,13 @@ export const TOOL_GROUPS: ToolGroup[] = [
 
 const label = (id: CommandId) => COMMAND_BY_ID.get(id)!.label.replace(/…$/, "");
 
+/** Whether `text` matches the filter `q` (lower case): a word starting with it, or the whole phrase. */
+export function matches(text: string, q: string): boolean {
+  if (!q) return true;
+  const t = text.toLowerCase();
+  return q.includes(" ") ? t.includes(q) : t.split(/[^\p{L}\p{N}]+/u).some((w) => w.startsWith(q));
+}
+
 interface Props {
   handlers: CommandHandlers;
   bindings: Record<string, string[]>;
@@ -57,7 +64,7 @@ export function ToolsPanel({ handlers, bindings, onClose }: Props) {
   const q = filter.trim().toLowerCase();
   const groups = useMemo(
     () =>
-      TOOL_GROUPS.map((g) => ({ ...g, commands: g.commands.filter((c) => !q || label(c).toLowerCase().includes(q) || g.title.toLowerCase().includes(q)) })).filter(
+      TOOL_GROUPS.map((g) => ({ ...g, commands: g.commands.filter((c) => matches(label(c), q) || matches(g.title, q)) })).filter(
         (g) => g.commands.length > 0,
       ),
     [q],
