@@ -132,7 +132,7 @@ enum Command {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
-    /// Rebuild a flat picture (PNG/JPEG, or one page of a PDF) as editable text, shapes and
+    /// Rebuild a flat picture (PNG, JPEG, WebP, TIFF, GIF or BMP, or one page of a PDF) as editable text, shapes and
     /// pictures, saved as a design project (.pwdesign).
     Design {
         file: PathBuf,
@@ -342,7 +342,7 @@ enum Command {
         #[arg(long)]
         no_assemble: bool,
     },
-    /// Make a PDF from JPEG and PNG images, one per page, in the order given.
+    /// Make a PDF from images (JPEG, PNG, WebP, TIFF, GIF or BMP), one per page, in the order given. JPEG data is kept exactly; TIFF and GIF give their first page or frame.
     ImagesToPdf {
         images: Vec<PathBuf>,
         #[arg(short, long)]
@@ -417,7 +417,7 @@ enum Command {
         /// Typed name or initials.
         #[arg(long, conflicts_with = "image")]
         text: Option<String>,
-        /// PNG or JPEG picture of the signature.
+        /// Picture of the signature (PNG, JPEG, WebP, TIFF, GIF or BMP).
         #[arg(long)]
         image: Option<PathBuf>,
     },

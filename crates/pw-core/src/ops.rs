@@ -424,7 +424,7 @@ pub enum PageEdit {
         dx: f32,
         dy: f32,
     },
-    /// Put a PNG/JPEG picture in an existing picture's place (same box).
+    /// Put a picture (PNG, JPEG, WebP, TIFF, GIF or BMP) in an existing picture's place (same box).
     ReplaceImage {
         object: u32,
         path: PathBuf,
@@ -501,7 +501,7 @@ pub enum SignatureMark {
         #[serde(default = "default_pen")]
         width: f32,
     },
-    /// A PNG or JPEG picture of a signature.
+    /// A picture of a signature (PNG, JPEG, WebP, TIFF, GIF or BMP).
     Image { path: PathBuf },
 }
 
@@ -677,7 +677,7 @@ pub enum Operation {
         permissions: ProtectPermissions,
         output: PathBuf,
     },
-    /// Rebuild a flat picture (a PNG/JPEG file, or page `page` (0-based) of a PDF) as separately
+    /// Rebuild a flat picture (a PNG, JPEG, WebP, TIFF, GIF or BMP file, or page `page` (0-based) of a PDF) as separately
     /// editable text, shapes and pictures, saved as a design project (.pwdesign).
     ReconstructDesign {
         input: PathBuf,
@@ -769,7 +769,7 @@ pub enum Operation {
         pages: Option<String>,
         output: PathBuf,
     },
-    /// Make a new PDF from JPEG and PNG images, one image per page in the given order.
+    /// Make a new PDF from images (JPEG, PNG, WebP, TIFF, GIF, BMP), one image per page in the given order.
     ImagesToPdf {
         inputs: Vec<PathBuf>,
         #[serde(default)]

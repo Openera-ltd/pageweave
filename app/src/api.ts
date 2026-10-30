@@ -188,7 +188,7 @@ export const tauriApi: Api = {
     const r = await openDialog({
       multiple: false,
       directory: false,
-      filters: [{ name: "Pictures, PDFs and designs", extensions: ["png", "jpg", "jpeg", "pdf", "pwdesign"] }],
+      filters: [{ name: "Pictures, PDFs and designs", extensions: ["png", "jpg", "jpeg", "webp", "tif", "tiff", "gif", "bmp", "pdf", "pwdesign"] }],
     });
     return typeof r === "string" ? r : null;
   },
@@ -213,7 +213,7 @@ export const tauriApi: Api = {
   trustCertificate: (docId, index, position) => invoke("trust_certificate", { docId, index, position }),
   removeTrustedCertificate: (fingerprint) => invoke("remove_trusted_certificate", { fingerprint }),
   pickImageFiles: async () => {
-    const r = await openDialog({ multiple: true, directory: false, filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png"] }] });
+    const r = await openDialog({ multiple: true, directory: false, filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png", "webp", "tif", "tiff", "gif", "bmp"] }] });
     if (r === null) return [];
     return Array.isArray(r) ? r : [r];
   },

@@ -102,6 +102,7 @@ describe("design studio editing", () => {
     expect(uncertain(obj("t", { kind: "text", confidence: 0.95 }))).toBe(false);
     expect(isStudioSource("C:\\a\\Flyer.JPG")).toBe(true);
     expect(isStudioSource("a.docx")).toBe(false);
+    expect(isStudioSource("scan.tiff") && isStudioSource("b.webp") && isStudioSource("c.BMP")).toBe(true);
   });
 
   it("studio.open: a project opens, a picture or PDF is rebuilt, other files are refused", () => {

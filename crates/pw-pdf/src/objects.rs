@@ -205,10 +205,18 @@ fn load_picture(path: &Path) -> PwResult<image::DynamicImage> {
     if bytes.len() > 50 * 1024 * 1024 {
         return Err(PwError::invalid("edit.image_large", "The picture is larger than 50 MB."));
     }
-    let fmt =
-        image::guess_format(&bytes).map_err(|_| PwError::invalid("edit.image_format", "Use a PNG or JPEG picture."))?;
-    if !matches!(fmt, image::ImageFormat::Png | image::ImageFormat::Jpeg) {
-        return Err(PwError::invalid("edit.image_format", "Use a PNG or JPEG picture."));
+    let fmt = image::guess_format(&bytes)
+        .map_err(|_| PwError::invalid("edit.image_format", "Use a picture: PNG, JPEG, WebP, TIFF, GIF or BMP."))?;
+    if !matches!(
+        fmt,
+        image::ImageFormat::Png
+            | image::ImageFormat::Jpeg
+            | image::ImageFormat::WebP
+            | image::ImageFormat::Tiff
+            | image::ImageFormat::Gif
+            | image::ImageFormat::Bmp
+    ) {
+        return Err(PwError::invalid("edit.image_format", "Use a picture: PNG, JPEG, WebP, TIFF, GIF or BMP."));
     }
     let mut reader = image::ImageReader::with_format(std::io::Cursor::new(&bytes), fmt);
     let mut limits = image::Limits::default();

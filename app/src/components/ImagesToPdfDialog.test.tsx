@@ -21,6 +21,8 @@ describe("Create PDF from images", () => {
   it("recognises image files and names the output next to the first one", () => {
     expect(isImagePath("/a/photo.JPEG")).toBe(true);
     expect(isImagePath("/a/scan.png")).toBe(true);
+    for (const f of ["/a/b.webp", "/a/scan.TIF", "/a/s.tiff", "/a/anim.gif", "/a/old.bmp"]) expect(isImagePath(f)).toBe(true);
+    expect(isImagePath("/a/photo.heic")).toBe(false);
     expect(isImagePath("/a/doc.pdf")).toBe(false);
     expect(defaultImagesOutput(["/pics/a.jpg"])).toBe("/pics/images.pdf");
   });

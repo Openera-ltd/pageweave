@@ -1032,11 +1032,36 @@ fn rgb_from(img: image::DynamicImage) -> Rgb {
 }
 
 /// The picture to rebuild and PDF points per pixel: a PNG/JPEG file, or a page of a PDF.
+/// Picture formats the Studio reads, recognised by content: PNG, JPEG, WebP, TIFF, GIF, BMP
+/// (TIFF and GIF: the first page or frame).
+fn picture_format(head: &[u8]) -> Option<image::ImageFormat> {
+    use image::ImageFormat as F;
+    image::guess_format(head).ok().filter(|f| matches!(f, F::Png | F::Jpeg | F::WebP | F::Tiff | F::Gif | F::Bmp))
+}
+
+/// Decode an untrusted picture with limits; a picture over 20 000 pixels on a side is refused as
+/// too large (decompression bombs declare huge sizes in tiny files), anything else unreadable as such.
+fn decode_picture(bytes: Vec<u8>, fmt: image::ImageFormat) -> PwResult<image::DynamicImage> {
+    let (w, h) = image::ImageReader::with_format(std::io::Cursor::new(&bytes), fmt)
+        .into_dimensions()
+        .map_err(|_| PwError::invalid("design.unreadable", "The picture could not be read."))?;
+    if w > 20_000 || h > 20_000 {
+        return Err(PwError::invalid("design.too_large", "The picture is larger than 20 000 pixels on a side."));
+    }
+    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), fmt);
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(20_000);
+    limits.max_image_height = Some(20_000);
+    limits.max_alloc = Some(1024 * 1024 * 1024);
+    reader.limits(limits);
+    reader.decode().map_err(|_| PwError::invalid("design.unreadable", "The picture could not be read."))
+}
+
 pub fn load_source(input: &Path, opts: &OpenOptions, page: u32) -> PwResult<(Rgb, f32)> {
     let head = {
         use std::io::Read;
         let mut f = std::fs::File::open(input).map_err(|e| PwError::from_io(&e, "file"))?;
-        let mut b = [0u8; 8];
+        let mut b = [0u8; 16];
         let n = f.read(&mut b).map_err(|e| PwError::from_io(&e, "file"))?;
         b[..n].to_vec()
     };
@@ -1057,23 +1082,19 @@ pub fn load_source(input: &Path, opts: &OpenOptions, page: u32) -> PwResult<(Rgb
         let pt = dw / rgb.w as f32;
         return Ok((rgb, pt));
     }
-    let fmt =
-        image::guess_format(&head).ok().filter(|f| matches!(f, image::ImageFormat::Png | image::ImageFormat::Jpeg));
-    let Some(fmt) = fmt else {
-        return Err(PwError::new(ErrorCategory::UnsupportedFormat, "design.format", "Choose a PDF, PNG or JPEG file."));
+    let Some(fmt) = picture_format(&head) else {
+        return Err(PwError::new(
+            ErrorCategory::UnsupportedFormat,
+            "design.format",
+            "Choose a PDF or a picture (PNG, JPEG, WebP, TIFF, GIF or BMP).",
+        ));
     };
     let meta = std::fs::metadata(input).map_err(|e| PwError::from_io(&e, "image"))?;
     if meta.len() > MAX_IMAGE_FILE {
         return Err(PwError::invalid("design.too_large", "The picture is larger than 100 MB."));
     }
     let bytes = std::fs::read(input).map_err(|e| PwError::from_io(&e, "image"))?;
-    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), fmt);
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(20_000);
-    limits.max_image_height = Some(20_000);
-    limits.max_alloc = Some(1024 * 1024 * 1024);
-    reader.limits(limits);
-    let img = reader.decode().map_err(|_| PwError::invalid("design.unreadable", "The picture could not be read."))?;
+    let img = decode_picture(bytes, fmt)?;
     let scale = img.width().max(img.height()) as f32 / MAX_SIDE as f32;
     let rgb = rgb_from(img);
     // 96 pixels per inch, as an image of that size is usually meant (scaled with the picture).
@@ -1086,27 +1107,22 @@ pub fn picture_png(path: &Path) -> PwResult<String> {
     let head = {
         use std::io::Read;
         let mut f = std::fs::File::open(path).map_err(|e| PwError::from_io(&e, "picture"))?;
-        let mut b = [0u8; 8];
+        let mut b = [0u8; 16];
         let n = f.read(&mut b).map_err(|e| PwError::from_io(&e, "picture"))?;
         b[..n].to_vec()
     };
-    let fmt = image::guess_format(&head)
-        .ok()
-        .filter(|f| matches!(f, image::ImageFormat::Png | image::ImageFormat::Jpeg))
-        .ok_or_else(|| {
-            PwError::new(ErrorCategory::UnsupportedFormat, "design.picture_format", "Choose a PNG or JPEG picture.")
-        })?;
+    let fmt = picture_format(&head).ok_or_else(|| {
+        PwError::new(
+            ErrorCategory::UnsupportedFormat,
+            "design.picture_format",
+            "Choose a picture (PNG, JPEG, WebP, TIFF, GIF or BMP).",
+        )
+    })?;
     if std::fs::metadata(path).map_err(|e| PwError::from_io(&e, "picture"))?.len() > MAX_IMAGE_FILE {
         return Err(PwError::invalid("design.too_large", "The picture is larger than 100 MB."));
     }
     let bytes = std::fs::read(path).map_err(|e| PwError::from_io(&e, "picture"))?;
-    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), fmt);
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(20_000);
-    limits.max_image_height = Some(20_000);
-    limits.max_alloc = Some(1024 * 1024 * 1024);
-    reader.limits(limits);
-    let img = reader.decode().map_err(|_| PwError::invalid("design.unreadable", "The picture could not be read."))?;
+    let img = decode_picture(bytes, fmt)?;
     let img = if img.width().max(img.height()) > 4096 {
         img.resize(4096, 4096, image::imageops::FilterType::Lanczos3)
     } else {

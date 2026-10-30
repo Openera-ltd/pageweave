@@ -89,3 +89,46 @@ fn damaged_and_unsupported_files_are_refused() {
     assert_eq!(run(vec![img("alpha.png")], ImagePageSize::A4, 500.0, &out).expect_err("margin").code, "images.margin");
     assert!(!out.exists());
 }
+
+#[test]
+fn webp_tiff_gif_and_bmp_become_pages_and_a_multi_page_tiff_is_reported() {
+    let dir = tempfile::tempdir().expect("tmp");
+    // A 120 × 80 picture: left half blue, right half red.
+    let pic =
+        image::RgbImage::from_fn(
+            120,
+            80,
+            |x, _| if x < 60 { image::Rgb([20, 60, 200]) } else { image::Rgb([210, 30, 40]) },
+        );
+    let mut inputs = Vec::new();
+    for (name, fmt) in [
+        ("p.webp", image::ImageFormat::WebP),
+        ("p.tif", image::ImageFormat::Tiff),
+        ("p.gif", image::ImageFormat::Gif),
+        ("p.bmp", image::ImageFormat::Bmp),
+    ] {
+        let path = dir.path().join(name);
+        image::DynamicImage::ImageRgb8(pic.clone()).save_with_format(&path, fmt).expect("encode");
+        inputs.push(path);
+    }
+    // A two-page TIFF: only its first page is used, and the user is told.
+    let multi = dir.path().join("two.tif");
+    {
+        let mut enc = tiff::encoder::TiffEncoder::new(std::fs::File::create(&multi).expect("create")).expect("tiff");
+        for _ in 0..2 {
+            enc.write_image::<tiff::encoder::colortype::RGB8>(120, 80, pic.as_raw()).expect("page");
+        }
+    }
+    inputs.push(multi);
+    let out = dir.path().join("all.pdf");
+    let r = run(inputs, ImagePageSize::Image, 0.0, &out).expect("converted");
+    assert_eq!(r.data["page_count"], 5);
+    assert!(r.warnings.iter().any(|w| w.contains("first page of two.tif (2 pages)")), "{:?}", r.warnings);
+    // Each page shows the picture: blue on the left, red on the right.
+    for page in 0..5 {
+        let (png, w, h) = render_page_png(&out, &opts(), page, 1.0).expect("render");
+        let rendered = image::load_from_memory(&png).expect("png").to_rgb8();
+        let (l, r) = (rendered.get_pixel(w / 4, h / 2), rendered.get_pixel(3 * w / 4, h / 2));
+        assert!(l[2] > 150 && l[0] < 80 && r[0] > 150 && r[2] < 90, "page {page}: {l:?} {r:?}");
+    }
+}

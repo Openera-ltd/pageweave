@@ -361,7 +361,7 @@ pub const TOOLS: &[Tool] = &[
     Tool {
         name: "reconstruct_design",
         title: "Rebuild a flat design as editable objects",
-        description: "Rebuild a flat picture (PNG or JPEG, or one page of a PDF) as separately editable text, shapes and pictures, saved as a design project (.pwdesign). Wording comes only from text recognition, with its confidence; regions that are neither text nor a plain shape stay pictures and are marked uncertain. Original layers are not recovered (a flat picture has none).",
+        description: "Rebuild a flat picture (PNG, JPEG, WebP, TIFF, GIF or BMP, or one page of a PDF) as separately editable text, shapes and pictures, saved as a design project (.pwdesign). Wording comes only from text recognition, with its confidence; regions that are neither text nor a plain shape stay pictures and are marked uncertain. Original layers are not recovered (a flat picture has none).",
         effect: Effect::WritesNewFiles,
         long: true,
         schema: || {

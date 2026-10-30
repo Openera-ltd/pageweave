@@ -112,7 +112,7 @@ export function hit(d: Design, x: number, y: number): DesignObject | null {
 const round = (v: number) => Math.round(v * 10) / 10;
 
 export const isDesignPath = (p: string) => /\.pwdesign$/i.test(p);
-export const isStudioSource = (p: string) => /\.(png|jpe?g|pdf|pwdesign)$/i.test(p);
+export const isStudioSource = (p: string) => /\.(png|jpe?g|webp|tiff?|gif|bmp|pdf|pwdesign)$/i.test(p);
 
 /** What "Open in Design Studio" does with a chosen file: open a project, rebuild a picture or a
  * PDF's first page, or nothing for other files. */
