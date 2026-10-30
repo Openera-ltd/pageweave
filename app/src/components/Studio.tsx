@@ -379,6 +379,14 @@ export function Studio({ source, jobs, onClose }: Props) {
     setGuides([]);
   };
 
+  // A cancelled pointer (the system took it) has no meaningful position: keep what was previewed.
+  const onPointerCancel = () => {
+    if (drag.current && preview) change(preview);
+    drag.current = null;
+    setPreview(null);
+    setGuides([]);
+  };
+
   const add = (kind: "text" | "shape") => {
     if (!hist) return;
     const r = addObject(hist.present, kind);
@@ -624,7 +632,7 @@ export function Studio({ source, jobs, onClose }: Props) {
               onPointerDown={onPointerDown}
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}
-              onPointerCancel={onPointerUp}
+              onPointerCancel={onPointerCancel}
             >
               {compare !== "original" && <DesignSvg design={design} />}
               {compare !== "design" && (

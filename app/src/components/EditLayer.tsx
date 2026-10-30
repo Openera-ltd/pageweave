@@ -128,12 +128,15 @@ export function EditLayer({ docId, page, zoom, items, onEdit, addText, onAddText
       const dy = e.clientY - drag.y0;
       setDrag({ ...drag, dx, dy, moved: drag.moved || Math.hypot(dx, dy) > DRAG_PX });
     },
-    onPointerUp: () => {
+    onPointerUp: (e: React.PointerEvent) => {
       if (!drag) return;
-      const d = drag;
+      // To where the pointer was released (the last moves of a quick drag may have been merged).
+      const dx = e.clientX - drag.x0;
+      const dy = e.clientY - drag.y0;
+      const moved = drag.moved || Math.hypot(dx, dy) > DRAG_PX;
       setDrag(null);
-      dragged.current = d.moved;
-      if (d.moved) moveTarget(d.target, Math.round((d.dx / k) * 100) / 100, Math.round((-d.dy / k) * 100) / 100);
+      dragged.current = moved;
+      if (moved) moveTarget(drag.target, Math.round((dx / k) * 100) / 100, Math.round((-dy / k) * 100) / 100);
     },
 
     onPointerCancel: () => setDrag(null),

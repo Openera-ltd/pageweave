@@ -444,11 +444,14 @@ function MarkCapture({ page, onMark }: { page: PageInfo; onMark: (page: number, 
         setDraft((d) => d && { ...d, x1: p.x, y1: p.y });
       }}
       onPointerUp={(e) => {
-        if (!draft || !box) return;
+        if (!draft) return;
         setDraft(null);
-        if (box.width < 4 || box.height < 4) return;
+        // To where the pointer was released (the last moves of a quick drag may have been merged).
+        const p = local(e);
+        const final = { left: Math.min(draft.x0, p.x), top: Math.min(draft.y0, p.y), width: Math.abs(p.x - draft.x0), height: Math.abs(p.y - draft.y0) };
+        if (final.width < 4 || final.height < 4) return;
         const zoom = e.currentTarget.getBoundingClientRect().width / (displaySizePt(page).w * CSS_PX_PER_PT);
-        onMark(page.index, screenRectToPdf(box, page, zoom));
+        onMark(page.index, screenRectToPdf(final, page, zoom));
       }}
       onPointerCancel={() => setDraft(null)}
     >
