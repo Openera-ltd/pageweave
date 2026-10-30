@@ -104,10 +104,12 @@ def build_document(pages: list[dict], title: str | None = None, outline: bool = 
     return w.render(catalog, info)
 
 
-def build_form_document(defaults: bool = False) -> bytes:
+def build_form_document(defaults: bool = False, xfa: str | None = None) -> bytes:
     """One page with an AcroForm: text, multiline text, checkbox (on-state named /On, not /Yes),
     a two-button radio group and a combo box, each with appearance streams. With `defaults`, the
-    same form with default values (/DV) for every field except the comments, for Reset form."""
+    same form with default values (/DV) for every field except the comments, for Reset form. With
+    `xfa`, an XFA layer in front of the same form: "hybrid" (like government forms: the standard
+    form is complete) or "dynamic" (/NeedsRendering: only the XFA form counts) (D-038)."""
     dv = (lambda v: f" /DV {v}") if defaults else (lambda v: "")
     w = PdfWriter()
     catalog, pages_obj, page = w.reserve(), w.reserve(), w.reserve()
@@ -167,8 +169,16 @@ def build_form_document(defaults: bool = False) -> bytes:
     w.set(page, f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 {font} 0 R >> >> "
                 f"/Contents {content} 0 R /Annots [{' '.join(f'{a} 0 R' for a in annots)}] >>")
     w.set(pages_obj, f"<< /Type /Pages /Kids [{page} 0 R] /Count 1 >>")
-    acro = f"<< /Fields [{' '.join(f'{f} 0 R' for f in fields)}] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv {font} 0 R >> >> >>"
-    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R /AcroForm {acro} >>")
+    xfa_entry, needs = "", ""
+    if xfa:
+        packet = (b'<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/"><template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">'
+                  b'<subform name="form1"><field name="full_name"/></subform></template>'
+                  b'<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/"><xfa:data><form1><full_name>Old XFA value</full_name>'
+                  b'</form1></xfa:data></xfa:datasets></xdp:xdp>')
+        xfa_entry = f" /XFA {w.stream(packet)} 0 R"
+        needs = " /NeedsRendering true" if xfa == "dynamic" else ""
+    acro = f"<< /Fields [{' '.join(f'{f} 0 R' for f in fields)}] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv {font} 0 R >> >>{xfa_entry} >>"
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R /AcroForm {acro}{needs} >>")
     info = w.add("<< /Title (Form fixture) /Author (PageWeave fixtures) /Producer (gen_fixtures.py) >>")
     return w.render(catalog, info)
 
@@ -952,6 +962,8 @@ def main() -> int:
     files["caption.pdf"] = build_caption_document()
     files["fonts.pdf"] = build_fonts_document()
     files["frames.pdf"] = build_frames_document()
+    files["form-xfa-hybrid.pdf"] = build_form_document(xfa="hybrid")
+    files["form-xfa-dynamic.pdf"] = build_form_document(xfa="dynamic")
     files["fonts-holdout.pdf"] = build_fonts_document(HOLDOUT_FONT_LINES)
     files["caption-clean.pdf"] = build_caption_document(words=False)
     files["form-nested.pdf"] = build_nested_form_document()

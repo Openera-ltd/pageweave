@@ -373,3 +373,48 @@ fn default_values_are_read_and_a_reset_restores_them() {
     let again = form_fields(&out, None).expect("reopen");
     assert_eq!(again.fields.iter().find(|f| f.name == "plan").and_then(|f| f.default_value.as_deref()), Some("pro"));
 }
+
+#[test]
+fn a_hybrid_xfa_form_is_filled_through_its_standard_form_and_loses_the_stale_xfa_layer() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let info = form_fields(&fixture("form-xfa-hybrid.pdf"), None).expect("fields");
+    assert!(info.has_xfa && !info.xfa_only && info.fields.len() == 5, "{info:?}");
+    let out = dir.path().join("filled.pdf");
+    let mut req = OperationRequest::new(Operation::FillForm {
+        input: fixture("form-xfa-hybrid.pdf"),
+        values: vec![text("full_name", "Ada Lovelace")],
+        output: out.clone(),
+    });
+    req.collision = CollisionPolicy::Fail;
+    execute(&req, None).expect("hybrid forms fill");
+    let after = form_fields(&out, None).expect("reopens");
+    assert!(!after.has_xfa, "the XFA layer (holding the old value) is gone");
+    let name = after.fields.iter().find(|f| f.name == "full_name").expect("field");
+    assert_eq!(name.value.as_deref(), Some("Ada Lovelace"));
+    let doc = lopdf::Document::load(&out).expect("lopdf parses the output");
+    let catalog = doc.catalog().expect("catalog");
+    assert!(!catalog.has(b"NeedsRendering"));
+    let acro = match catalog.get(b"AcroForm").expect("AcroForm kept") {
+        lopdf::Object::Reference(id) => doc.get_dictionary(*id).expect("AcroForm"),
+        o => o.as_dict().expect("AcroForm"),
+    };
+    assert!(!acro.has(b"XFA") && acro.has(b"Fields"), "standard form kept, XFA removed");
+    assert!(!String::from_utf8_lossy(&std::fs::read(&out).expect("read")).contains("Old XFA value"), "XFA data pruned");
+}
+
+#[test]
+fn a_dynamic_xfa_form_is_refused_before_anything_is_written() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let info = form_fields(&fixture("form-xfa-dynamic.pdf"), None).expect("fields");
+    assert!(info.has_xfa && info.xfa_only, "{info:?}");
+    let out = dir.path().join("filled.pdf");
+    let mut req = OperationRequest::new(Operation::FillForm {
+        input: fixture("form-xfa-dynamic.pdf"),
+        values: vec![text("full_name", "Ada")],
+        output: out.clone(),
+    });
+    req.collision = CollisionPolicy::Fail;
+    let e = execute(&req, None).expect_err("refused");
+    assert_eq!((e.category, e.code.as_ref()), (ErrorCategory::UnsupportedOperation, "form.xfa"));
+    assert!(!out.exists());
+}

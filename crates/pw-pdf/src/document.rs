@@ -204,8 +204,10 @@ pub fn open_document(path: &Path, opts: &OpenOptions) -> PwResult<DocumentInfo> 
         |t: PdfDocumentMetadataTagType| meta.get(t).map(|v| v.value().trim().to_string()).filter(|v| !v.is_empty());
     let form_type = doc.form().map(|f| f.form_type()).unwrap_or(PdfFormType::None);
     let has_xfa = matches!(form_type, PdfFormType::XfaFull | PdfFormType::XfaForeground);
-    if has_xfa {
-        warnings.push("This document contains an XFA form, which PageWeave cannot display or fill.".into());
+    // A hybrid form (XFA in front of a complete standard form) is shown and filled through its
+    // standard form (D-038); only a dynamic XFA form cannot be.
+    if form_type == PdfFormType::XfaFull {
+        warnings.push("This document contains a dynamic XFA form, which PageWeave cannot display or fill.".into());
     }
     // `Unprotected` means no security handler. Revisions 5/6 (AES-256) are unknown to the binding and
     // come back as an error, which still means the file is encrypted.

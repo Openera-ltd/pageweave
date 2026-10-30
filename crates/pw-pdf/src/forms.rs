@@ -78,8 +78,13 @@ pub struct FormField {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FormInfo {
     pub fields: Vec<FormField>,
-    /// XFA forms are detected but not filled (not supported by this engine build).
+    /// The document carries an XFA form (D-038).
     pub has_xfa: bool,
+    /// Only XFA: a dynamic XFA form, or XFA without standard fields. These cannot be filled by this
+    /// engine build (no XFA). A hybrid form (XFA plus a complete standard form, as on most
+    /// government forms) is filled through its standard fields instead.
+    #[serde(default)]
+    pub xfa_only: bool,
     pub truncated: bool,
 }
 
@@ -328,6 +333,12 @@ impl<'a> FormDoc<'a> {
         matches!(unsafe { (self.api.FPDF_GetFormType)(self.doc) }, 2 | 3)
     }
 
+    /// A dynamic XFA form: its standard fields (if any) are not the form people see.
+    fn is_full_xfa(&self) -> bool {
+        // SAFETY: valid document handle.
+        unsafe { (self.api.FPDF_GetFormType)(self.doc) == 2 }
+    }
+
     /// Visit every widget annotation; the handle is valid only during the callback.
     fn for_each_widget(&self, mut f: impl FnMut(u32, FPDF_PAGE, FPDF_ANNOTATION) -> PwResult<bool>) -> PwResult<bool> {
         let mut seen = 0usize;
@@ -553,6 +564,7 @@ pub fn form_fields(path: &Path, password: Option<&str>) -> PwResult<FormInfo> {
     let fd = FormDoc::open(api, path, password)?;
     let (mut fields, truncated) = fd.fields()?;
     let has_xfa = fd.has_xfa();
+    let xfa_only = fd.is_full_xfa() || (has_xfa && fields.is_empty());
     drop(fd);
     if !fields.is_empty() {
         let mut defaults = crate::formdefaults::field_defaults(path, password);
@@ -560,7 +572,7 @@ pub fn form_fields(path: &Path, password: Option<&str>) -> PwResult<FormInfo> {
             f.default_value = defaults.remove(&f.name);
         }
     }
-    Ok(FormInfo { fields, has_xfa, truncated })
+    Ok(FormInfo { fields, has_xfa, xfa_only, truncated })
 }
 
 /// Fill the form in memory (exclusive engine access, released before returning) and return the
@@ -569,14 +581,15 @@ fn fill_bytes(input: &Path, password: Option<&str>, values: &[FieldValue]) -> Pw
     let (_exclusive, lib) = engine_exclusive()?;
     let api = api(lib)?;
     let fd = FormDoc::open(api, input, password)?;
-    if fd.has_xfa() {
+    let (fields, _) = fd.fields()?;
+    let hybrid = fd.has_xfa();
+    if fd.is_full_xfa() || (hybrid && fields.is_empty()) {
         return Err(PwError::new(
             ErrorCategory::UnsupportedOperation,
             "form.xfa",
-            "This form uses XFA, which PageWeave cannot fill.",
+            "This is a dynamic XFA form, which PageWeave cannot fill.",
         ));
     }
-    let (fields, _) = fd.fields()?;
     let by_name: HashMap<&str, &FormField> = fields.iter().map(|f| (f.name.as_str(), f)).collect();
     for v in values {
         let f = by_name.get(v.name.as_str()).ok_or_else(|| {
@@ -629,7 +642,43 @@ fn fill_bytes(input: &Path, password: Option<&str>, values: &[FieldValue]) -> Pw
     if let Some(name) = failed {
         return Err(fail("form.fill", format!("The field “{name}” could not be filled.")));
     }
-    fd.save()
+    let bytes = fd.save()?;
+    drop(fd);
+    if hybrid {
+        drop_xfa(&bytes)
+    } else {
+        Ok(bytes)
+    }
+}
+
+/// A filled hybrid form without its XFA layer (D-038): the XFA data still holds the old values,
+/// and XFA-aware viewers would show those instead of the standard fields that were filled.
+fn drop_xfa(bytes: &[u8]) -> PwResult<Vec<u8>> {
+    let broken = || fail("form.save", "The filled form could not be saved.");
+    let mut doc = lopdf::Document::load_mem(bytes).map_err(|_| broken())?;
+    let root = doc.trailer.get(b"Root").and_then(|o| o.as_reference()).map_err(|_| broken())?;
+    let acro = {
+        let catalog = doc.get_object_mut(root).and_then(|o| o.as_dict_mut()).map_err(|_| broken())?;
+        catalog.remove(b"NeedsRendering");
+        catalog.get(b"AcroForm").ok().cloned()
+    };
+    match acro {
+        Some(lopdf::Object::Reference(id)) => {
+            if let Ok(d) = doc.get_object_mut(id).and_then(|o| o.as_dict_mut()) {
+                d.remove(b"XFA");
+            }
+        }
+        Some(lopdf::Object::Dictionary(mut d)) => {
+            d.remove(b"XFA");
+            let catalog = doc.get_object_mut(root).and_then(|o| o.as_dict_mut()).map_err(|_| broken())?;
+            catalog.set("AcroForm", lopdf::Object::Dictionary(d));
+        }
+        _ => {}
+    }
+    doc.prune_objects();
+    let mut out = Vec::new();
+    doc.save_to(&mut out).map_err(|_| broken())?;
+    Ok(out)
 }
 
 /// Apply `values` to a copy of `input` and commit it to `output`. The source is not modified. The

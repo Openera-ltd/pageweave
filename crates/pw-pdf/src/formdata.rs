@@ -190,11 +190,11 @@ pub fn read_data_file(path: &Path) -> PwResult<Vec<u8>> {
 }
 
 fn refuse_xfa(info: &FormInfo) -> PwResult<()> {
-    if info.has_xfa {
+    if info.xfa_only {
         return Err(PwError::new(
             ErrorCategory::UnsupportedOperation,
             "form.xfa",
-            "This form uses XFA, which PageWeave cannot fill or export.",
+            "This is a dynamic XFA form, which PageWeave cannot fill or export.",
         ));
     }
     Ok(())
@@ -450,7 +450,7 @@ mod tests {
         let m = match_entries(&fs, FormDataFormat::Json, &[e("country", t("Mars"))]);
         assert_eq!(m.matched[0].value, FormValue::Text("Mars".into()));
 
-        let info = FormInfo { fields: fs, has_xfa: false, truncated: false };
+        let info = FormInfo { fields: fs, has_xfa: false, xfa_only: false, truncated: false };
         let pending = [FieldValue { name: "subscribe".into(), value: FormValue::Checked(true) }];
         let out = export_entries(&info, &pending).expect("entries");
         let names: Vec<&str> = out.iter().map(|e| e.name.as_str()).collect();

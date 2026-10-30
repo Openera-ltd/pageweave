@@ -1,0 +1,150 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [7 0 R 10 0 R 11 0 R 19 0 R 21 0 R] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv 4 0 R >> >> /XFA 22 0 R >> /NeedsRendering true >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R /Annots [7 0 R 10 0 R 14 0 R 17 0 R 19 0 R 21 0 R] >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Length 196 >>
+stream
+BT
+/F1 12 Tf
+20 TL
+40 740 Td
+(Form fixture PWFORM) Tj
+T* () Tj
+T* (Full name) Tj
+T* () Tj
+T* (Subscribe) Tj
+T* () Tj
+T* (Plan: basic / pro) Tj
+T* () Tj
+T* (Country) Tj
+T* () Tj
+T* (Comments) Tj
+ET
+endstream
+endobj
+6 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 250 20] /Resources << /Font << /Helv 4 0 R >> >> /Length 38 >>
+stream
+0.4 0.4 0.4 RG 1 w 0.5 0.5 249 19 re S
+endstream
+endobj
+7 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Tx /T (full_name) /TU (Full name) /Rect [150 666 400 686] /F 4 /P 3 0 R /DA (/Helv 12 Tf 0 g) /V () /AP << /N 6 0 R >> /MK << /BC [0.4 0.4 0.4] >> >>
+endobj
+8 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 14 14] /Resources << /Font << /Helv 4 0 R >> >> /Length 84 >>
+stream
+0.4 0.4 0.4 RG 1 w 0.5 0.5 13 13 re S 0 0 0 RG 1.5 w 3 3 m 11 11 l S 3 11 m 11 3 l S
+endstream
+endobj
+9 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 14 14] /Resources << /Font << /Helv 4 0 R >> >> /Length 37 >>
+stream
+0.4 0.4 0.4 RG 1 w 0.5 0.5 13 13 re S
+endstream
+endobj
+10 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Btn /T (subscribe) /TU (Subscribe) /Rect [150 628 164 642] /F 4 /P 3 0 R /V /Off /AS /Off /AP << /N << /On 8 0 R /Off 9 0 R >> >> /MK << /CA (8) >> >>
+endobj
+11 0 obj
+<< /FT /Btn /Ff 49152 /T (plan) /TU (Plan) /V /Off /Kids [14 0 R 17 0 R] >>
+endobj
+12 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 14 14] /Resources << /Font << /Helv 4 0 R >> >> /Length 59 >>
+stream
+0.4 0.4 0.4 RG 1 w 0.5 0.5 13 13 re S 0 0 0 rg 4 4 6 6 re f
+endstream
+endobj
+13 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 14 14] /Resources << /Font << /Helv 4 0 R >> >> /Length 37 >>
+stream
+0.4 0.4 0.4 RG 1 w 0.5 0.5 13 13 re S
+endstream
+endobj
+14 0 obj
+<< /Type /Annot /Subtype /Widget /Parent 11 0 R /Rect [150 588 164 602] /F 4 /P 3 0 R /AS /Off /AP << /N << /basic 12 0 R /Off 13 0 R >> >> /MK << /CA (l) >> >>
+endobj
+15 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 14 14] /Resources << /Font << /Helv 4 0 R >> >> /Length 59 >>
+stream
+0.4 0.4 0.4 RG 1 w 0.5 0.5 13 13 re S 0 0 0 rg 4 4 6 6 re f
+endstream
+endobj
+16 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 14 14] /Resources << /Font << /Helv 4 0 R >> >> /Length 37 >>
+stream
+0.4 0.4 0.4 RG 1 w 0.5 0.5 13 13 re S
+endstream
+endobj
+17 0 obj
+<< /Type /Annot /Subtype /Widget /Parent 11 0 R /Rect [210 588 224 602] /F 4 /P 3 0 R /AS /Off /AP << /N << /pro 15 0 R /Off 16 0 R >> >> /MK << /CA (l) >> >>
+endobj
+18 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 150 20] /Resources << /Font << /Helv 4 0 R >> >> /Length 91 >>
+stream
+0.4 0.4 0.4 RG 1 w 0.5 0.5 149 19 re S /Tx BMC BT /Helv 12 Tf 0 g 4 5 Td (Canada) Tj ET EMC
+endstream
+endobj
+19 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Ch /Ff 131072 /T (country) /TU (Country) /Rect [150 546 300 566] /F 4 /P 3 0 R /Opt [(Canada) (Germany) (Japan)] /V (Canada) /DA (/Helv 12 Tf 0 g) /AP << /N 18 0 R >> >>
+endobj
+20 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 300 60] /Resources << /Font << /Helv 4 0 R >> >> /Length 38 >>
+stream
+0.4 0.4 0.4 RG 1 w 0.5 0.5 299 59 re S
+endstream
+endobj
+21 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Tx /Ff 4096 /T (comments) /TU (Comments) /Rect [150 466 450 526] /F 4 /P 3 0 R /DA (/Helv 10 Tf 0 g) /V () /AP << /N 20 0 R >> >>
+endobj
+22 0 obj
+<< /Length 339 >>
+stream
+<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/"><template xmlns="http://www.xfa.org/schema/xfa-template/3.3/"><subform name="form1"><field name="full_name"/></subform></template><xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/"><xfa:data><form1><full_name>Old XFA value</full_name></form1></xfa:data></xfa:datasets></xdp:xdp>
+endstream
+endobj
+23 0 obj
+<< /Title (Form fixture) /Author (PageWeave fixtures) /Producer (gen_fixtures.py) >>
+endobj
+xref
+0 24
+0000000000 65535 f 
+0000000015 00000 n 
+0000000212 00000 n 
+0000000269 00000 n 
+0000000446 00000 n 
+0000000543 00000 n 
+0000000790 00000 n 
+0000000968 00000 n 
+0000001171 00000 n 
+0000001394 00000 n 
+0000001570 00000 n 
+0000001775 00000 n 
+0000001867 00000 n 
+0000002066 00000 n 
+0000002243 00000 n 
+0000002420 00000 n 
+0000002619 00000 n 
+0000002796 00000 n 
+0000002971 00000 n 
+0000003203 00000 n 
+0000003427 00000 n 
+0000003606 00000 n 
+0000003790 00000 n 
+0000004181 00000 n 
+trailer
+<< /Size 24 /Root 1 0 R /Info 23 0 R /ID [<70616765776561766566697874757265> <70616765776561766566697874757265>] >>
+startxref
+4282
+%%EOF

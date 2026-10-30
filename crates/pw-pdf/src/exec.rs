@@ -54,8 +54,12 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
         }
         Operation::FormFields { input } => {
             let info = crate::forms::form_fields(input, opts.password)?;
-            if info.has_xfa {
-                warnings.push("This form uses XFA; its fields cannot be filled here.".into());
+            if info.xfa_only {
+                warnings.push("This is a dynamic XFA form; its fields cannot be filled here.".into());
+            } else if info.has_xfa {
+                warnings.push(
+                    "This form also has an XFA layer; filled copies keep the standard form and leave the XFA layer out.".into(),
+                );
             }
             (vec![], serde_json::to_value(&info).unwrap_or_default())
         }

@@ -1092,6 +1092,54 @@ await test("forms: fill text, checkbox, radio, choice and multiline; Ctrl+S save
   }
 });
 
+await test("XFA forms: a hybrid form (like government forms) fills and saves without its stale XFA layer; a dynamic one is not offered", async () => {
+  const field = (name) => `[data-formlayer="0"] [data-field="${name}"]`;
+  const out = join(work, "xfa-filled.pdf");
+  await withApp([join(FIX, "form-xfa-hybrid.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.waitFor(field("full_name"));
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("XFA layer")), "the XFA layer is explained");
+    await s.type(field("full_name"), "Ada Lovelace");
+    await s.keys(["Control", "s"]);
+    await s.waitFor("#output");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved xfa-filled.pdf")), "saved notice");
+  });
+  if (CLI) {
+    const f = JSON.parse(execFileSync(CLI, ["--json", "fields", out], { encoding: "utf8" })).result.data;
+    assert(!f.has_xfa && f.fields.find((x) => x.name === "full_name").value === "Ada Lovelace", `saved: xfa ${f.has_xfa}`);
+  }
+  await withApp([join(FIX, "form-xfa-dynamic.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("dynamic XFA form")), "dynamic XFA explained");
+    assert(!(await s.exec(`return !!document.querySelector('${field("full_name")}')`)), "no fillable controls for a dynamic XFA form");
+  });
+});
+
+await test("real IRS Form 1040 (test corpus): fill name fields in the app, save, values read back", async () => {
+  const src = resolve(fileURLToPath(new URL("../../target/corpus/real/irs-f1040.pdf", import.meta.url)));
+  if (!existsSync(src) || !CLI) throw new Skip("test corpus not built (python3 tools/corpus/build.py) or no CLI");
+  const names = JSON.parse(execFileSync(CLI, ["--json", "fields", src], { encoding: "utf8" })).result.data.fields.filter((f) => f.kind === "text" && f.widgets[0]?.page === 0).slice(0, 2).map((f) => f.name);
+  const out = join(work, "f1040-filled.pdf");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    for (const [i, n] of names.entries()) {
+      const sel = `[data-formlayer="0"] [data-field="${n}"]`;
+      await s.waitFor(sel);
+      await s.type(sel, ["Ada", "Lovelace"][i]);
+    }
+    await s.keys(["Control", "s"]);
+    await s.waitFor("#output");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved f1040-filled.pdf")), "saved notice", 60000);
+  });
+  const f = JSON.parse(execFileSync(CLI, ["--json", "fields", out], { encoding: "utf8" })).result.data;
+  const got = names.map((n) => f.fields.find((x) => x.name === n).value);
+  assert(JSON.stringify(got) === '["Ada","Lovelace"]' && !f.has_xfa, `saved ${JSON.stringify(got)} xfa ${f.has_xfa}`);
+});
+
 await test("form data: export XFDF with unsaved values; import JSON with preview, Undo, then save a verified copy", async () => {
   const src = join(FIX, "form-nested.pdf");
   const before = sha(src);

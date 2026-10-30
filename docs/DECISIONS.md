@@ -288,3 +288,10 @@ These were made by Claude Code under the owner's standing instruction to "start 
 - **Context:** PRD 10 lists crop among the editing operations. Pictures are embedded PNGs; exports draw them whole.
 - **Decision:** Crop trims the picture's own pixels (engine `crop_png`, host `crop_picture`: decode with limits, crop, re-encode) and moves/resizes its box so the kept part stays where it was. It is one undo step (the previous picture stays in the history), so no crop rectangle has to be carried through SVG, PDF and PNG exports. Trims are entered per side in design pixels with a dashed preview on the canvas; a turned or locked picture cannot be cropped (said on the control).
 - **Consequences:** Exports need no change. Uncropping after saving and reopening is not possible (Replace picture restores a source); the undo history covers the session.
+
+### D-038 — Hybrid XFA forms are filled through their standard form
+- **Status:** Accepted
+- **Date:** 2026-10-30
+- **Context:** Every form with XFA was refused ("PageWeave cannot fill XFA"). The real-world test corpus showed that this includes the most common forms people fill — US IRS forms (1040, W-4, Schedule C) are hybrid: an XFA layer in front of a complete standard (AcroForm) form. The viewer meanwhile offered their fields for typing, and saving then failed.
+- **Decision:** The engine build has no XFA (D-001), so dynamic XFA forms (`NeedsRendering`, PDFium form type XFA_FULL, or XFA with no standard fields) stay refused, are not offered for typing and are explained. Hybrid forms are filled, exported and imported through their standard fields; the saved copy leaves the XFA layer (and `NeedsRendering`) out, because its data still holds the old values and XFA-aware viewers would show those instead. The user is told once when such a form opens.
+- **Consequences:** Real IRS W-4 and 1040 filled in the app and by the CLI, values read back, pages render. Hybrid fixture `form-xfa-hybrid.pdf` and dynamic fixture `form-xfa-dynamic.pdf` with engine tests and E2E. Removing the XFA layer means a later XFA-only workflow (e.g. a server that reads XFA data) would not see the values; noted to the user.

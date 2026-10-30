@@ -494,7 +494,8 @@ export function App() {
       .formFields(id)
       .then((info) => {
         setForms((f) => (id in f ? { ...f, [id]: info } : f));
-        if (info.has_xfa) notify({ kind: "warning", title: active.name, detail: "This form uses XFA; its fields cannot be filled in PageWeave.", persistent: true });
+        if (info.xfa_only) notify({ kind: "warning", title: active.name, detail: "This is a dynamic XFA form; its fields cannot be filled in PageWeave.", persistent: true });
+        else if (info.has_xfa) notify({ kind: "info", title: active.name, detail: "This form also has an XFA layer. PageWeave fills its standard form; saved copies leave the XFA layer out so every viewer shows the same values.", persistent: false });
       })
       .catch((e) => notifyError("Couldn’t read the form fields", e));
   }, [api, active, forms, notify, notifyError]);
@@ -804,7 +805,7 @@ export function App() {
     const f = forms[active.doc_id];
     if (f === undefined) return "Reading the form fields…";
     if (f === null) return "The form fields couldn’t be read.";
-    if (f.has_xfa) return "This form uses XFA, which PageWeave can’t fill.";
+    if (f.xfa_only) return "This is a dynamic XFA form, which PageWeave can’t fill.";
     return f.fields.some(isFillable) ? true : "This document has no form fields.";
   };
 
@@ -1617,7 +1618,7 @@ export function App() {
               onReadingInterrupted={stopFollowing}
               onPageContextMenu={pageMenu}
               annotations={activePending}
-              form={forms[active.doc_id] ?? null}
+              form={forms[active.doc_id]?.xfa_only ? null : (forms[active.doc_id] ?? null)}
               formEdits={editsOf(active.doc_id)}
               onFormEdit={onFormEdit}
               markMode={markMode}

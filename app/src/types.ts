@@ -226,7 +226,10 @@ export interface FormField {
 
 export interface FormInfo {
   fields: FormField[];
+  /** The document carries an XFA form. */
   has_xfa: boolean;
+  /** Only XFA (dynamic): its fields cannot be filled. A hybrid form is filled through its standard form. */
+  xfa_only?: boolean;
   truncated: boolean;
 }
 
