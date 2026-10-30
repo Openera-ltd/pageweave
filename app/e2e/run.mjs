@@ -743,7 +743,11 @@ await test("toolbar: grouped tools, dropdowns, selection tools enable live, over
     await s.click('.toolbar [data-command="edit.undo"]');
     await s.waitUntil(async () => (await annotCount(s, "highlight")) === 0, "undone from the toolbar");
     assert(!(await s.exec("return !!document.querySelector('.tab .dirty')")), "no unsaved dot after undo");
-    assert(!(await s.exec("return !!document.querySelector('[data-testid=toolbar-more]')")), "everything fits at 1366 px");
+    // At the default (compact) density everything fits at 1366 px; an earlier scenario may have left
+    // the comfortable density, where groups may move to More tools (checked below in a narrow window).
+    if ((await rootAttr(s, "density")) !== "comfortable") {
+      assert(!(await s.exec("return !!document.querySelector('[data-testid=toolbar-more]')")), "everything fits at 1366 px");
+    }
     // Narrow: groups move into More tools; nothing overflows the window; their commands still run.
     await s.exec("window.__resizes = 0");
     await s.setWindowRect(760, 520);
@@ -757,7 +761,11 @@ await test("toolbar: grouped tools, dropdowns, selection tools enable live, over
     await s.waitUntil(async () => (await s.exec("return document.querySelector('[role=dialog] h2')?.textContent ?? ''")).includes("Protect"), "protect dialog from More tools");
     await s.keys(["Escape"]);
     await s.setWindowRect(1366, 860);
-    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=toolbar-more]')")), "More tools gone when wide again");
+    if ((await rootAttr(s, "density")) !== "comfortable") {
+      await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=toolbar-more]')")), "More tools gone when wide again");
+    } else {
+      await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.toolbar [data-group]').length")) > 4, "groups come back when wide again");
+    }
   });
 });
 
