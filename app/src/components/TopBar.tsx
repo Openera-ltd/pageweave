@@ -68,6 +68,9 @@ export const CONVERT_MENU: (CommandId | "separator")[] = [
   "separator",
   "file.translate",
   "read.saveAudio",
+  "separator",
+  "studio.rebuildPage",
+  "studio.open",
 ];
 
 /** The groups between the fixed start (menu, open) and end (palette, all tools, settings). */
@@ -106,6 +109,7 @@ export function barGroups(state: { reading: boolean; editMode: boolean }): BarGr
       priority: 4,
       items: [
         { kind: "menu", id: "convert", label: "Convert", icon: <FileOutput />, commands: CONVERT_MENU },
+        cmd("studio.rebuildPage"),
         cmd("file.translate"),
         cmd("pages.ocr"),
         cmd(state.reading ? "read.stop" : "read.aloud"),

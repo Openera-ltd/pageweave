@@ -132,6 +132,22 @@ enum Command {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+    /// Rebuild a flat picture (PNG/JPEG, or one page of a PDF) as editable text, shapes and
+    /// pictures, saved as a design project (.pwdesign).
+    Design {
+        file: PathBuf,
+        /// Page of a PDF (1-based).
+        #[arg(long, default_value_t = 1)]
+        page: u32,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    /// Export a design project as editable SVG or as PDF (chosen by the output's extension).
+    DesignExport {
+        file: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
     /// Convert to an editable Word document (.docx): paragraphs, headings, columns, pictures and
     /// links; a report says what could not be carried over.
     ToDocx {
@@ -811,6 +827,21 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
         }
         Command::ToPptx { file, pages, output } => {
             Operation::ConvertToPptx { input: file.clone(), pages: pages.clone(), output: output.clone() }
+        }
+        Command::Design { file, page, output } => {
+            if *page == 0 {
+                return Err(PwError::invalid("usage", "Pages are numbered from 1."));
+            }
+            Operation::ReconstructDesign { input: file.clone(), page: page - 1, output: output.clone() }
+        }
+        Command::DesignExport { file, output } => {
+            let ext = output.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+            let format = match ext.as_str() {
+                "svg" => pw_core::ops::DesignFormat::Svg,
+                "pdf" => pw_core::ops::DesignFormat::Pdf,
+                _ => return Err(PwError::invalid("usage", "Export to a .svg or .pdf file.")),
+            };
+            Operation::ExportDesign { input: file.clone(), format, output: output.clone() }
         }
         Command::ToDocx { file, pages, output } => {
             Operation::ConvertToDocx { input: file.clone(), pages: pages.clone(), output: output.clone() }

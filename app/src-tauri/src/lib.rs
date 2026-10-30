@@ -207,6 +207,24 @@ async fn detect_language(state: State<'_, AppState>, doc_id: DocId) -> CmdResult
     .await
 }
 
+/// A design project for the Studio (D-028): read, validated, its pictures checked.
+#[tauri::command]
+async fn load_design(path: String) -> CmdResult<pw_pdf::studio::Design> {
+    blocking(move || pw_pdf::studio::read_design(&PathBuf::from(path))).await
+}
+
+/// Save the Studio's edits over the design project it opened: only an existing, valid .pwdesign
+/// file is replaced (never another kind of file), atomically and read back. Returns its size.
+#[tauri::command]
+async fn save_design(path: String, design: pw_pdf::studio::Design) -> CmdResult<u64> {
+    blocking(move || {
+        let p = PathBuf::from(path);
+        pw_pdf::studio::read_design(&p)?;
+        Ok(pw_pdf::studio::save_design(&design, &p, pw_core::output::CollisionPolicy::Replace, &[])?.bytes)
+    })
+    .await
+}
+
 /// Translation directions and whether each model is installed (D-022).
 #[tauri::command]
 async fn translation_directions() -> CmdResult<Vec<pw_translate::Direction>> {
@@ -733,6 +751,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_info,
+            load_design,
+            save_design,
             update_info,
             check_for_update,
             install_update,

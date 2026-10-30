@@ -78,6 +78,15 @@ Maintain a single documented shortcut registry. Include common system convention
 - When the window is too narrow, whole groups move into a "More tools" (…) menu in priority order (Comment and Sign and protect first; File and View last). Every command of a hidden group, dropdown entries included, appears there exactly once. The toolbar never scrolls or clips; widening the window brings the groups back.
 - Icons come from one shared map (`app/src/commandIcons.tsx`) so a tool looks the same in the toolbar, its menus and the All tools pane.
 
+## Design Studio
+
+- Opens over the whole window (modal: app shortcuts pause). Rebuilding runs as a job with indeterminate progress and Cancel; the project (`<name>-pageN.pwdesign`, next to the source, never replacing a file) is written first, then opened.
+- Click selects the front-most visible object; dragging moves it, corner handles resize it (text scales its size), arrow keys nudge 1 px (Shift 10 px) while the canvas has focus; Delete removes, Ctrl+D duplicates, Escape deselects, then closes. Locked objects can be selected but never move.
+- Layer rows (front first) select on click; Hide/Show and Lock/Unlock appear on hover, selection or keyboard focus, and stay visible when on.
+- Every edit is one undo step (Ctrl+Z / Ctrl+Y); typing in one field is one step. Ctrl+S saves over the open project only. Closing with unsaved changes asks Save / Don't save / Cancel.
+- Uncertain objects (pictures, confidence under 80 %) carry a warning icon and a note in the properties panel; nothing is drawn over the canvas. Compare: Design, Original, Overlay (opacity slider), Differences (difference blend).
+- Export SVG/PDF saves first, asks where (the system dialog confirms replacing), runs the engine's verified export and offers Show in folder.
+
 ## Tabs, windows, dialogs, and unsaved work
 
 - Preserve open documents, scroll positions, relevant selections, panel/workspace preferences, and active tab where reasonable.

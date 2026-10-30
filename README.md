@@ -41,6 +41,7 @@ PageWeave checks before it is kept.
 | **Forms** | Fill in forms on the page, clear or reset them, export and import the answers |
 | **Convert** | PDF → Word, PowerPoint, Excel/CSV tables, text and images; images → PDF; open Word, Excel and PowerPoint files (with LibreOffice installed) |
 | **Translate** | Translate pages between English, German, French, Spanish and Italian into a Word file that keeps the layout |
+| **Design Studio** | Rebuild a flat poster, flyer or screenshot (picture or PDF page) as editable text, shapes and pictures; edit, compare with the original, export SVG or PDF |
 | **Read aloud** | Hear the document with your computer's voices, the spoken word highlighted; save it as audio |
 | **Scans** | Make scans searchable (OCR), straighten them, turn them upright, remove blank pages |
 | **Protect and clean** | Passwords, permanent redaction, remove hidden information, find sensitive text |
@@ -108,6 +109,7 @@ PageWeave checks before it is kept.
 - Read aloud: voices and languages are whatever the computer has installed (Windows Settings ▸ Speech); a voice reads every language with its own pronunciation (no automatic language switching yet); no pronunciation dictionary, audio formats other than WAV, or voice cloning; resuming where you stopped after closing the document is not kept. The Windows path's word timings are checked on Windows CI only.
 - Translation: machine translation (review it); five languages only; mixed formatting inside a paragraph becomes one style; no glossary, bilingual output or batch translation yet; scanned pages need text recognition first.
 - XFA forms are detected but cannot be displayed or filled.
+- Design Studio: flat pictures have no layers, so objects are the Studio's best guess: text lines (one object per line, Helvetica-style font), single-colour rectangles, and everything else kept as pictures marked for checking; text over a picture also stays in the picture; no rotation, grouping, snapping or picture replacement yet; measured on a synthetic poster only.
 - No measured performance budgets or hardware support claims yet (`docs/HARDWARE_SUPPORT.md`).
 - Screen-reader behaviour has not yet been verified with Narrator/NVDA.
 - Crash containment: jobs run in worker processes and the viewer's pages and reads in reader processes, so an engine crash on a damaged file fails that job or that page ("could not be displayed"), not the app. Measured on Linux; the crash test runs on debug builds only.
@@ -171,6 +173,7 @@ pageweave extract --pages "1-3, 5" -o excerpt.pdf report.pdf
 pageweave to-docx -o report.docx report.pdf
 pageweave translate --to de -o report-de.docx report.pdf
 pageweave ocr -o searchable.pdf scan.pdf
+pageweave design -o flyer.pwdesign flyer.png && pageweave design-export flyer.pwdesign -o flyer.svg
 ```
 
 <details>
@@ -235,7 +238,7 @@ the network — and only touches files inside the folders you name:
   `compare_documents`, `check_signatures`, `check_accessibility`, `find_sensitive_text`.
 - With `--allow-write` also: `extract_pages`, `delete_pages`, `rotate_pages`, `merge_documents`,
   `split_document`, `fill_form`, `recognize_text` (OCR, with progress and cancel), `reduce_file_size`,
-  `export_text`, `convert_to_docx`, `convert_to_pptx`, `export_tables` (Excel), `read_aloud_to_wav`, `translate_document`. These only create **new** files; existing files are never replaced or changed.
+  `export_text`, `convert_to_docx`, `convert_to_pptx`, `export_tables` (Excel), `read_aloud_to_wav`, `translate_document`, `reconstruct_design`, `export_design`. These only create **new** files; existing files are never replaced or changed.
 - Not available through MCP: password-protected files, signing, redaction, removing hidden information,
   passwords and attachments. Paths outside the named folders (including through symbolic links) are refused.
 - The agent and its AI model are separate from PageWeave; nothing here sends documents anywhere. What the

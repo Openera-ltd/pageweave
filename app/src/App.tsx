@@ -63,6 +63,8 @@ import { SaveAttachmentDialog } from "./components/SaveAttachmentDialog";
 import { EditBookmarksDialog } from "./components/EditBookmarksDialog";
 import { ImagesToPdfDialog, isImagePath } from "./components/ImagesToPdfDialog";
 import { OfficeDialog, isOfficePath } from "./components/OfficeDialog";
+import { Studio, type StudioSource } from "./components/Studio";
+import { isDesignPath, studioSourceFor } from "./studio";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { NoteDialog, UnsavedDialog } from "./components/AnnotationDialogs";
 import { CommandPalette, Home, Notices, PasswordDialog, PropertiesDialog, SearchBar, StatusBar, type Notice, type NoticeAction, type SearchState } from "./components/Panels";
@@ -104,6 +106,7 @@ type DialogState =
   | { kind: "bookmarks"; addOnOpen: boolean; page: number }
   | { kind: "images"; files: string[] }
   | { kind: "office"; file: string | null }
+  | { kind: "studio"; source: StudioSource }
   | { kind: "unsaved"; reason: "tab"; docId: number }
   | { kind: "unsaved"; reason: "quit" }
   | null;
@@ -384,6 +387,11 @@ export function App() {
       // Office files are converted to PDF first (Open an Office file).
       if (isOfficePath(path)) {
         setDialog((d) => (d ? d : { kind: "office", file: path }));
+        return;
+      }
+      // Design projects (dropped, or given at launch) open in the Design Studio.
+      if (isDesignPath(path)) {
+        setDialog((d) => (d ? d : { kind: "studio", source: { kind: "open", path } }));
         return;
       }
       try {
@@ -1012,6 +1020,11 @@ export function App() {
     "file.toWord": { run: () => openTool("word"), available: all(needDoc, noDialog) },
     "file.toPowerPoint": { run: () => openTool("slides"), available: all(needDoc, noDialog) },
     "file.translate": { run: () => openTool("translate"), available: all(needDoc, noDialog) },
+    "studio.rebuildPage": {
+      run: () => active && setDialog({ kind: "studio", source: { kind: "rebuild", input: active.path, page: view.page, docId: active.doc_id } }),
+      available: all(needDoc, noDialog),
+    },
+    "studio.open": { run: () => void openStudio(), available: noDialog },
     "read.aloud": { run: () => startReading(), available: all(needDoc, () => speechReady) },
     "read.stop": { run: () => setReader(null), available: () => (reader ? true : "Nothing is being read aloud.") },
     "read.saveAudio": { run: () => openTool("audio"), available: all(needDoc, noDialog, () => speechReady) },
@@ -1170,6 +1183,7 @@ export function App() {
         item("pages.rotate", `Rotate page ${n}…`, () => openTool("rotate", String(n))),
         item("pages.delete", `Delete page ${n}…`, () => openTool("delete", String(n)), multi ? true : "A one-page document has no pages to delete."),
         item("pages.organize"),
+        item("studio.rebuildPage", `Rebuild page ${n} as editable design…`, () => active && setDialog({ kind: "studio", source: { kind: "rebuild", input: active.path, page, docId: active.doc_id } }), dialog ? "Close the open dialog first." : true),
         item("file.editBookmarks", `Add bookmark for page ${n}…`, () => setDialog({ kind: "bookmarks", addOnOpen: true, page }), dialog ? "Close the open dialog first." : true),
         ...(selected ? [] : [item("read.aloud", `Read page ${n} aloud`, () => startReading(page), speechReady)]),
         "separator",
@@ -1271,6 +1285,15 @@ export function App() {
         item("app.openLogs"),
       ],
     });
+  };
+
+  /** Pick a picture, PDF (its first page) or design project and open it in the Design Studio. */
+  const openStudio = async () => {
+    const p = await api.pickDesignSource();
+    if (!p) return;
+    const source = studioSourceFor(p);
+    if (!source) return notify({ kind: "warning", title: "Choose a PNG or JPEG picture, a PDF or a .pwdesign file", persistent: false });
+    setDialog({ kind: "studio", source });
   };
 
   /* ---------- Job results ---------- */
@@ -1617,6 +1640,7 @@ export function App() {
             onOpen={openDialog}
             onImagesToPdf={() => setDialog({ kind: "images", files: [] })}
             onOpenOffice={() => setDialog({ kind: "office", file: null })}
+            onStudio={() => runCommand("studio.open")}
             onBatch={() => setDialog({ kind: "batch" })}
             onOpenRecent={(p) => openPath(p)}
             onRemoveRecent={removeRecent}
@@ -1755,6 +1779,7 @@ export function App() {
       {dialog?.kind === "removeBlank" && active && <RemoveBlankDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "print" && active && <PrintDialog doc={active} currentPage={view.page} onClose={() => setDialog(null)} />}
       {dialog?.kind === "compare" && active && <CompareView doc={active} others={tabs.filter((t) => t.doc_id !== active.doc_id)} jobs={jobs} onClose={() => setDialog(null)} />}
+      {dialog?.kind === "studio" && <Studio source={dialog.source} jobs={jobs} onClose={() => setDialog(null)} />}
       {dialog?.kind === "organize" && active && <OrganizeDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "note" && active && (
         <NoteDialog

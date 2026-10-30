@@ -115,8 +115,9 @@ async function withApp(args, fn) {
   launchFailuresInARow = 0;
   phase.create += Date.now() - t0;
   try {
-    // PDFs open as tabs; Office files open the convert dialog over the start screen.
-    const pdfArgs = args.filter((a) => !/\.(docx|doc|odt|rtf|txt|xlsx|xls|ods|csv|pptx|ppt|odp|html?)$/i.test(a));
+    // PDFs open as tabs; Office files open the convert dialog and design projects the Design
+    // Studio, over the start screen.
+    const pdfArgs = args.filter((a) => !/\.(docx|doc|odt|rtf|txt|xlsx|xls|ods|csv|pptx|ppt|odp|html?|pwdesign)$/i.test(a));
     await s.waitFor(pdfArgs.length ? ".tab-label" : ".home", { timeout: 20000 });
     return await fn(s);
   } catch (e) {
@@ -2295,6 +2296,111 @@ await test("protect with password: AES-256 copy needs the password; wrong passwo
     const r = spawnSync(CLI, ["--json", "--password-stdin", "text", "--pages", "4", out], { input: "E2e-pw 1\n", encoding: "utf8" });
     assert(r.status === 0 && JSON.parse(r.stdout).result.data.pages[0].text.includes("PWMARK004"), `independent text check: ${r.stdout.slice(0, 200)}`);
   }
+});
+
+await test("design studio: rebuild a page, edit text with undo, nudge, drag, lock, hide, compare, save; the project reopens", async () => {
+  const src = join(work, "studio-poster.pdf");
+  copyFileSync(join(FIX, "poster.pdf"), src);
+  const project = join(work, "studio-poster-page1.pwdesign");
+  const objX = (s) => s.exec("return Number(document.querySelector('.studio-grid input').value)");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    // Disabled reasons are explained elsewhere; here it is available with a document.
+    assert((await s.attr('.toolbar [data-command="studio.rebuildPage"]', "aria-disabled")) === null, "rebuild available");
+    await s.click('.toolbar [data-command="studio.rebuildPage"]');
+    await s.waitFor('[data-testid="studio"]');
+    await s.waitFor('[data-testid="studio-layers"] [data-layer]', { timeout: 60000 });
+    const layers = await s.exec("return [...document.querySelectorAll('[data-layer]')].map(b => b.dataset.layer)");
+    assert(layers.length === 10 && layers.includes("picture-1"), `layers ${layers}`);
+    assert((await s.text('[data-testid="studio-summary"]')).includes("6 text · 3 shapes · 1 pictures"), "summary counts");
+    assert(existsSync(project), "project saved next to the PDF");
+    await axeCheck(s, "design-studio");
+    writeFileSync(join(ART, "design-studio.png"), await s.screenshot());
+
+    // Edit the title's wording; undo and redo it from the keyboard.
+    const title = () => s.exec("return document.querySelector('[data-object=\"text-1\"]').textContent");
+    assert((await title()) === "SPRING FAIR", `title ${await title()}`);
+    await s.click('[data-layer="text-1"]');
+    await s.click("#studio-text");
+    await s.keys(["Control", "a"]);
+    await s.type("#studio-text", "SUMMER FAIR");
+    await s.waitUntil(async () => (await title()) === "SUMMER FAIR", "canvas text updated");
+    await s.keys(["Control", "z"]);
+    await s.waitUntil(async () => (await title()) === "SPRING FAIR", "one undo step for the whole word");
+    await s.keys(["Control", "y"]);
+    await s.waitUntil(async () => (await title()) === "SUMMER FAIR", "redo");
+
+    // Keyboard nudge on the canvas (Shift = 10 px).
+    const x0 = await objX(s);
+    await s.exec("document.querySelector('[data-testid=studio-stage]').focus()");
+    await s.keys(["Shift", "ArrowRight"]);
+    await s.keys(["ArrowRight"]);
+    await s.waitUntil(async () => (await objX(s)) === x0 + 11, "nudged 11 px");
+
+    // Drag the picture with the pointer; a locked picture stays put.
+    await s.click('[data-layer="picture-1"]');
+    const box = () => s.exec("const r=document.querySelector('[data-object=\"picture-1\"]').getBoundingClientRect(); return [r.left, r.top, r.width, r.height]");
+    const [l, t, w, h] = await box();
+    await s.dragAt(l + w / 2, t + h / 2, l + w / 2 - 60, t + h / 2 + 20);
+    await s.waitUntil(async () => (await box())[0] < l - 40, "dragged left");
+    const [l2] = await box();
+    await s.click('[aria-label="Lock Picture 1"]');
+    await s.dragAt(l2 + w / 2, t + h / 2 + 20, l2 + w / 2 + 80, t + h / 2 + 20);
+    assert(Math.abs((await box())[0] - l2) < 1, "locked picture not moved");
+
+    // Hide a shape; it leaves the canvas and its row says so.
+    await s.click('[data-layer="shape-1"]');
+    await s.click('[aria-label="Hide Shape 1"]');
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-object=\"shape-1\"]')")), "hidden");
+
+    // Compare with the original: overlay with opacity, differences blend.
+    await s.click('[data-compare="overlay"]');
+    await s.waitFor('.studio-opacity');
+    assert(Number(await s.exec("return getComputedStyle(document.querySelector('.studio-source')).opacity")) === 0.5, "overlay at 50%");
+    await s.click('[data-compare="difference"]');
+    assert((await s.exec("return getComputedStyle(document.querySelector('.studio-source')).mixBlendMode")) === "difference", "differences");
+    await s.click('[data-compare="design"]');
+
+    // Save; the project on disk holds the edits.
+    await s.keys(["Control", "s"]);
+    await s.waitUntil(async () => (await s.text('[data-testid="studio-status"]')).startsWith("Saved"), "saved");
+    const saved = JSON.parse(readFileSync(project, "utf8"));
+    const t1 = saved.objects.find((o) => o.id === "text-1");
+    assert(t1.text === "SUMMER FAIR" && t1.x === x0 + 11, `saved text ${t1.text} x ${t1.x}`);
+    assert(saved.objects.find((o) => o.id === "picture-1").locked && !saved.objects.find((o) => o.id === "shape-1").visible, "lock and visibility saved");
+    if (CLI) {
+      const out = join(work, "studio-export.pdf");
+      execFileSync(CLI, ["design-export", project, "-o", out]);
+      const text = JSON.parse(execFileSync(CLI, ["--json", "text", out], { encoding: "utf8" })).result.data.pages[0].text;
+      assert(text.includes("SUMMER FAIR"), `exported text: ${text}`);
+    }
+
+    // Closing with unsaved changes asks; Cancel keeps the Studio, Don't save closes it.
+    await s.click('[data-layer="text-2"]');
+    await s.click('[aria-label="Delete"]');
+    await s.click('[data-testid="studio-close"]');
+    await s.waitFor('[role="alertdialog"]');
+    await s.click('[role="alertdialog"] button:last-child');
+    assert(await s.exec("return !!document.querySelector('[data-testid=studio]') && !document.querySelector('[role=alertdialog]')"), "still open after Cancel");
+    await s.click('[data-testid="studio-close"]');
+    await s.click('[data-testid="studio-close-discard"]');
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=studio]')")), "closed");
+    assert(JSON.parse(readFileSync(project, "utf8")).objects.some((o) => o.id === "text-2"), "discarded change not saved");
+    // Open in Design Studio (a picture, PDF or project) uses the system file picker, which cannot be
+    // automated: it is offered, enabled, in the palette; projects are opened at launch below.
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Design Studio");
+    const offered = await s.exec("const o=document.querySelector('[role=option][data-command=\"studio.open\"]'); return o ? o.getAttribute('aria-disabled') : 'missing'");
+    assert(offered === null, `studio.open offered and enabled (${offered})`);
+    await s.keys(["Escape"]);
+  });
+  // A design project given at launch opens in the Studio with the saved edits.
+  await withApp([project], async (s) => {
+    await s.waitFor('[data-testid="studio-layers"] [data-layer]', { timeout: 20000 });
+    assert((await s.exec("return document.querySelector('[data-object=\"text-1\"]').textContent")) === "SUMMER FAIR", "reopened with edits");
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=studio]')")), "Escape closes when nothing is selected or changed");
+  });
 });
 
 await test("images to PDF: opens from the start screen; explains what is missing; accessible", async () => {

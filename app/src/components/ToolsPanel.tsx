@@ -25,6 +25,7 @@ export const TOOL_GROUPS: ToolGroup[] = [
   { id: "protect", title: "Protect and redact", commands: ["file.protect", "file.unprotect", "redact.markArea", "redact.markPatterns", "redact.markPage", "redact.apply", "file.sanitize"] },
   { id: "sign", title: "Sign", commands: ["file.sign", "file.signatureMark", "view.showSignatures", "file.trustedCertificates"] },
   { id: "check", title: "Compare and check", commands: ["file.compare", "file.accessibility", "file.reduceSize"] },
+  { id: "design", title: "Design Studio", commands: ["studio.rebuildPage", "studio.open"] },
   { id: "create", title: "Create and combine", commands: ["file.imagesToPdf", "file.openOffice", "file.batch"] },
 ];
 

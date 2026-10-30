@@ -358,6 +358,32 @@ pub const TOOLS: &[Tool] = &[
             )
         },
     },
+    Tool {
+        name: "reconstruct_design",
+        title: "Rebuild a flat design as editable objects",
+        description: "Rebuild a flat picture (PNG or JPEG, or one page of a PDF) as separately editable text, shapes and pictures, saved as a design project (.pwdesign). Wording comes only from text recognition, with its confidence; regions that are neither text nor a plain shape stay pictures and are marked uncertain. Original layers are not recovered (a flat picture has none).",
+        effect: Effect::WritesNewFiles,
+        long: true,
+        schema: || {
+            obj(
+                json!({ "path": path_prop("Source picture or PDF"), "page": { "type": "integer", "minimum": 1, "description": "Page of a PDF (1-based, default 1)" }, "output": path_prop("New .pwdesign file (must not exist)") }),
+                &["path", "output"],
+            )
+        },
+    },
+    Tool {
+        name: "export_design",
+        title: "Export a design project",
+        description: "Export a design project (.pwdesign) as editable SVG (text, rectangles, embedded pictures; nothing external) or as PDF (real text), chosen by the output's extension. The file is read back and checked before it appears.",
+        effect: Effect::WritesNewFiles,
+        long: false,
+        schema: || {
+            obj(
+                json!({ "path": path_prop("Design project (.pwdesign)"), "output": path_prop("New .svg or .pdf file (must not exist)") }),
+                &["path", "output"],
+            )
+        },
+    },
 ];
 
 pub fn find(name: &str) -> Option<&'static Tool> {
@@ -375,6 +401,15 @@ fn args<T: for<'de> Deserialize<'de>>(v: &Value) -> PwResult<T> {
 #[serde(deny_unknown_fields)]
 struct PathArg {
     path: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DesignArg {
+    path: String,
+    #[serde(default)]
+    page: Option<u32>,
+    output: String,
 }
 
 #[derive(Deserialize)]
@@ -690,6 +725,28 @@ pub fn operation(tool: &Tool, a: &Value, roots: &Roots) -> PwResult<Operation> {
                 input: roots.input(&x.path)?,
                 pages: x.pages,
                 output: roots.output(&x.output, &["docx"])?,
+            }
+        }
+        "reconstruct_design" => {
+            let x: DesignArg = args(a)?;
+            let page = x.page.unwrap_or(1);
+            if page == 0 {
+                return Err(PwError::invalid("mcp.arguments", "Pages are numbered from 1."));
+            }
+            Operation::ReconstructDesign {
+                input: roots.input(&x.path)?,
+                page: page - 1,
+                output: roots.output(&x.output, &["pwdesign"])?,
+            }
+        }
+        "export_design" => {
+            let x: PathOutArg = args(a)?;
+            let output = roots.output(&x.output, &["svg", "pdf"])?;
+            let svg = output.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg"));
+            Operation::ExportDesign {
+                input: roots.input(&x.path)?,
+                format: if svg { pw_core::ops::DesignFormat::Svg } else { pw_core::ops::DesignFormat::Pdf },
+                output,
             }
         }
         other => {

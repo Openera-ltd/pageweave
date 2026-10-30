@@ -62,6 +62,8 @@ import {
   Undo2,
   Volume2,
   FileCog,
+  Shapes,
+  FolderOpen as FolderOpenIcon,
 } from "lucide-react";
 import type { CommandId } from "./commands";
 
@@ -126,4 +128,6 @@ export const COMMAND_ICONS: Partial<Record<CommandId, ReactNode>> = {
   "read.saveAudio": <AudioLines />,
   "read.aloud": <Volume2 />,
   "read.stop": <Volume2 />,
+  "studio.rebuildPage": <Shapes />,
+  "studio.open": <FolderOpenIcon />,
 };

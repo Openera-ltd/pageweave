@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatBytes } from "../format";
-import { CaseSensitive, ChevronDown, ChevronUp, FileText, FileUp, FolderOpen, Images, Layers, Trash2, WholeWord, X } from "lucide-react";
+import { CaseSensitive, ChevronDown, ChevronUp, FileText, FileUp, FolderOpen, Shapes, Images, Layers, Trash2, WholeWord, X } from "lucide-react";
 import { COMMANDS, type CommandHandlers, type CommandId } from "../commands";
 import { basename, dirname } from "../paths";
 import type { JobSnapshot, OpenedDoc, PwError } from "../types";
@@ -16,6 +16,7 @@ export function Home({
   onImagesToPdf,
   onBatch,
   onOpenOffice,
+  onStudio,
   onOpenRecent,
   onRemoveRecent,
   openShortcut,
@@ -26,6 +27,7 @@ export function Home({
   onImagesToPdf: () => void;
   onBatch: () => void;
   onOpenOffice: () => void;
+  onStudio: () => void;
   onOpenRecent: (path: string) => void;
   onRemoveRecent: (path: string) => void;
   openShortcut?: string;
@@ -57,6 +59,9 @@ export function Home({
           </button>
           <button type="button" className="btn outline" data-command="file.batch" onClick={onBatch}>
             <Layers /> <span>Process several files…</span>
+          </button>
+          <button type="button" className="btn outline" data-command="studio.open" onClick={onStudio}>
+            <Shapes /> <span>Rebuild a flat design…</span>
           </button>
         </div>
         {recent.length > 0 && (

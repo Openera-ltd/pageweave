@@ -45,6 +45,7 @@ mod sheet;
 mod sign;
 mod signatures;
 mod slides;
+pub mod studio;
 mod unprotect;
 pub mod worker;
 

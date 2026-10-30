@@ -78,6 +78,8 @@ export type CommandId =
   | "file.toPowerPoint"
   | "file.exportTables"
   | "file.translate"
+  | "studio.rebuildPage"
+  | "studio.open"
   | "read.aloud"
   | "read.stop"
   | "read.saveAudio"
@@ -180,6 +182,8 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "file.toPowerPoint", label: "Convert to PowerPoint…", category: "File", shortcuts: [] },
   { id: "file.exportTables", label: "Export tables to Excel or CSV…", category: "File", shortcuts: [] },
   { id: "file.translate", label: "Translate…", category: "File", shortcuts: [] },
+  { id: "studio.rebuildPage", label: "Rebuild page as editable design…", category: "File", shortcuts: [] },
+  { id: "studio.open", label: "Open in Design Studio…", category: "File", shortcuts: [] },
   { id: "read.aloud", label: "Read aloud", category: "View", shortcuts: ["Ctrl+Shift+L"] },
   { id: "read.stop", label: "Stop reading aloud", category: "View", shortcuts: [] },
   { id: "read.saveAudio", label: "Save as audio (WAV)…", category: "File", shortcuts: [] },

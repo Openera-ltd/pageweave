@@ -336,6 +336,8 @@ export type Operation =
   | { op: "extract_images"; input: string; pages: string | null; output_dir: string }
   | { op: "optimize"; input: string; images: { max_dpi: number; quality: number } | null; output: string }
   | { op: "export_text"; input: string; pages: string | null; output: string }
+  | { op: "reconstruct_design"; input: string; page: number; output: string }
+  | { op: "export_design"; input: string; format: "svg" | "pdf"; output: string }
   | { op: "convert_to_docx"; input: string; pages: string | null; output: string }
   | { op: "install_translation"; source: string; target: string }
   | { op: "download_update"; version: string }
@@ -618,4 +620,41 @@ export interface TranslationDirection {
   installed: boolean;
   /** Download size (bytes). */
   bytes: number;
+}
+
+/** Design Reconstruction Studio (D-028): one editable object, in design pixels from the top left. */
+export interface DesignObject {
+  id: string;
+  name: string;
+  kind: "text" | "shape" | "image";
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  visible: boolean;
+  locked: boolean;
+  /** 0–1: recognition confidence (text), colour uniformity (shape); pictures are 0. */
+  confidence: number;
+  note?: string | null;
+  text?: string;
+  color?: string;
+  font_size?: number;
+  bold: boolean;
+  /** Text baseline below the top of the box. */
+  baseline?: number;
+  fill?: string;
+  /** PNG, base64. */
+  png?: string;
+}
+
+export interface Design {
+  version: number;
+  width: number;
+  height: number;
+  pt_per_px: number;
+  background: string;
+  source_png: string;
+  source_name: string;
+  /** Back to front. */
+  objects: DesignObject[];
 }
