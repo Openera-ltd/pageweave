@@ -439,7 +439,8 @@ fn design_tools_rebuild_and_export_inside_the_approved_folder() {
     copy_fixtures(root.path(), &["poster.pdf"]);
     let mut c = Client::start(&[root.path()], true);
     let r = c.ok("reconstruct_design", json!({ "path": "poster.pdf", "output": "poster.pwdesign" }));
-    assert!(r["data"]["text"].as_u64() >= Some(6), "{r}");
+    // Five text objects: the two body lines are one paragraph.
+    assert!(r["data"]["text"].as_u64() >= Some(5), "{r}");
     assert!(r["data"]["editable_ratio"].as_f64() >= Some(0.85), "{r}");
     c.ok("export_design", json!({ "path": "poster.pwdesign", "output": "poster.svg" }));
     assert!(std::fs::read_to_string(root.path().join("poster.svg")).expect("svg").contains("SPRING FAIR"));
