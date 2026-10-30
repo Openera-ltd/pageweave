@@ -967,6 +967,9 @@ def main() -> int:
     files["caption.pdf"] = build_caption_document()
     files["fonts.pdf"] = build_fonts_document()
     files["frames.pdf"] = build_frames_document()
+    # A word hyphenated across lines (the engine joins it and marks the hyphen), large enough to be
+    # recognised again by OCR with --all-pages.
+    files["hyphenated.pdf"] = build_document([{"lines": ["Workers paid in cash must report all wa-", "ges by the end of the month.", "Line three ends normally."]}], title="Hyphenated")
     files["form-xfa-hybrid.pdf"] = build_form_document(xfa="hybrid")
     files["form-xfa-dynamic.pdf"] = build_form_document(xfa="dynamic")
     files["fonts-holdout.pdf"] = build_fonts_document(HOLDOUT_FONT_LINES)

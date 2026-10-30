@@ -174,3 +174,27 @@ fn text_inside_pictures_is_recognised_on_pages_with_text() {
         assert!(got.iter().any(|g| g == w), "{w} recognised in the picture: {after}");
     }
 }
+
+#[test]
+fn a_line_ending_in_a_hyphen_is_recognised_again_on_a_page_with_text() {
+    // The engine reads a line-end hyphen back as its hyphenation mark (U+0002); the verification
+    // of the added text once took that for missing text and refused the copy.
+    if !have_resources() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("ok");
+    let out = dir.path().join("o.pdf");
+    let r = execute(
+        &OperationRequest::new(Operation::OcrPages {
+            input: fixture("hyphenated.pdf"),
+            pages: None,
+            skip_text_pages: false,
+            dpi: 200,
+            output: out.clone(),
+        }),
+        None,
+    )
+    .expect("ocr with --all-pages on a born-digital page whose line ends in a hyphen");
+    assert_eq!(r.data["pages_processed"].as_u64(), Some(1));
+    assert!(out.exists());
+}

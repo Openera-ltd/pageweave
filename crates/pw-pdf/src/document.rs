@@ -296,6 +296,12 @@ fn spaced_text(text: &PdfPageText) -> String {
     let mut prev: Option<Prev> = None;
     for c in text.chars().iter() {
         let Some(ch) = c.unicode_char() else { continue };
+        // The engine reports a hyphenation point as U+0002: a hyphen where the line breaks there,
+        // nothing (the word whole, so it can be found) where it does not.
+        if ch == '\u{2}' {
+            pending.push('\u{2}');
+            continue;
+        }
         if c.is_generated().unwrap_or(false) {
             pending.push(ch);
             continue;
@@ -310,7 +316,7 @@ fn spaced_text(text: &PdfPageText) -> String {
         let base = c.origin().map(|(_, y)| y.value).unwrap_or(b.bottom().value);
         let flat = c.angle_degrees().map(|a| a.rem_euclid(360.0) < 1.0 || a.rem_euclid(360.0) > 359.0).unwrap_or(true);
         let (left, right) = (b.left().value, b.right().value);
-        let mut sep = std::mem::take(&mut pending);
+        let mut sep = hyphenation(std::mem::take(&mut pending));
         if let (Some(p), true) = (&prev, flat && !ch.is_whitespace()) {
             let em = size.max(p.size);
             let same_line = (base - p.base).abs() <= 0.3 * em;
@@ -327,8 +333,20 @@ fn spaced_text(text: &PdfPageText) -> String {
         out.push(ch);
         prev = Some(Prev { left, right, base, size, ch });
     }
-    out.push_str(&pending);
+    out.push_str(&hyphenation(pending));
     out
+}
+
+/// Generated characters between two glyphs with the engine's hyphenation marks resolved: a hyphen
+/// before a line break, dropped otherwise.
+fn hyphenation(sep: String) -> String {
+    if !sep.contains('\u{2}') {
+        return sep;
+    }
+    // The engine also joins a word hyphenated across lines and leaves the mark where the hyphen
+    // was: the joined word ("wages", not "wa-ges") is what can be searched and read.
+    let breaks = sep.contains('\n') || sep.contains('\r');
+    sep.chars().filter_map(|c| if c == '\u{2}' { breaks.then_some('-') } else { Some(c) }).collect()
 }
 
 pub(crate) fn page_count(path: &Path, opts: &OpenOptions) -> PwResult<u32> {
@@ -377,7 +395,8 @@ pub fn page_text_segments(path: &Path, opts: &OpenOptions, page_index: u32) -> P
             truncated = true;
             break;
         }
-        let t = seg.text();
+        // A segment is one line: the engine's hyphenation mark there is the hyphen drawn at its end.
+        let t = seg.text().replace('\u{2}', "-");
         if t.trim().is_empty() {
             continue;
         }
