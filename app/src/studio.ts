@@ -306,3 +306,31 @@ export function dragCorner(b: Box, rotation: number, corner: Corner, dx: number,
   const centre = { x: fixed.x + half.x, y: fixed.y + half.y };
   return { x: centre.x - w / 2, y: centre.y - h / 2, w, h };
 }
+
+/** How a paragraph (text with "\n") is drawn — the same layout as the engine's SVG and PDF exports:
+ *  one line per baseline `lineHeight` apart, glyphs scaled by `stretch` from the box's left edge,
+ *  each line anchored at the left, centre or right of the box. */
+export function paragraphLayout(o: DesignObject) {
+  const size = o.font_size ?? o.h;
+  const k = o.stretch ?? 1;
+  const lineHeight = o.line_height ?? size * 1.2;
+  const align = o.align ?? "left";
+  const anchor = align === "left" ? "start" : align === "center" ? "middle" : "end";
+  const ax = align === "left" ? o.x : align === "center" ? o.x + o.w / 2 / k : o.x + o.w / k;
+  const top = o.y + (o.baseline ?? size * 0.72);
+  return {
+    lines: (o.text ?? "").split("\n").map((text, i) => ({ text, x: ax, y: top + i * lineHeight })),
+    anchor: anchor as "start" | "middle" | "end",
+    scale: `matrix(${k} 0 0 1 ${Math.round(o.x * (1 - k) * 1000) / 1000} 0)`,
+    lineHeight,
+  };
+}
+
+/** New wording for a text object; a paragraph's box grows or shrinks to hold its lines. */
+export function textPatch(o: DesignObject, text: string): Partial<DesignObject> {
+  const n = text.split("\n").length;
+  if (n < 2) return { text };
+  const size = o.font_size ?? o.h;
+  const { lineHeight } = paragraphLayout(o);
+  return { text, h: round((o.baseline ?? size * 0.72) + (n - 1) * lineHeight + size * 0.25) };
+}

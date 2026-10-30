@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addObject, align, dragCorner, bounds, commit, distribute, duplicate, group, hit, isStudioSource, moveMany, removeMany, rotate, snap, studioSourceFor, ungroup, withGroup, moveBy, redo, remove, reorder, resize, start, uncertain, undo, update } from "./studio";
+import { addObject, align, dragCorner, paragraphLayout, textPatch, bounds, commit, distribute, duplicate, group, hit, isStudioSource, moveMany, removeMany, rotate, snap, studioSourceFor, ungroup, withGroup, moveBy, redo, remove, reorder, resize, start, uncertain, undo, update } from "./studio";
 import type { Design, DesignObject } from "./types";
 
 const obj = (id: string, extra: Partial<DesignObject> = {}): DesignObject => ({
@@ -224,6 +224,22 @@ describe("design studio: several objects", () => {
       const q = dragCorner(b, rot, "nw", 7, -11);
       corner(q, rot, 1, 1).forEach((v, i) => expect(v).toBeCloseTo(corner(b, rot, 1, 1)[i]!, 6));
     }
+  });
+
+  it("lays out a paragraph like the exports: anchors, scale from the left edge, spacing", () => {
+    const p = obj("p", { kind: "text", x: 100, y: 0, w: 200, h: 40, text: "a\nbb", font_size: 20, baseline: 15, stretch: 0.8, align: "right", line_height: 25 });
+    const l = paragraphLayout(p);
+    // Right edge 300 on the canvas: unscaled 100 + 200 / 0.8 = 350, then scaled about x = 100.
+    expect(l.anchor).toBe("end");
+    expect(l.lines).toEqual([{ text: "a", x: 350, y: 15 }, { text: "bb", x: 350, y: 40 }]);
+    expect(l.scale).toBe("matrix(0.8 0 0 1 20 0)");
+    expect(100 + (350 - 100) * 0.8).toBe(300);
+  });
+
+  it("grows a text box to hold its lines; one line keeps its box", () => {
+    const t = obj("t", { kind: "text", h: 20, font_size: 20, baseline: 15 });
+    expect(textPatch(t, "one")).toEqual({ text: "one" });
+    expect(textPatch(t, "one\ntwo\nthree")).toEqual({ text: "one\ntwo\nthree", h: 15 + 2 * 24 + 5 });
   });
 
   it("keeps a corner radius within half the shorter side when edited or resized", () => {

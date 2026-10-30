@@ -6,6 +6,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
   AlignCenterHorizontal,
   AlignCenterVertical,
   AlignEndHorizontal,
@@ -57,6 +60,8 @@ import {
   snap,
   start,
   uncertain,
+  paragraphLayout,
+  textPatch,
   dragCorner,
   type Corner,
   undo,
@@ -616,6 +621,29 @@ export function Studio({ source, jobs, onClose }: Props) {
 const count = (d: Design, kind: DesignObject["kind"]) => d.objects.filter((o) => o.kind === kind).length;
 
 /** The design as SVG, drawn the way the engine's SVG export writes it. */
+function Paragraph({ o, turn }: { o: DesignObject; turn?: string }) {
+  const p = paragraphLayout(o);
+  return (
+    <text
+      data-object={o.id}
+      transform={[turn, p.scale].filter(Boolean).join(" ")}
+      fontFamily={FONT_CSS[o.font ?? "sans"]}
+      fontSize={o.font_size ?? o.h}
+      fontWeight={o.bold ? "bold" : "normal"}
+      fontStyle={o.italic ? "italic" : "normal"}
+      fill={o.color}
+      textAnchor={p.anchor}
+      xmlSpace="preserve"
+    >
+      {p.lines.map((l, i) => (
+        <tspan key={i} x={l.x} y={l.y}>
+          {l.text}
+        </tspan>
+      ))}
+    </text>
+  );
+}
+
 export function DesignSvg({ design }: { design: Design }) {
   return (
     <svg className="studio-svg" viewBox={`0 0 ${design.width} ${design.height}`} aria-hidden="true">
@@ -630,6 +658,8 @@ export function DesignSvg({ design }: { design: Design }) {
           )
         ) : o.kind === "image" ? (
           <image key={o.id} data-object={o.id} x={o.x} y={o.y} width={o.w} height={o.h} preserveAspectRatio="none" href={`data:image/png;base64,${o.png}`} transform={turn} />
+        ) : o.text?.includes("\n") ? (
+          <Paragraph key={o.id} o={o} turn={turn} />
         ) : (
           <text
             key={o.id}
@@ -703,8 +733,23 @@ function Properties({
         <>
           <div className="field">
             <label htmlFor="studio-text">Text</label>
-            <textarea id="studio-text" className="input" rows={3} value={o.text ?? ""} maxLength={10000} onChange={(e) => edit({ text: e.target.value }, "text")} />
+            <textarea id="studio-text" className="input" rows={3} value={o.text ?? ""} maxLength={10000} onChange={(e) => edit(textPatch(o, e.target.value), "text")} />
           </div>
+          {o.text?.includes("\n") && (
+            <div className="row">
+              <div className="segmented" role="radiogroup" aria-label="Alignment">
+                {(["left", "center", "right"] as const).map((a) => (
+                  <button key={a} type="button" role="radio" data-align-text={a} aria-checked={(o.align ?? "left") === a} aria-label={`Align ${a === "center" ? "centre" : a}`} title={`Align ${a === "center" ? "centre" : a}`} onClick={() => edit({ align: a })}>
+                    {a === "left" ? <AlignLeft /> : a === "center" ? <AlignCenter /> : <AlignRight />}
+                  </button>
+                ))}
+              </div>
+              <label className="studio-num">
+                <span>Line spacing</span>
+                <input className="input" type="number" min={1} data-testid="studio-line-height" value={Math.round(paragraphLayout(o).lineHeight * 10) / 10} onChange={(e) => e.target.valueAsNumber > 0 && edit({ line_height: e.target.valueAsNumber }, "line-height")} />
+              </label>
+            </div>
+          )}
           <div className="row">
             <label className="studio-num">
               <span>Size</span>

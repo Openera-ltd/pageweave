@@ -415,3 +415,8 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - Also: a line's ink is limited to its main row band (a tight neighbour line inflated "Diploma" 48 pt to 56 pt); top/baseline from stem-tall columns only (a synthetic unit test caught serif-only columns dragging the median).
 - Checks: cargo clippy clean; pw-pdf studio unit 9/9, integration 8/8; vitest 201; Studio E2E 3/3; full E2E earlier this session 89/90 with "turn pages upright" timing out under CPU contention from parallel OCR tests — passed alone (37 s).
 - Workspace tests run crate by crate here (all debug test binaries together exceed the disk allowance): 445 passed, 0 failed after updating the CLI/MCP tests that still expected .png exports to be refused.
+
+## 2026-10-30 — Design Studio: paragraphs (D-035)
+- Owner asked why work kept stopping: turns were being ended at checkpoints to report; now continuing between items.
+- Engine `paragraphs()` groups lines (style, size, spacing, shared edge/centre); `stretch` measured with PDFium's built-in fonts (`reconstruct` takes a measure function; unit tests use a stand-in). SVG `<tspan>` per line (check reads them back), PDF one text object per line. Found and fixed: mean text confidence divided by paragraphs instead of lines (1.2 > 1).
+- UI: paragraph drawing shared with the exports' layout (`paragraphLayout`), Alignment radio group, Line spacing, `textPatch` grows the box. E2E: the poster's body is one paragraph, centred and undone; the snapping check now reads exact boxes from the saved project (a paragraph's drawn text has no box attributes, so the old check missed a valid snap to it).

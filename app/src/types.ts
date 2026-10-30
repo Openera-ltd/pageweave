@@ -656,7 +656,14 @@ export interface DesignObject {
   /** Text: typeface family (absent: sans) and slant. */
   font?: DesignFont;
   italic?: boolean;
+  /** Text with several lines ("\n"): baseline distance (absent: 1.2 × size), alignment and the
+   *  glyphs' horizontal scale measured from the original (absent: 1). */
+  line_height?: number;
+  align?: TextAlign;
+  stretch?: number;
 }
+
+export type TextAlign = "left" | "center" | "right";
 
 export type DesignFont = "sans" | "serif" | "mono";
 export type DesignFormat = "svg" | "pdf" | "png";

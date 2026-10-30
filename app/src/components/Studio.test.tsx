@@ -269,6 +269,31 @@ describe("Design Studio", () => {
     expect(s.startOperation).toHaveBeenCalledWith({ schema_version: 1, operation: { op: "export_design", input: "/d/f.pwdesign", format: "png", output: "/d/flyer.png" }, collision: "replace" });
   });
 
+  it("a line becomes a paragraph with Enter: drawn line by line, aligned and spaced, box grown; undoable", async () => {
+    setup({ kind: "open", path: "/d/f.pwdesign" });
+    await flush();
+    fireEvent.click(document.querySelector('[data-layer="text-1"]')!);
+    expect(screen.queryByTestId("studio-line-height")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Text"), { target: { value: "HELLO\nWORLD" } });
+    const spans = () => [...document.querySelectorAll('[data-object="text-1"] tspan')].map((t) => [t.textContent, t.getAttribute("x"), t.getAttribute("y")]);
+    // Default spacing 1.2 × 28 = 33.6 below the first baseline (10 + 20).
+    expect(spans()).toEqual([["HELLO", "10", "30"], ["WORLD", "10", "63.6"]]);
+    // Box: baseline 20 + 33.6 + 0.25 × 28.
+    expect(screen.getByDisplayValue("60.6")).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: "Align centre" }));
+    const t = document.querySelector('[data-object="text-1"]')!;
+    expect(t.getAttribute("text-anchor")).toBe("middle");
+    expect(spans()[0]![1]).toBe("50");
+    fireEvent.change(screen.getByTestId("studio-line-height"), { target: { value: "40" } });
+    expect(spans()[1]![2]).toBe("70");
+    const stage = document.querySelector(".studio-stage")!;
+    fireEvent.keyDown(stage, { key: "z", ctrlKey: true });
+    fireEvent.keyDown(stage, { key: "z", ctrlKey: true });
+    fireEvent.keyDown(stage, { key: "z", ctrlKey: true });
+    expect(document.querySelector('[data-object="text-1"] tspan')).toBeNull();
+    expect(document.querySelector('[data-object="text-1"]')!.textContent).toBe("HELLO");
+  });
+
   it("the start screen offers Open in Design Studio (studio.open)", () => {
     const onStudio = vi.fn();
     render(

@@ -5,6 +5,7 @@ use base64::Engine as _;
 use pw_core::output::CollisionPolicy;
 use pw_pdf::studio::{
     export_design, read_design, reconstruct_design, save_design, Design, DesignFormat, FontFamily, ObjectKind,
+    TextAlign,
 };
 use pw_pdf::{render_page_png, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -162,6 +163,13 @@ fn poster_is_rebuilt_as_editable_objects_and_exports_verify() {
         let got = o.font_size.expect("test value") * d.pt_per_px;
         assert!((got - pt).abs() / pt < 0.12, "{} size {got} pt, want {pt}", o.name);
     }
+    // The two 12 pt body lines (baselines 18 pt apart, left edges shared) are one paragraph.
+    assert_eq!(body.text.as_deref(), Some("Music, food and crafts\nRiverside Park, 10:00 to 18:00"));
+    assert_eq!(body.align, TextAlign::Left);
+    let gap = body.line_height.expect("line height") * d.pt_per_px;
+    assert!((gap - 18.0).abs() < 1.0, "line spacing {gap} pt");
+    let k = body.stretch.expect("stretch");
+    assert!((0.9..1.1).contains(&k), "glyph scale {k}");
     // Objects back to front: text above the boxes it sits on.
     let pos = |id: &str| d.objects.iter().position(|o| o.id == id).expect("test value");
     assert!(pos(&title.id) > pos(&banner.id) && pos(&entry.id) > pos(&button.id));
@@ -217,7 +225,9 @@ fn a_png_is_rebuilt_too() {
     let d = read_design(&out).expect("test value");
     assert_eq!((d.width, d.height), (800, 1000));
     assert_eq!(d.source_name, "flyer.png");
-    assert!(s.text >= 6 && s.shapes >= 3 && s.images >= 1, "{s:?}");
+    // The two body lines form one paragraph.
+    assert!(s.text >= 5 && s.shapes >= 3 && s.images >= 1, "{s:?}");
+    assert!(s.mean_text_confidence <= 1.0 && s.mean_text_confidence > 0.9, "{s:?}");
     assert!((d.pt_per_px - 0.75).abs() < 1e-6);
 }
 
@@ -317,6 +327,9 @@ fn rotation_and_groups_survive_export() {
         radius: 0.0,
         font: FontFamily::Sans,
         italic: false,
+        line_height: None,
+        align: TextAlign::Left,
+        stretch: None,
     };
     let d = Design {
         version: 1,
@@ -498,6 +511,9 @@ fn fonts_and_slant_reach_svg_and_pdf_and_png_is_the_design_size() {
         radius: 0.0,
         font,
         italic,
+        line_height: None,
+        align: TextAlign::Left,
+        stretch: None,
     };
     let d = Design {
         version: 1,

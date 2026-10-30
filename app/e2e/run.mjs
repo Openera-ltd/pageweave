@@ -2327,8 +2327,18 @@ await test("design studio: rebuild a page, edit text with undo, nudge, drag, loc
     await s.waitFor('[data-testid="studio"]');
     await s.waitFor('[data-testid="studio-layers"] [data-layer]', { timeout: 60000 });
     const layers = await s.exec("return [...document.querySelectorAll('[data-layer]')].map(b => b.dataset.layer)");
-    assert(layers.length === 10 && layers.includes("picture-1"), `layers ${layers}`);
-    assert((await s.text('[data-testid="studio-summary"]')).includes("6 text · 3 shapes · 1 pictures"), "summary counts");
+    assert(layers.length === 9 && layers.includes("picture-1"), `layers ${layers}`);
+    assert((await s.text('[data-testid="studio-summary"]')).includes("5 text · 3 shapes · 1 pictures"), "summary counts");
+    // The two body lines are one paragraph, drawn line by line; it can be centred (and undone).
+    const para = await s.exec("const t=[...document.querySelectorAll('[data-testid=studio-stage] text')].find(t => t.textContent.startsWith('Music')); return t ? [t.dataset.object, [...t.querySelectorAll('tspan')].map(x => x.textContent)] : null");
+    assert(para && para[1].join("|") === "Music, food and crafts|Riverside Park, 10:00 to 18:00", `paragraph ${JSON.stringify(para)}`);
+    await s.click(`[data-layer="${para[0]}"]`);
+    await s.click('[role="radio"][aria-label="Align centre"]');
+    await s.waitUntil(async () => (await s.exec(`return document.querySelector('[data-object="${para[0]}"]').getAttribute('text-anchor')`)) === "middle", "centred");
+    await s.exec("document.querySelector('[data-testid=studio-stage]').focus()");
+    await s.keys(["Control", "z"]);
+    await s.waitUntil(async () => (await s.exec(`return document.querySelector('[data-object="${para[0]}"]').getAttribute('text-anchor')`)) === "start", "undo alignment");
+    await s.keys(["Escape"]);
     assert(existsSync(project), "project saved next to the PDF");
     await axeCheck(s, "design-studio");
     writeFileSync(join(ART, "design-studio.png"), await s.screenshot());
@@ -2389,12 +2399,14 @@ await test("design studio: rebuild a page, edit text with undo, nudge, drag, loc
     const [rl, rt, rw, rh] = await at(rectId);
     const [sl, st, sw, sh] = await s.exec("const r=document.querySelector('[data-testid=studio-stage]').getBoundingClientRect(); return [r.left, r.top, r.width, r.height]");
     await s.dragAt(rl + rw / 2, rt + rh / 2, sl + sw / 2 + 3, st + sh * 0.85, 12);
-    const aligned = await s.exec(`
-      const svg = document.querySelector('.studio-svg'); const W = svg.viewBox.baseVal.width;
-      const span = (e) => { const x = +e.getAttribute('x'); const w = +(e.getAttribute('width') ?? e.getAttribute('textLength')); return [x, x + w / 2, x + w]; };
-      const me = span(document.querySelector('[data-object="${rectId}"]'));
-      const targets = [0, W / 2, W, ...[...svg.querySelectorAll('[data-object]')].filter(e => e.dataset.object !== '${rectId}').flatMap(span)];
-      return me.some(v => targets.some(t => Math.abs(v - t) < 0.06));`);
+    // Exact boxes from the saved project (a paragraph's drawn <text> carries no box attributes).
+    await s.keys(["Control", "s"]);
+    await s.waitUntil(async () => (await s.text('[data-testid="studio-status"]')).startsWith("Saved"), "saved after the drop");
+    const snapped = JSON.parse(readFileSync(project, "utf8"));
+    const span = (o) => [o.x, o.x + o.w / 2, o.x + o.w];
+    const me = span(snapped.objects.find((o) => o.id === rectId));
+    const targets = [0, snapped.width / 2, snapped.width, ...snapped.objects.filter((o) => o.id !== rectId && o.visible).flatMap(span)];
+    const aligned = me.some((v) => targets.some((t) => Math.abs(v - t) < 0.06));
     assert(aligned, "the dropped rectangle lines up exactly with a canvas or object edge/centre");
     assert(!(await s.exec("return !!document.querySelector('[data-testid=studio-guide]')")), "guides gone after the drag");
     // Alt places freely: a drop 3 px off is kept as dropped (not pulled onto a guide).
