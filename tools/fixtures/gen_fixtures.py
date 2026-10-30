@@ -720,6 +720,44 @@ def build_poster_document() -> bytes:
     return w.render(catalog, info)
 
 
+def build_badges_document() -> bytes:
+    """Shapes the Design Studio rebuilds as vectors (D-031): a circle, an ellipse, a rounded
+    rectangle with white bold wording on it, and a plain rectangle, on a tinted page. Curves are
+    four Bezier quarters (k = 0.5523). Expected forms and sizes are in crates/pw-pdf/tests/studio.rs."""
+    w = PdfWriter()
+    catalog, pages_obj = w.reserve(), w.reserve()
+    bold = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>")
+    k = 0.5523
+
+    def ellipse(cx: float, cy: float, rx: float, ry: float) -> str:
+        return (f"{cx + rx} {cy} m "
+                f"{cx + rx} {cy + k * ry} {cx + k * rx} {cy + ry} {cx} {cy + ry} c "
+                f"{cx - k * rx} {cy + ry} {cx - rx} {cy + k * ry} {cx - rx} {cy} c "
+                f"{cx - rx} {cy - k * ry} {cx - k * rx} {cy - ry} {cx} {cy - ry} c "
+                f"{cx + k * rx} {cy - ry} {cx + rx} {cy - k * ry} {cx + rx} {cy} c f\n")
+
+    def rounded(x: float, y: float, rw: float, rh: float, r: float) -> str:
+        c = r * (1 - k)
+        return (f"{x + r} {y} m {x + rw - r} {y} l {x + rw - c} {y} {x + rw} {y + c} {x + rw} {y + r} c "
+                f"{x + rw} {y + rh - r} l {x + rw} {y + rh - c} {x + rw - c} {y + rh} {x + rw - r} {y + rh} c "
+                f"{x + r} {y + rh} l {x + c} {y + rh} {x} {y + rh - c} {x} {y + rh - r} c "
+                f"{x} {y + r} l {x} {y + c} {x + c} {y} {x + r} {y} c f\n")
+
+    ops = "0.98 0.96 0.90 rg 0 0 300 200 re f\n"
+    ops += "0.15 0.35 0.75 rg " + ellipse(60, 140, 40, 40)
+    ops += "0.20 0.60 0.30 rg " + ellipse(200, 150, 70, 30)
+    ops += "0.95 0.55 0.10 rg " + rounded(20, 30, 140, 50, 16)
+    ops += "1 g BT /F1 20 Tf 40 48 Td (SALE 50%) Tj ET\n"
+    ops += "0.45 0.45 0.50 rg 190 30 90 60 re f\n"
+    content = w.stream(ops.encode("latin-1"))
+    page = w.add(f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 300 200] "
+                 f"/Resources << /Font << /F1 {bold} 0 R >> >> /Contents {content} 0 R >>")
+    w.set(pages_obj, f"<< /Type /Pages /Kids [{page} 0 R] /Count 1 >>")
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R >>")
+    info = w.add("<< /Title (Badges fixture) /Producer (gen_fixtures.py) >>")
+    return w.render(catalog, info)
+
+
 def build_borderless_tables_document() -> bytes:
     """Tables without drawn grids for table export (D-020): page 1 has a table of aligned columns
     with no lines at all and a table with only horizontal rules above and below its header and at
@@ -803,6 +841,7 @@ def main() -> int:
     files["tables.pdf"] = build_tables_document()
     files["borderless-tables.pdf"] = build_borderless_tables_document()
     files["poster.pdf"] = build_poster_document()
+    files["badges.pdf"] = build_badges_document()
     files["form-nested.pdf"] = build_nested_form_document()
     files["redaction.pdf"] = build_redaction_document()
     files["redaction-hard.pdf"] = build_redaction_hard_document()

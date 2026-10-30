@@ -195,4 +195,12 @@ describe("design studio: several objects", () => {
     // Moving a+b: their own edges are no targets; c's left (80) is.
     expect(snap(d, ["a", "b"], { x: 28, y: 90, w: 50, h: 10 }, 3).x).toBe(30);
   });
+
+  it("keeps a corner radius within half the shorter side when edited or resized", () => {
+    const d = design(obj("a", { w: 40, h: 40, radius: 15 }));
+    expect(update(d, "a", { radius: 99 }).objects[0]!.radius).toBe(20);
+    expect(update(d, "a", { h: 10 }).objects[0]!.radius).toBe(5);
+    expect(resize(d, "a", { x: 0, y: 0, w: 40, h: 21 }).objects[0]!.radius).toBe(10.5);
+    expect(resize(d, "a", { x: 0, y: 0, w: 80, h: 80 }).objects[0]!.radius).toBe(15);
+  });
 });

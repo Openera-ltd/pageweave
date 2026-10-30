@@ -2483,6 +2483,56 @@ await test("design studio: rebuild a page, edit text with undo, nudge, drag, loc
   });
 });
 
+await test("design studio: circles, ellipses and rounded boxes come back as shapes; corners and ellipse are editable", async () => {
+  const src = join(work, "studio-badges.pdf");
+  copyFileSync(join(FIX, "badges.pdf"), src);
+  const project = join(work, "studio-badges-page1.pwdesign");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('.toolbar [data-command="studio.rebuildPage"]');
+    await s.waitFor('[data-testid="studio-layers"] [data-layer]', { timeout: 60000 });
+    const forms = () =>
+      s.exec("return [...document.querySelectorAll('[data-testid=studio-stage] [data-object]')].map(e => [e.dataset.object, e.tagName.toLowerCase(), Number(e.getAttribute('rx') || 0)])");
+    const f = await forms();
+    const ellipses = f.filter((x) => x[1] === "ellipse");
+    const rounded = f.filter((x) => x[1] === "rect" && x[2] > 0);
+    assert(ellipses.length === 2 && rounded.length === 1 && !f.some((x) => x[1] === "image"), `forms ${JSON.stringify(f)}`);
+    // A wide page must not shrink the Studio: the body fills the window below the bar.
+    const fill = await s.exec("const b=document.querySelector('.studio-body').getBoundingClientRect(), h=document.querySelector('.studio-bar').getBoundingClientRect(); return [b.top - h.bottom, innerHeight - b.bottom]");
+    assert(fill[0] === 0 && fill[1] < 40, `studio body fills the window (${fill})`);
+    await axeCheck(s, "design-studio-shapes");
+    writeFileSync(join(ART, "design-studio-shapes.png"), await s.screenshot());
+
+    // The rounded box: its radius field is shown and editable; it can become an ellipse and back (undo).
+    const id = rounded[0][0];
+    await s.click(`[data-layer="${id}"]`);
+    assert((await s.exec("return document.querySelector('[data-testid=studio-radius]').disabled")) === false, "radius editable");
+    await s.exec("const i=document.querySelector('[data-testid=studio-radius]'); i.focus(); i.select(); return 1");
+    await s.keys(["8"]);
+    await s.waitUntil(async () => (await forms()).find((x) => x[0] === id)[2] === 8, "radius 8 drawn");
+    await s.click('[data-testid="studio-ellipse"]');
+    await s.waitUntil(async () => (await forms()).find((x) => x[0] === id)[1] === "ellipse", "turned into an ellipse");
+    assert((await s.exec("return document.querySelector('[data-testid=studio-radius]').disabled")) === true, "radius disabled for an ellipse");
+    await s.exec("document.querySelector('[data-testid=studio-stage]').focus()");
+    await s.keys(["Control", "z"]);
+    await s.waitUntil(async () => (await forms()).find((x) => x[0] === id)[1] === "rect", "undo restores the box");
+    await s.keys(["Control", "s"]);
+    await s.waitUntil(async () => (await s.text('[data-testid="studio-status"]')).startsWith("Saved"), "saved");
+    const saved = JSON.parse(readFileSync(project, "utf8")).objects.find((o) => o.id === id);
+    assert(saved.radius === 8 && !saved.ellipse, `saved ${JSON.stringify(saved)}`);
+    if (CLI) {
+      const svgOut = join(work, "studio-badges.svg");
+      execFileSync(CLI, ["design-export", project, "-o", svgOut]);
+      const svg = readFileSync(svgOut, "utf8");
+      assert((svg.match(/<ellipse /g) || []).length === 2 && new RegExp(`id="${id}"[^>]*rx="8"`).test(svg), "SVG export keeps the forms");
+      const pdfOut = join(work, "studio-badges.pdf.out.pdf");
+      execFileSync(CLI, ["design-export", project, "-o", pdfOut]);
+      const text = JSON.parse(execFileSync(CLI, ["--json", "text", pdfOut], { encoding: "utf8" })).result.data.pages[0].text;
+      assert(text.includes("SALE 50%"), `exported text: ${text}`);
+    }
+  });
+});
+
 await test("images to PDF: opens from the start screen; explains what is missing; accessible", async () => {
   await withApp([], async (s) => {
     await s.click('[data-command="file.imagesToPdf"]');

@@ -91,6 +91,16 @@ pub struct DesignObject {
     /// Clockwise turn in degrees around the box's centre.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub rotation: f32,
+    /// Shape: an ellipse filling the box (D-031).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub ellipse: bool,
+    /// Shape: corner radius in design pixels (0: square corners).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub radius: f32,
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 fn is_zero(v: &f32) -> bool {
@@ -219,6 +229,8 @@ pub fn reconstruct(img: &Rgb, lines: &[Line]) -> (Vec<DesignObject>, [i32; 3], R
     let (bg, _) = dominant(edge.map(|(x, y)| img.at(x, y)));
     // Ink: everything that is not background.
     let mut mask: Vec<bool> = (0..w * h).map(|i| dist(img.at(i % w, i / w), bg) > SAME).collect();
+    // Pixels of text lines that sit on a box: part of the box's area, not of its colour.
+    let mut under_text = vec![false; w * h];
 
     let mut texts = Vec::new();
     let mut summary = ReconstructSummary::default();
@@ -256,9 +268,11 @@ pub fn reconstruct(img: &Rgb, lines: &[Line]) -> (Vec<DesignObject>, [i32; 3], R
         // The line's own pixels leave the ink mask: on plain background they were text; on a filled
         // box they are holes in the box, filled so the box is found whole.
         let on_background = dist(behind, bg) <= SAME;
+        let on_box = !on_background && uniform > 0.6;
         for y in l.y0..l.y1 {
             for x in l.x0..l.x1 {
-                mask[y * w + x] = !on_background && uniform > 0.6;
+                mask[y * w + x] = on_box;
+                under_text[y * w + x] |= on_box;
             }
         }
         // Text colour: the ink pixels furthest from the background behind it (anti-aliased edges
@@ -313,10 +327,12 @@ pub fn reconstruct(img: &Rgb, lines: &[Line]) -> (Vec<DesignObject>, [i32; 3], R
             png: None,
             group: None,
             rotation: 0.0,
+            ellipse: false,
+            radius: 0.0,
         });
     }
 
-    let mut regions = regions(img, &mask, bg);
+    let mut regions = regions(img, &mask, bg, &under_text);
     // Back to front: large regions first.
     regions.sort_by(|a, b| (b.w * b.h).total_cmp(&(a.w * a.h)));
     summary.text = texts.len() as u32;
@@ -339,7 +355,7 @@ pub fn reconstruct(img: &Rgb, lines: &[Line]) -> (Vec<DesignObject>, [i32; 3], R
 }
 
 /// Connected ink regions (8-neighbours) as shapes or pictures.
-fn regions(img: &Rgb, mask: &[bool], bg: [i32; 3]) -> Vec<DesignObject> {
+fn regions(img: &Rgb, mask: &[bool], bg: [i32; 3], under_text: &[bool]) -> Vec<DesignObject> {
     let (w, h) = (img.w, img.h);
     let mut label = vec![0u32; w * h];
     let mut found: Vec<(usize, usize, usize, usize, Vec<usize>)> = Vec::new();
@@ -391,7 +407,10 @@ fn regions(img: &Rgb, mask: &[bool], bg: [i32; 3]) -> Vec<DesignObject> {
         .into_iter()
         .map(|(x0, y0, x1, y1, pixels)| {
             let (rw, rh) = (x1 - x0, y1 - y0);
-            let (fill, share) = dominant(pixels.iter().map(|&i| img.at(i % w, i / w)));
+            // The colour is judged without text drawn on the region (white words on a button).
+            let own: Vec<usize> = pixels.iter().copied().filter(|&i| !under_text[i]).collect();
+            let colour_from = if own.is_empty() { &pixels } else { &own };
+            let (fill, share) = dominant(colour_from.iter().map(|&i| img.at(i % w, i / w)));
             let filled = pixels.len() as f32 / (rw * rh) as f32;
             let base = DesignObject {
                 id: String::new(),
@@ -414,9 +433,14 @@ fn regions(img: &Rgb, mask: &[bool], bg: [i32; 3]) -> Vec<DesignObject> {
                 png: None,
                 group: None,
                 rotation: 0.0,
+                ellipse: false,
+                radius: 0.0,
             };
-            if share > 0.92 && filled > 0.92 {
-                DesignObject { fill: Some(hex(fill)), ..base }
+            // One colour: the best of a rectangle, a rounded rectangle and an ellipse, if it covers
+            // the region's pixels closely enough (overlap ≥ 0.95). Otherwise a picture.
+            let form = (share > 0.92).then(|| best_form(&pixels, w, x0, y0, rw, rh)).flatten();
+            if let Some((ellipse, radius, overlap)) = form {
+                DesignObject { fill: Some(hex(fill)), ellipse, radius, confidence: share.min(overlap), ..base }
             } else {
                 // A picture: the region's own pixels; background around it is transparent.
                 let mut rgba = image::RgbaImage::new(rw as u32, rh as u32);
@@ -441,6 +465,49 @@ fn regions(img: &Rgb, mask: &[bool], bg: [i32; 3]) -> Vec<DesignObject> {
             }
         })
         .collect()
+}
+
+/// The vector form that matches a one-colour region best: (ellipse, corner radius, overlap), when
+/// the overlap (intersection over union of pixel sets) is at least 0.95. A rounded rectangle wins
+/// over a plain one only when clearly better and its radius is at least 2 px.
+fn best_form(pixels: &[usize], w: usize, x0: usize, y0: usize, rw: usize, rh: usize) -> Option<(bool, f32, f32)> {
+    let mut inside = vec![false; rw * rh];
+    for &i in pixels {
+        inside[(i / w - y0) * rw + (i % w - x0)] = true;
+    }
+    let n = pixels.len() as f32;
+    let overlap = |model: &dyn Fn(f32, f32) -> bool| {
+        let (mut both, mut area) = (0f32, 0f32);
+        for y in 0..rh {
+            for x in 0..rw {
+                if model(x as f32 + 0.5, y as f32 + 0.5) {
+                    area += 1.0;
+                    both += inside[y * rw + x] as u8 as f32;
+                }
+            }
+        }
+        both / (n + area - both).max(1.0)
+    };
+    let (fw, fh) = (rw as f32, rh as f32);
+    let rect = n / (fw * fh);
+    let (rx, ry) = (fw / 2.0, fh / 2.0);
+    let ellipse = overlap(&|x, y| ((x - rx) / rx).powi(2) + ((y - ry) / ry).powi(2) <= 1.0);
+    // Radius from the missing corner area: w·h − area = (4 − π)·r².
+    let r = ((fw * fh - n).max(0.0) / (4.0 - std::f32::consts::PI)).sqrt().min(fw.min(fh) / 2.0);
+    let corner = |x: f32, y: f32| {
+        let cx = x.clamp(r, fw - r);
+        let cy = y.clamp(r, fh - r);
+        (x - cx).powi(2) + (y - cy).powi(2) <= r * r
+    };
+    let rounded = if r >= 2.0 { overlap(&corner) } else { 0.0 };
+    let best = if ellipse >= rect.max(rounded) {
+        (true, 0.0, ellipse)
+    } else if rounded > rect + 0.005 {
+        (false, (r * 10.0).round() / 10.0, rounded)
+    } else {
+        (false, 0.0, rect)
+    };
+    (best.2 >= 0.95).then_some(best)
 }
 
 fn png_base64(img: &image::DynamicImage) -> String {
@@ -648,6 +715,7 @@ impl Design {
                 || o.name.chars().count() > 200
                 || o.group.as_ref().is_some_and(|g| g.is_empty() || g.len() > 64)
                 || !(o.rotation.is_finite() && o.rotation.abs() <= 360.0)
+                || !(o.radius.is_finite() && o.radius >= 0.0 && o.radius <= o.w.min(o.h) / 2.0 + 0.01)
             {
                 return bad(format!("The object “{}” is not valid.", o.name.chars().take(40).collect::<String>()));
             }
@@ -763,10 +831,25 @@ pub fn to_svg(d: &Design) -> String {
             format!("id=\"{}\"", xml(&o.id))
         };
         match o.kind {
-            ObjectKind::Shape => s += &format!(
-                "<rect {id} x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\"/>\n",
-                o.x, o.y, o.w, o.h, o.fill.as_deref().unwrap_or("#000000")
+            ObjectKind::Shape if o.ellipse => s += &format!(
+                "<ellipse {id} cx=\"{}\" cy=\"{}\" rx=\"{}\" ry=\"{}\" fill=\"{}\"/>\n",
+                o.x + o.w / 2.0,
+                o.y + o.h / 2.0,
+                o.w / 2.0,
+                o.h / 2.0,
+                o.fill.as_deref().unwrap_or("#000000")
             ),
+            ObjectKind::Shape => {
+                let corner = if o.radius > 0.0 { format!(" rx=\"{}\" ry=\"{}\"", o.radius, o.radius) } else { String::new() };
+                s += &format!(
+                    "<rect {id} x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"{corner} fill=\"{}\"/>\n",
+                    o.x,
+                    o.y,
+                    o.w,
+                    o.h,
+                    o.fill.as_deref().unwrap_or("#000000")
+                )
+            }
             ObjectKind::Image => s += &format!(
                 "<image {id} x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" preserveAspectRatio=\"none\" href=\"data:image/png;base64,{}\"/>\n",
                 o.x, o.y, o.w, o.h, o.png.as_deref().unwrap_or("")
@@ -809,7 +892,7 @@ fn check_svg(bytes: &[u8], d: &Design) -> PwResult<()> {
                         in_text = true;
                         texts.push(String::new());
                     }
-                    "rect" => rects += 1,
+                    "rect" | "ellipse" => rects += 1,
                     "image" => images += 1,
                     "svg" => {}
                     _ => return Err(fail("unexpected element")),
@@ -923,14 +1006,29 @@ fn to_pdf(d: &Design) -> PwResult<(Vec<u8>, Vec<String>)> {
     for o in d.objects.iter().filter(|o| o.visible && o.w > 0.0 && o.h > 0.0) {
         match o.kind {
             ObjectKind::Shape => {
-                let mut p = PdfPagePathObject::new_rect(
-                    &doc,
-                    rect(o.x, o.y, o.w, o.h),
-                    None,
-                    None,
-                    Some(pdf_color(o.fill.as_deref().unwrap_or(""), 255)),
-                )
-                .map_err(err)?;
+                let fill = Some(pdf_color(o.fill.as_deref().unwrap_or(""), 255));
+                let mut p = if o.ellipse {
+                    PdfPagePathObject::new_ellipse(&doc, rect(o.x, o.y, o.w, o.h), None, None, fill).map_err(err)?
+                } else if o.radius > 0.0 {
+                    // Four straight sides and four quarter-circle corners (Bezier, k = 0.5523).
+                    let (l, b, r_, t) = (o.x * k, ph - (o.y + o.h) * k, (o.x + o.w) * k, ph - o.y * k);
+                    let r = o.radius.min(o.w.min(o.h) / 2.0) * k;
+                    let c = r * (1.0 - 0.5523);
+                    let pt = PdfPoints::new;
+                    let mut p = PdfPagePathObject::new(&doc, pt(l + r), pt(b), None, None, fill).map_err(err)?;
+                    p.line_to(pt(r_ - r), pt(b)).map_err(err)?;
+                    p.bezier_to(pt(r_), pt(b + r), pt(r_ - c), pt(b), pt(r_), pt(b + c)).map_err(err)?;
+                    p.line_to(pt(r_), pt(t - r)).map_err(err)?;
+                    p.bezier_to(pt(r_ - r), pt(t), pt(r_), pt(t - c), pt(r_ - c), pt(t)).map_err(err)?;
+                    p.line_to(pt(l + r), pt(t)).map_err(err)?;
+                    p.bezier_to(pt(l), pt(t - r), pt(l + c), pt(t), pt(l), pt(t - c)).map_err(err)?;
+                    p.line_to(pt(l), pt(b + r)).map_err(err)?;
+                    p.bezier_to(pt(l + r), pt(b), pt(l), pt(b + c), pt(l + c), pt(b)).map_err(err)?;
+                    p.close_path().map_err(err)?;
+                    p
+                } else {
+                    PdfPagePathObject::new_rect(&doc, rect(o.x, o.y, o.w, o.h), None, None, fill).map_err(err)?
+                };
                 turn!(p, o);
                 page.objects_mut().add_path_object(p).map_err(err)?;
             }
@@ -1137,6 +1235,8 @@ mod tests {
                 png: None,
                 group: None,
                 rotation: 0.0,
+                ellipse: false,
+                radius: 0.0,
             }],
         };
         let svg = to_svg(&d);
@@ -1199,6 +1299,8 @@ mod tests {
             png: None,
             group: None,
             rotation: 0.0,
+            ellipse: false,
+            radius: 0.0,
         };
         assert!(Design { objects: vec![shape.clone()], ..ok.clone() }.validate().is_ok());
         assert!(

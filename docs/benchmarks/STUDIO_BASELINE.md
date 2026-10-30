@@ -15,3 +15,8 @@ Not yet measured on Windows hardware or with a release build (expected faster).
 Quality on the poster fixture (`crates/pw-pdf/tests/studio.rs`): word recall 1.0 (19/19), no
 invented words; box IoU banner 0.996, button 0.989, picture 0.992, 3-pt rule 0.892; sizes within
 12 %; weights right; PDF export mean pixel difference 2.2/255 against the source.
+
+Shapes (D-031) on `fixtures/pdf/badges.pdf` (300 × 200 pt page): circle and ellipse rebuilt as
+ellipses, the rounded button as a rounded rectangle (radius 34.7 px; the drawn 16 pt is 33.3 px),
+the square box with radius 0, the white "SALE 50%" as text on it; no pictures. PDF export mean
+pixel difference 1.05/255. The poster is unchanged (2.21/255).

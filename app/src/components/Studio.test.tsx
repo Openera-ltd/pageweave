@@ -219,6 +219,24 @@ describe("Design Studio", () => {
     expect(document.querySelector("[data-corner]")).toBeNull();
   });
 
+  it("rounds a shape's corners and turns it into an ellipse, both undoable", async () => {
+    setup({ kind: "open", path: "/d/f.pwdesign" });
+    await flush();
+    fireEvent.click(document.querySelector('[data-layer="shape-1"]')!);
+    // The radius is capped at half the shorter side (40 / 2).
+    fireEvent.change(screen.getByTestId("studio-radius"), { target: { value: "50" } });
+    expect(document.querySelector('[data-object="shape-1"]')!.getAttribute("rx")).toBe("20");
+    fireEvent.click(screen.getByTestId("studio-ellipse"));
+    const el = document.querySelector('[data-object="shape-1"]')!;
+    expect(el.tagName.toLowerCase()).toBe("ellipse");
+    expect([el.getAttribute("cx"), el.getAttribute("cy"), el.getAttribute("rx"), el.getAttribute("ry")]).toEqual(["100", "20", "100", "20"]);
+    expect(screen.getByTestId("studio-radius")).toBeDisabled();
+    const stage = document.querySelector(".studio-stage")!;
+    fireEvent.keyDown(stage, { key: "z", ctrlKey: true });
+    expect(document.querySelector('[data-object="shape-1"]')!.tagName.toLowerCase()).toBe("rect");
+    expect(document.querySelector('[data-object="shape-1"]')!.getAttribute("rx")).toBe("20");
+  });
+
   it("the start screen offers Open in Design Studio (studio.open)", () => {
     const onStudio = vi.fn();
     render(

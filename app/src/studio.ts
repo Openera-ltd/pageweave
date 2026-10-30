@@ -45,7 +45,13 @@ function mapObject(d: Design, id: string, f: (o: DesignObject) => DesignObject):
 }
 
 export function update(d: Design, id: string, patch: Partial<DesignObject>): Design {
-  return mapObject(d, id, (o) => ({ ...o, ...patch }));
+  return mapObject(d, id, (o) => fitRadius({ ...o, ...patch }));
+}
+
+/** A corner radius never exceeds half the shorter side (the engine refuses more). */
+function fitRadius(o: DesignObject): DesignObject {
+  const max = Math.min(o.w, o.h) / 2;
+  return o.radius && o.radius > max ? { ...o, radius: Math.floor(max * 10) / 10 } : o;
 }
 
 export function moveBy(d: Design, id: string, dx: number, dy: number): Design {
@@ -61,7 +67,7 @@ export function resize(d: Design, id: string, box: { x: number; y: number; w: nu
     if (o.locked) return o;
     const k = h / (o.h || 1);
     const text = o.kind === "text" ? { font_size: round((o.font_size ?? o.h) * k), baseline: round((o.baseline ?? o.h * 0.8) * k) } : {};
-    return { ...o, ...text, x: round(box.x), y: round(box.y), w, h };
+    return fitRadius({ ...o, ...text, x: round(box.x), y: round(box.y), w, h });
   });
 }
 

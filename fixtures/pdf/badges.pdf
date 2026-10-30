@@ -1,0 +1,43 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Length 647 >>
+stream
+0.98 0.96 0.90 rg 0 0 300 200 re f
+0.15 0.35 0.75 rg 100 140 m 100 162.09199999999998 82.092 180 60 180 c 37.908 180 20 162.09199999999998 20 140 c 20 117.908 37.908 100 60 100 c 82.092 100 100 117.908 100 140 c f
+0.20 0.60 0.30 rg 270 150 m 270 166.569 238.661 180 200 180 c 161.339 180 130 166.569 130 150 c 130 133.431 161.339 120 200 120 c 238.661 120 270 133.431 270 150 c f
+0.95 0.55 0.10 rg 36 30 m 144 30 l 152.8368 30 160 37.1632 160 46 c 160 64 l 160 72.8368 152.8368 80 144 80 c 36 80 l 27.1632 80 20 72.8368 20 64 c 20 46 l 20 37.1632 27.1632 30 36 30 c f
+1 g BT /F1 20 Tf 40 48 Td (SALE 50%) Tj ET
+0.45 0.45 0.50 rg 190 30 90 60 re f
+
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Title (Badges fixture) /Producer (gen_fixtures.py) >>
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000121 00000 n 
+0000000223 00000 n 
+0000000921 00000 n 
+0000001047 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R /Info 6 0 R /ID [<70616765776561766566697874757265> <70616765776561766566697874757265>] >>
+startxref
+1120
+%%EOF

@@ -2596,6 +2596,17 @@ kbd,
   accent-color: var(--accent);
 }
 
+/* Pinned rows: the bar and banners above are optional, and the body must take the free height
+   whether or not they are shown. */
+.studio-body,
+.studio-wait {
+  grid-row: 4;
+}
+
+.studio-status {
+  grid-row: 5;
+}
+
 .studio-body {
   display: grid;
   grid-template-columns: calc(230px * var(--ui-scale)) 1fr calc(260px * var(--ui-scale));

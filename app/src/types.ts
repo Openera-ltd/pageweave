@@ -649,6 +649,10 @@ export interface DesignObject {
   group?: string | null;
   /** Clockwise turn in degrees around the box's centre. */
   rotation?: number;
+  /** Shape: an ellipse filling the box. */
+  ellipse?: boolean;
+  /** Shape: corner radius in design pixels. */
+  radius?: number;
 }
 
 export interface Design {

@@ -613,7 +613,11 @@ export function DesignSvg({ design }: { design: Design }) {
       {design.objects.map((o) => {
         const turn = o.rotation ? `rotate(${o.rotation} ${o.x + o.w / 2} ${o.y + o.h / 2})` : undefined;
         return !o.visible ? null : o.kind === "shape" ? (
-          <rect key={o.id} data-object={o.id} x={o.x} y={o.y} width={o.w} height={o.h} fill={o.fill} transform={turn} />
+          o.ellipse ? (
+            <ellipse key={o.id} data-object={o.id} cx={o.x + o.w / 2} cy={o.y + o.h / 2} rx={o.w / 2} ry={o.h / 2} fill={o.fill} transform={turn} />
+          ) : (
+            <rect key={o.id} data-object={o.id} x={o.x} y={o.y} width={o.w} height={o.h} rx={o.radius || undefined} ry={o.radius || undefined} fill={o.fill} transform={turn} />
+          )
         ) : o.kind === "image" ? (
           <image key={o.id} data-object={o.id} x={o.x} y={o.y} width={o.w} height={o.h} preserveAspectRatio="none" href={`data:image/png;base64,${o.png}`} transform={turn} />
         ) : (
@@ -712,10 +716,28 @@ function Properties({
         </button>
       )}
       {o.kind === "shape" && (
-        <label className="studio-num">
-          <span>Fill</span>
-          <input type="color" value={o.fill ?? "#000000"} onChange={(e) => edit({ fill: e.target.value }, "fill")} />
-        </label>
+        <div className="row">
+          <label className="studio-num">
+            <span>Fill</span>
+            <input type="color" value={o.fill ?? "#000000"} onChange={(e) => edit({ fill: e.target.value }, "fill")} />
+          </label>
+          <label className="studio-num">
+            <span>Corner radius</span>
+            <input
+              className="input"
+              type="number"
+              min={0}
+              data-testid="studio-radius"
+              value={o.radius ?? 0}
+              disabled={!!o.ellipse}
+              title={o.ellipse ? "An ellipse has no corners" : undefined}
+              onChange={(e) => Number.isFinite(e.target.valueAsNumber) && edit({ radius: Math.min(Math.max(0, e.target.valueAsNumber), Math.min(o.w, o.h) / 2) }, "radius")}
+            />
+          </label>
+          <label className="row">
+            <input type="checkbox" data-testid="studio-ellipse" checked={!!o.ellipse} onChange={(e) => edit({ ellipse: e.target.checked, radius: 0 })} /> Ellipse
+          </label>
+        </div>
       )}
       <div className="studio-grid">
         {num("x", "X")}

@@ -311,6 +311,8 @@ fn rotation_and_groups_survive_export() {
         png: None,
         group: Some("g1".into()),
         rotation: 90.0,
+        ellipse: false,
+        radius: 0.0,
     };
     let d = Design {
         version: 1,
@@ -345,4 +347,53 @@ fn rotation_and_groups_survive_export() {
     bad.objects[0].rotation = 0.0;
     bad.objects[0].group = Some(String::new());
     assert_eq!(code(save_design(&bad, &dir.path().join("c.pwdesign"), CollisionPolicy::Fail, &[])), "design.invalid");
+}
+
+#[test]
+fn circles_ellipses_and_rounded_rectangles_become_vectors() {
+    if !have_resources() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("test value");
+    let project = dir.path().join("badges.pwdesign");
+    let (_, s) =
+        reconstruct_design(&fixture("badges.pdf"), &OpenOptions::default(), 0, &project, CollisionPolicy::Fail, &never)
+            .expect("reconstruct");
+    let d = read_design(&project).expect("test value");
+    for o in &d.objects {
+        eprintln!(
+            "{:?} {} x{:.0} y{:.0} w{:.0} h{:.0} ellipse {} radius {} conf {:.3} {:?}",
+            o.kind, o.name, o.x, o.y, o.w, o.h, o.ellipse, o.radius, o.confidence, o.text
+        );
+    }
+    assert_eq!(s.images, 0, "every one-colour shape is a vector: {s:?}");
+    // Boxes in points from gen_fixtures.py (left, bottom, right, top).
+    let (circle, i1) = best(&d, ObjectKind::Shape, [20.0, 100.0, 100.0, 180.0]);
+    let (oval, i2) = best(&d, ObjectKind::Shape, [130.0, 120.0, 270.0, 180.0]);
+    let (button, i3) = best(&d, ObjectKind::Shape, [20.0, 30.0, 160.0, 80.0]);
+    let (plain, i4) = best(&d, ObjectKind::Shape, [190.0, 30.0, 280.0, 90.0]);
+    assert!(i1 > 0.95 && i2 > 0.95 && i3 > 0.95 && i4 > 0.95, "boxes {i1} {i2} {i3} {i4}");
+    assert!(circle.ellipse && oval.ellipse, "circle and oval are ellipses");
+    assert!(!button.ellipse && !plain.ellipse);
+    let want_r = 16.0 / d.pt_per_px;
+    assert!((button.radius - want_r).abs() / want_r < 0.15, "button radius {} px, want {want_r}", button.radius);
+    assert_eq!(plain.radius, 0.0, "square corners stay square");
+    let sale = d.objects.iter().find(|o| o.kind == ObjectKind::Text).expect("wording");
+    assert_eq!(sale.text.as_deref(), Some("SALE 50%"));
+    assert_eq!(
+        sale.color.as_deref().map(|c| c.to_lowercase()).as_deref().map(|c| c >= "#f0f0f0"),
+        Some(true),
+        "white wording"
+    );
+    // Exports: SVG uses ellipse and rounded rect; the PDF looks like the source.
+    let svg = dir.path().join("b.svg");
+    export_design(&project, DesignFormat::Svg, &svg, CollisionPolicy::Fail).expect("svg");
+    let text = std::fs::read_to_string(&svg).expect("test value");
+    assert_eq!(text.matches("<ellipse ").count(), 2);
+    assert!(text.contains(" rx=\""), "rounded corners in the SVG");
+    let pdf = dir.path().join("b.pdf");
+    export_design(&project, DesignFormat::Pdf, &pdf, CollisionPolicy::Fail).expect("pdf");
+    let diff = difference(&d, &pdf);
+    eprintln!("mean pixel difference {diff:.2}");
+    assert!(diff < 4.0, "export looks different: {diff}");
 }
