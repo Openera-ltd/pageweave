@@ -39,6 +39,31 @@ const SPECK: usize = 6;
 /// Beyond this many regions the rest are kept together as one picture.
 const MAX_REGIONS: usize = 600;
 
+/// Text typeface family. The original font is not identified; these map to fonts every viewer has
+/// (PDF's built-in Helvetica, Times and Courier; SVG generic families), so nothing is embedded.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FontFamily {
+    #[default]
+    Sans,
+    Serif,
+    Mono,
+}
+
+impl FontFamily {
+    fn is_sans(&self) -> bool {
+        *self == FontFamily::Sans
+    }
+
+    fn svg(self) -> &'static str {
+        match self {
+            FontFamily::Sans => "Helvetica, Arial, sans-serif",
+            FontFamily::Serif => "'Times New Roman', Times, serif",
+            FontFamily::Mono => "'Courier New', Courier, monospace",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ObjectKind {
@@ -79,6 +104,11 @@ pub struct DesignObject {
     pub bold: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub baseline: Option<f32>,
+    /// Text: typeface family and slant.
+    #[serde(default, skip_serializing_if = "FontFamily::is_sans")]
+    pub font: FontFamily,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub italic: bool,
     /// Shape: fill `#rrggbb`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fill: Option<String>,
@@ -267,6 +297,90 @@ impl Line {
     }
 }
 
+/// Serif evidence of a line (D-034): the share of its vertical stems (runs about one stroke wide
+/// across the middle of the x-height) whose run at the baseline sticks out on both sides of the
+/// stem: a foot. Sans serif stems end square, and a curve's bottom joins on one side only. `None`
+/// with fewer than four stems (too little to judge). Measured on Times vs Helvetica at 10–48 pt:
+/// serif lines 0.21–0.74, sans 0.00–0.03.
+fn serif_share(ink: &[bool], bw: usize, bh: usize) -> Option<f32> {
+    let median = |mut v: Vec<usize>| -> usize {
+        v.sort_unstable();
+        v.get(v.len() / 2).copied().unwrap_or(0)
+    };
+    // Top and baseline: where most columns' ink starts and ends (descenders and accents are few),
+    // over columns at least half as tall as the tallest (not the thin columns of serifs alone).
+    let cols: Vec<(usize, usize)> = (0..bw)
+        .filter_map(|x| {
+            let top = (0..bh).find(|&y| ink[y * bw + x])?;
+            Some((top, (0..bh).rev().find(|&y| ink[y * bw + x]).unwrap_or(top)))
+        })
+        .collect();
+    let tallest = cols.iter().map(|(t, b)| b - t + 1).max().unwrap_or(0);
+    let stem_cols = cols.iter().filter(|(t, b)| 2 * (b - t + 1) >= tallest);
+    let (yt, yb) = (median(stem_cols.clone().map(|c| c.0).collect()), median(stem_cols.map(|c| c.1).collect()));
+    // Runs of ink along a row as (start, length).
+    let runs = |y: usize| -> Vec<(usize, usize)> {
+        let mut out = Vec::new();
+        let mut start = None;
+        for x in 0..=bw {
+            match (x < bw && ink[y * bw + x], start) {
+                (true, None) => start = Some(x),
+                (false, Some(s0)) => {
+                    out.push((s0, x - s0));
+                    start = None;
+                }
+                _ => {}
+            }
+        }
+        out
+    };
+    let middle = runs((yt + yb) / 2);
+    let stroke = median(middle.iter().map(|r| r.1).collect()).max(1);
+    let stems: Vec<(usize, usize)> = middle.into_iter().filter(|r| r.1 <= stroke * 3 / 2 + 1).collect();
+    if stems.len() < 4 {
+        return None;
+    }
+    let base = [runs(yb.saturating_sub(1)), runs(yb)];
+    let feet = stems
+        .iter()
+        .filter(|&&(s0, len)| {
+            // A foot sticks out on both sides of the stem (a curve's bottom joins on one side only).
+            let c = s0 + len / 2;
+            base.iter()
+                .filter_map(|row| row.iter().find(|(a, l)| *a <= c && c < a + l))
+                .any(|&(a, l)| a < s0 && a + l > s0 + len && l >= len + 2.max(len / 2))
+        })
+        .count();
+    Some(feet as f32 / stems.len() as f32)
+}
+
+/// Rows `a..b` of a line's ink: the run of rows holding ink (split at empty rows) with the most ink.
+fn main_band(ink: &[bool], bw: usize, bh: usize) -> (usize, usize) {
+    let count = |y: usize| ink[y * bw..(y + 1) * bw].iter().filter(|&&v| v).count();
+    let (mut best, mut start, mut sum) = ((0, bh, 0), None, 0);
+    for y in 0..=bh {
+        let n = if y < bh { count(y) } else { 0 };
+        match (n > 0, start) {
+            (true, None) => {
+                start = Some(y);
+                sum = n;
+            }
+            (true, Some(_)) => sum += n,
+            (false, Some(a)) => {
+                if sum > best.2 {
+                    best = (a, y, sum);
+                }
+                start = None;
+            }
+            (false, None) => {}
+        }
+    }
+    (best.0, best.1)
+}
+
+/// Above this share of stems with feet a line is set in a serif family (D-034).
+const SERIF_SHARE: f32 = 0.12;
+
 /// Rebuild `img` as a design from its recognised lines (no I/O; the engine's core, unit-tested).
 pub fn reconstruct(img: &Rgb, lines: &[Line]) -> (Vec<DesignObject>, [i32; 3], ReconstructSummary) {
     let (w, h) = (img.w, img.h);
@@ -303,11 +417,23 @@ pub fn reconstruct(img: &Rgb, lines: &[Line]) -> (Vec<DesignObject>, [i32; 3], R
             Some(e) => e[(y - l.y0) * (l.x1 - l.x0) + (x - l.x0)],
             None => behind,
         };
-        // Ink of the line: pixels far from what is behind it.
+        // Ink of the line: pixels far from what is behind it, in its main band of rows. A box can
+        // reach into a tightly spaced neighbouring line; that ink is a separate band (split at an
+        // empty row) and is left out of size, width, colour and font.
+        let (bw, bh) = (l.x1 - l.x0, l.y1 - l.y0);
+        let mut line_ink: Vec<bool> = (0..bw * bh)
+            .map(|i| {
+                let (x, y) = (l.x0 + i % bw, l.y0 + i / bw);
+                dist(img.at(x, y), behind_at(x, y)) > INK
+            })
+            .collect();
+        let (band0, band1) = main_band(&line_ink, bw, bh);
+        line_ink[..band0 * bw].fill(false);
+        line_ink[band1 * bw..].fill(false);
         let (mut ix0, mut iy0, mut ix1, mut iy1) = (usize::MAX, usize::MAX, 0, 0);
         let mut ink = Vec::new();
         let mut runs = (0u32, 0u32); // (ink pixels, ink runs) along rows: stroke thickness
-        for y in l.y0..l.y1 {
+        for y in l.y0 + band0..l.y0 + band1 {
             let mut inside = false;
             for x in l.x0..l.x1 {
                 let c = img.at(x, y);
@@ -327,6 +453,10 @@ pub fn reconstruct(img: &Rgb, lines: &[Line]) -> (Vec<DesignObject>, [i32; 3], R
         if ink.is_empty() {
             continue;
         }
+        let font = match serif_share(&line_ink, bw, bh) {
+            Some(share) if share >= SERIF_SHARE => FontFamily::Serif,
+            _ => FontFamily::Sans,
+        };
         if estimate.is_some() {
             // Paint out the ink and one pixel around it (anti-aliased edges).
             for y in l.y0..l.y1 {
@@ -356,11 +486,22 @@ pub fn reconstruct(img: &Rgb, lines: &[Line]) -> (Vec<DesignObject>, [i32; 3], R
         let core = &ink[..(ink.len() / 2).max(1)];
         let color = [0, 1, 2].map(|k| core.iter().map(|(c, _)| c[k]).sum::<i32>() / core.len() as i32);
         // Size from the ink height and which letters reach above x-height / below the baseline
-        // (Helvetica-like proportions: cap height 0.72 em, x-height 0.52, descender 0.21).
+        // (Helvetica-like proportions: cap height 0.72 em, x-height 0.52, descender 0.21; Times-like
+        // for serif lines: 0.67, 0.45, 0.22).
+        let serif = font == FontFamily::Serif;
         let tall = l.text.chars().any(|c| c.is_uppercase() || c.is_ascii_digit() || "bdfhklt/()[]{}|!?'\"".contains(c));
-        let above = if tall { 0.72 } else { 0.52 };
+        let above = match (tall, serif) {
+            (true, false) => 0.72,
+            (false, false) => 0.52,
+            (true, true) => 0.67,
+            (false, true) => 0.45,
+        };
         let below = if l.text.chars().any(|c| "gjpqy".contains(c)) {
-            0.21
+            if serif {
+                0.22
+            } else {
+                0.21
+            }
         } else if l.text.chars().any(|c| ",;".contains(c)) {
             0.12
         } else {
@@ -405,6 +546,8 @@ pub fn reconstruct(img: &Rgb, lines: &[Line]) -> (Vec<DesignObject>, [i32; 3], R
             rotation: 0.0,
             ellipse: false,
             radius: 0.0,
+            font,
+            italic: false,
         });
     }
 
@@ -522,6 +665,8 @@ fn regions(img: &Rgb, mask: &[bool], bg: [i32; 3], under_text: &[bool]) -> Vec<D
                 rotation: 0.0,
                 ellipse: false,
                 radius: 0.0,
+                font: FontFamily::Sans,
+                italic: false,
             };
             // One colour: the best of a rectangle, a rounded rectangle and an ellipse, if it covers
             // the region's pixels closely enough (overlap ≥ 0.95). Otherwise a picture.
@@ -944,11 +1089,13 @@ pub fn to_svg(d: &Design) -> String {
             ObjectKind::Text => {
                 let size = o.font_size.unwrap_or(o.h);
                 s += &format!(
-                    "<text {id} x=\"{}\" y=\"{}\" font-family=\"Helvetica, Arial, sans-serif\" font-size=\"{}\" font-weight=\"{}\" fill=\"{}\" textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\" xml:space=\"preserve\">{}</text>\n",
+                    "<text {id} x=\"{}\" y=\"{}\" font-family=\"{}\" font-size=\"{}\" font-weight=\"{}\" font-style=\"{}\" fill=\"{}\" textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\" xml:space=\"preserve\">{}</text>\n",
                     o.x,
                     o.y + o.baseline.unwrap_or(size * 0.72),
+                    o.font.svg(),
                     size,
                     if o.bold { "bold" } else { "normal" },
+                    if o.italic { "italic" } else { "normal" },
                     o.color.as_deref().unwrap_or("#000000"),
                     o.w,
                     xml(o.text.as_deref().unwrap_or(""))
@@ -1060,8 +1207,15 @@ fn to_pdf(d: &Design) -> PwResult<(Vec<u8>, Vec<String>)> {
     let mut doc = pdfium.create_new_pdf().map_err(err)?;
     let k = d.pt_per_px;
     let (pw, ph) = (d.width as f32 * k, d.height as f32 * k);
-    let regular = doc.fonts_mut().helvetica();
-    let bold = doc.fonts_mut().helvetica_bold();
+    // Built-in fonts by family, then [regular, bold, italic, bold italic].
+    let fonts = {
+        let f = doc.fonts_mut();
+        [
+            [f.helvetica(), f.helvetica_bold(), f.helvetica_oblique(), f.helvetica_bold_oblique()],
+            [f.times_roman(), f.times_bold(), f.times_italic(), f.times_bold_italic()],
+            [f.courier(), f.courier_bold(), f.courier_oblique(), f.courier_bold_oblique()],
+        ]
+    };
     let mut page = doc
         .pages_mut()
         .create_page_at_end(PdfPagePaperSize::Custom(PdfPoints::new(pw), PdfPoints::new(ph)))
@@ -1135,9 +1289,13 @@ fn to_pdf(d: &Design) -> PwResult<(Vec<u8>, Vec<String>)> {
                     continue;
                 }
                 let size = o.font_size.unwrap_or(o.h) * k;
-                let mut t =
-                    PdfPageTextObject::new(&doc, &wording, if o.bold { bold } else { regular }, PdfPoints::new(size))
-                        .map_err(err)?;
+                let mut t = PdfPageTextObject::new(
+                    &doc,
+                    &wording,
+                    fonts[o.font as usize][o.bold as usize + 2 * o.italic as usize],
+                    PdfPoints::new(size),
+                )
+                .map_err(err)?;
                 t.set_fill_color(pdf_color(o.color.as_deref().unwrap_or(""), 255)).map_err(err)?;
                 let natural = t.width().map_err(err)?.value.max(0.01);
                 let sx = (o.w * k / natural).clamp(0.2, 5.0);
@@ -1194,6 +1352,7 @@ pub fn export_design(
     let ext = match format {
         DesignFormat::Svg => "svg",
         DesignFormat::Pdf => "pdf",
+        DesignFormat::Png => "png",
     };
     if output.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case(ext)) != Some(true) {
         return Err(PwError::invalid("design.extension", format!("Save the export as a .{ext} file.")));
@@ -1213,7 +1372,36 @@ pub fn export_design(
             let c = write_atomic_bytes(output, policy, &protected, &bytes, |staged| check_pdf(staged, &d))?;
             Ok((c, warnings))
         }
+        DesignFormat::Png => {
+            // Drawn by the PDF engine from the PDF export, one design pixel per image pixel.
+            let (bytes, warnings) = to_pdf(&d)?;
+            let png = to_png(&bytes, &d)?;
+            let c = write_atomic_bytes(output, policy, &protected, &png, |staged| {
+                let bytes = std::fs::read(staged).map_err(|e| PwError::from_io(&e, "png"))?;
+                let read = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png)
+                    .map_err(|_| PwError::internal("design.export", "The PNG could not be read back."))?;
+                if (read.width(), read.height()) != (d.width, d.height) {
+                    return Err(PwError::internal("design.export", "The PNG has the wrong size."));
+                }
+                Ok(())
+            })?;
+            Ok((c, warnings))
+        }
     }
+}
+
+fn to_png(pdf: &[u8], d: &Design) -> PwResult<Vec<u8>> {
+    let pdfium = engine()?;
+    let err = |e: PdfiumError| map_pdfium_error(&e, "design export");
+    let doc = pdfium.load_pdf_from_byte_slice(pdf, None).map_err(err)?;
+    let page = doc.pages().get(0).map_err(err)?;
+    let config = PdfRenderConfig::new().set_target_size(d.width as i32, d.height as i32).render_annotations(false);
+    let img = page.render_with_config(&config).map_err(err)?.as_image().map_err(err)?;
+    let mut png = Vec::new();
+    img.to_rgb8()
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .map_err(|_| PwError::internal("design.export", "Could not encode the PNG."))?;
+    Ok(png)
 }
 
 #[cfg(test)]
@@ -1319,6 +1507,49 @@ mod tests {
         assert!(white_left(&objects) > 0, "a doubtful line leaves the picture as it was");
     }
 
+    /// Synthetic glyph row: `stems` vertical bars 3 px wide, 20 px tall, optionally with 9 px feet.
+    fn stems(n: usize, feet: bool) -> (Vec<bool>, usize, usize) {
+        let (bw, bh) = (n * 16 + 8, 30);
+        let mut ink = vec![false; bw * bh];
+        for i in 0..n {
+            let x0 = 6 + i * 16;
+            for y in 5..25 {
+                for x in x0..x0 + 3 {
+                    ink[y * bw + x] = true;
+                }
+            }
+            if feet {
+                for y in 23..25 {
+                    for x in x0 - 3..x0 + 6 {
+                        ink[y * bw + x] = true;
+                    }
+                }
+            }
+        }
+        (ink, bw, bh)
+    }
+
+    #[test]
+    fn stems_with_feet_read_as_serif_and_too_few_stems_are_not_judged() {
+        let (ink, bw, bh) = stems(6, true);
+        assert_eq!(serif_share(&ink, bw, bh), Some(1.0));
+        let (ink, bw, bh) = stems(6, false);
+        assert_eq!(serif_share(&ink, bw, bh), Some(0.0));
+        let (ink, bw, bh) = stems(3, true);
+        assert_eq!(serif_share(&ink, bw, bh), None, "three stems are too few");
+        assert_eq!(serif_share(&[false; 100], 10, 10), None, "no ink");
+    }
+
+    #[test]
+    fn the_main_band_leaves_out_a_neighbouring_line() {
+        let (mut ink, bw, bh) = stems(6, false);
+        // A sliver of the next line's tops at the bottom of the box, after an empty row.
+        ink.extend(vec![false; bw]);
+        ink.extend((0..bw * 2).map(|i| i % 7 == 0));
+        assert_eq!(main_band(&ink, bw, bh + 3), (5, 25));
+        assert_eq!(main_band(&[false; 20], 4, 5), (0, 5), "no ink: the whole box");
+    }
+
     #[test]
     fn noise_becomes_at_most_a_bounded_number_of_objects() {
         let mut img = canvas(300, 300, [255, 255, 255]);
@@ -1364,6 +1595,8 @@ mod tests {
                 rotation: 0.0,
                 ellipse: false,
                 radius: 0.0,
+                font: FontFamily::Sans,
+                italic: false,
             }],
         };
         let svg = to_svg(&d);
@@ -1428,6 +1661,8 @@ mod tests {
             rotation: 0.0,
             ellipse: false,
             radius: 0.0,
+            font: FontFamily::Sans,
+            italic: false,
         };
         assert!(Design { objects: vec![shape.clone()], ..ok.clone() }.validate().is_ok());
         assert!(

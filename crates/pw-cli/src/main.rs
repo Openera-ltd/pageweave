@@ -142,7 +142,7 @@ enum Command {
         #[arg(short, long)]
         output: PathBuf,
     },
-    /// Export a design project as editable SVG or as PDF (chosen by the output's extension).
+    /// Export a design project as editable SVG, as PDF or as a PNG picture (chosen by the output's extension).
     DesignExport {
         file: PathBuf,
         #[arg(short, long)]
@@ -839,7 +839,8 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
             let format = match ext.as_str() {
                 "svg" => pw_core::ops::DesignFormat::Svg,
                 "pdf" => pw_core::ops::DesignFormat::Pdf,
-                _ => return Err(PwError::invalid("usage", "Export to a .svg or .pdf file.")),
+                "png" => pw_core::ops::DesignFormat::Png,
+                _ => return Err(PwError::invalid("usage", "Export to a .svg, .pdf or .png file.")),
             };
             Operation::ExportDesign { input: file.clone(), format, output: output.clone() }
         }

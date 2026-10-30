@@ -337,7 +337,7 @@ export type Operation =
   | { op: "optimize"; input: string; images: { max_dpi: number; quality: number } | null; output: string }
   | { op: "export_text"; input: string; pages: string | null; output: string }
   | { op: "reconstruct_design"; input: string; page: number; output: string }
-  | { op: "export_design"; input: string; format: "svg" | "pdf"; output: string }
+  | { op: "export_design"; input: string; format: DesignFormat; output: string }
   | { op: "convert_to_docx"; input: string; pages: string | null; output: string }
   | { op: "install_translation"; source: string; target: string }
   | { op: "download_update"; version: string }
@@ -653,7 +653,13 @@ export interface DesignObject {
   ellipse?: boolean;
   /** Shape: corner radius in design pixels. */
   radius?: number;
+  /** Text: typeface family (absent: sans) and slant. */
+  font?: DesignFont;
+  italic?: boolean;
 }
+
+export type DesignFont = "sans" | "serif" | "mono";
+export type DesignFormat = "svg" | "pdf" | "png";
 
 export interface Design {
   version: number;

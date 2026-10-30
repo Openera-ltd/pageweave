@@ -238,6 +238,37 @@ describe("Design Studio", () => {
     expect(document.querySelector('[data-object="shape-1"]')!.getAttribute("rx")).toBe("20");
   });
 
+  it("sets the font family, italic and the background, drawn as exported; undoable", async () => {
+    setup({ kind: "open", path: "/d/f.pwdesign" });
+    await flush();
+    // Nothing selected: the background colour is offered with the summary.
+    fireEvent.change(screen.getByTestId("studio-background"), { target: { value: "#102030" } });
+    expect(document.querySelector(".studio-svg > rect")!.getAttribute("fill")).toBe("#102030");
+    fireEvent.click(document.querySelector('[data-layer="text-1"]')!);
+    fireEvent.change(screen.getByTestId("studio-font"), { target: { value: "serif" } });
+    fireEvent.click(screen.getByTestId("studio-italic"));
+    const t = document.querySelector('[data-object="text-1"]')!;
+    expect(t.getAttribute("font-family")).toContain("serif");
+    expect(t.getAttribute("font-style")).toBe("italic");
+    const stage = document.querySelector(".studio-stage")!;
+    fireEvent.keyDown(stage, { key: "z", ctrlKey: true });
+    fireEvent.keyDown(stage, { key: "z", ctrlKey: true });
+    expect(document.querySelector('[data-object="text-1"]')!.getAttribute("font-family")).toContain("sans-serif");
+    fireEvent.keyDown(stage, { key: "z", ctrlKey: true });
+    expect(document.querySelector(".studio-svg > rect")!.getAttribute("fill")).not.toBe("#102030");
+  });
+
+  it("exports a PNG through the engine", async () => {
+    const s = setup({ kind: "open", path: "/d/f.pwdesign" });
+    await flush();
+    s.pickDesignExport.mockResolvedValueOnce("/d/flyer.png");
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("studio-export-png"));
+    });
+    expect(s.pickDesignExport).toHaveBeenCalledWith("/d/f.png", "png");
+    expect(s.startOperation).toHaveBeenCalledWith({ schema_version: 1, operation: { op: "export_design", input: "/d/f.pwdesign", format: "png", output: "/d/flyer.png" }, collision: "replace" });
+  });
+
   it("the start screen offers Open in Design Studio (studio.open)", () => {
     const onStudio = vi.fn();
     render(

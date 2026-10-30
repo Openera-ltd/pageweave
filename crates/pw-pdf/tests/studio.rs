@@ -3,7 +3,9 @@
 //! again; bad requests are refused. Skipped with a message when the OCR resources are missing.
 use base64::Engine as _;
 use pw_core::output::CollisionPolicy;
-use pw_pdf::studio::{export_design, read_design, reconstruct_design, save_design, Design, DesignFormat, ObjectKind};
+use pw_pdf::studio::{
+    export_design, read_design, reconstruct_design, save_design, Design, DesignFormat, FontFamily, ObjectKind,
+};
 use pw_pdf::{render_page_png, OpenOptions};
 use std::path::{Path, PathBuf};
 
@@ -313,6 +315,8 @@ fn rotation_and_groups_survive_export() {
         rotation: 90.0,
         ellipse: false,
         radius: 0.0,
+        font: FontFamily::Sans,
+        italic: false,
     };
     let d = Design {
         version: 1,
@@ -464,4 +468,137 @@ fn words_over_a_picture_are_painted_out_of_it() {
     let diff = difference(&d, &pdf);
     eprintln!("mean pixel difference {diff:.2}");
     assert!(diff < 4.0, "export looks different: {diff}");
+}
+
+#[test]
+fn fonts_and_slant_reach_svg_and_pdf_and_png_is_the_design_size() {
+    let dir = tempfile::tempdir().expect("test value");
+    let text = |id: &str, y: f32, font: FontFamily, bold: bool, italic: bool| pw_pdf::studio::DesignObject {
+        id: id.into(),
+        name: id.into(),
+        kind: ObjectKind::Text,
+        x: 10.0,
+        y,
+        w: 180.0,
+        h: 20.0,
+        visible: true,
+        locked: false,
+        confidence: 1.0,
+        note: None,
+        text: Some(format!("Wording {id}")),
+        color: Some("#000000".into()),
+        font_size: Some(20.0),
+        bold,
+        baseline: Some(15.0),
+        fill: None,
+        png: None,
+        group: None,
+        rotation: 0.0,
+        ellipse: false,
+        radius: 0.0,
+        font,
+        italic,
+    };
+    let d = Design {
+        version: 1,
+        width: 200,
+        height: 120,
+        pt_per_px: 0.75,
+        background: "#fff8e0".into(),
+        source_png: String::new(),
+        source_name: "t".into(),
+        objects: vec![
+            text("a", 10.0, FontFamily::Sans, false, false),
+            text("b", 40.0, FontFamily::Serif, true, true),
+            text("c", 70.0, FontFamily::Mono, false, true),
+        ],
+    };
+    let project = dir.path().join("f.pwdesign");
+    save_design(&d, &project, CollisionPolicy::Fail, &[]).expect("save");
+    // Old projects (no font fields) read as sans upright; the default is not written out.
+    let json = std::fs::read_to_string(&project).expect("test value");
+    assert_eq!(json.matches("\"font\"").count(), 2, "only non-default families are stored");
+    assert_eq!(read_design(&project).expect("read").objects, d.objects);
+
+    let svg = dir.path().join("f.svg");
+    export_design(&project, DesignFormat::Svg, &svg, CollisionPolicy::Fail).expect("svg");
+    let svg = std::fs::read_to_string(&svg).expect("test value");
+    assert!(svg.contains("font-family=\"'Times New Roman', Times, serif\" font-size=\"20\" font-weight=\"bold\" font-style=\"italic\""), "{svg}");
+    assert!(svg.contains("monospace\" font-size=\"20\" font-weight=\"normal\" font-style=\"italic\""));
+
+    let pdf = dir.path().join("f.pdf");
+    export_design(&project, DesignFormat::Pdf, &pdf, CollisionPolicy::Fail).expect("pdf");
+    let raw = std::fs::read(&pdf).expect("test value");
+    let has = |name: &str| raw.windows(name.len()).any(|w| w == name.as_bytes());
+    assert!(has("/Helvetica") && has("/Times-BoldItalic") && has("/Courier-Oblique"), "built-in fonts by family");
+
+    let png = dir.path().join("f.png");
+    export_design(&project, DesignFormat::Png, &png, CollisionPolicy::Fail).expect("png");
+    let img = image::open(&png).expect("png").to_rgb8();
+    assert_eq!(img.dimensions(), (200, 120));
+    assert_eq!(img.get_pixel(195, 115).0, [0xff, 0xf8, 0xe0], "background colour");
+    let ink = img.pixels().filter(|p| p.0[0] < 80).count();
+    assert!(ink > 300, "the wording is drawn ({ink} dark pixels)");
+    // The extension must match the format; an existing file is not replaced.
+    assert_eq!(
+        code(export_design(&project, DesignFormat::Png, &dir.path().join("x.jpg"), CollisionPolicy::Fail)),
+        "design.extension"
+    );
+    assert!(export_design(&project, DesignFormat::Png, &dir.path().join("f.png"), CollisionPolicy::Fail).is_err());
+}
+
+/// (serif, size in points, wording) per line, top to bottom, from FONT_LINES / HOLDOUT_FONT_LINES in
+/// gen_fixtures.py. The serif threshold was chosen on fonts.pdf and fixed before fonts-holdout.pdf
+/// was measured (D-034).
+const FONTS: [(bool, f32, &str); 12] = [
+    (true, 12.0, "Minutes of the annual meeting"),
+    (true, 18.0, "The quick brown fox jumps"),
+    (true, 24.0, "Grand Opening Night"),
+    (true, 16.0, "An evening of chamber music"),
+    (true, 36.0, "Certificate"),
+    (true, 14.0, "Hand made in small batches"),
+    (false, 12.0, "Minutes of the annual meeting"),
+    (false, 18.0, "The quick brown fox jumps"),
+    (false, 24.0, "Grand Opening Night"),
+    (false, 16.0, "An evening of chamber music"),
+    (false, 36.0, "Certificate"),
+    (false, 14.0, "Hand made in small batches"),
+];
+const HOLDOUT: [(bool, f32, &str); 10] = [
+    (true, 10.0, "Please reply by the first of June"),
+    (true, 20.0, "Summer Menu"),
+    (true, 28.0, "Winners announced at noon"),
+    (true, 22.0, "with music and dancing"),
+    (true, 48.0, "Diploma"),
+    (false, 10.0, "Please reply by the first of June"),
+    (false, 20.0, "Summer Menu"),
+    (false, 28.0, "Winners announced at noon"),
+    (false, 22.0, "with music and dancing"),
+    (false, 48.0, "Diploma"),
+];
+
+#[test]
+fn serif_and_sans_lines_are_told_apart_and_sized() {
+    if !have_resources() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("test value");
+    for (name, want) in [("fonts.pdf", &FONTS[..]), ("fonts-holdout.pdf", &HOLDOUT[..])] {
+        let project = dir.path().join(format!("{name}.pwdesign"));
+        reconstruct_design(&fixture(name), &OpenOptions::default(), 0, &project, CollisionPolicy::Fail, &never)
+            .expect("reconstruct");
+        let d = read_design(&project).expect("test value");
+        let mut texts: Vec<_> = d.objects.iter().filter(|o| o.kind == ObjectKind::Text).collect();
+        texts.sort_by(|a, b| a.y.total_cmp(&b.y));
+        assert_eq!(texts.len(), want.len(), "{name}: lines");
+        let mut worst = 0f32;
+        for (t, (serif, size, wording)) in texts.iter().zip(want) {
+            assert_eq!(t.text.as_deref(), Some(*wording), "{name}");
+            assert_eq!(t.font == FontFamily::Serif, *serif, "{name}: {wording} ({size} pt) as {:?}", t.font);
+            let got = t.font_size.expect("size") * d.pt_per_px;
+            worst = worst.max((got - size).abs() / size);
+            assert!((got - size).abs() / size < 0.12, "{name}: {wording} {got:.1} pt, want {size}");
+        }
+        eprintln!("{name}: families all right; worst size error {:.1} %", worst * 100.0);
+    }
 }

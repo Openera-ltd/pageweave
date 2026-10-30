@@ -539,6 +539,8 @@ pub struct AnnotationSpec {
 pub enum DesignFormat {
     Svg,
     Pdf,
+    /// A picture of the design at its own size (one design pixel per image pixel).
+    Png,
 }
 
 /// Spreadsheet format for exported tables.

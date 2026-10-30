@@ -1198,9 +1198,13 @@ fn design_rebuilds_a_page_and_exports_svg_and_pdf() {
         .output()
         .expect("run");
     assert_eq!(zero.status.code(), Some(2));
+    let jpg =
+        bin().args(["design-export"]).arg(&project).arg("-o").arg(dir.path().join("x.jpg")).output().expect("run");
+    assert_eq!(jpg.status.code(), Some(2), "only .svg, .pdf and .png");
     let png =
         bin().args(["design-export"]).arg(&project).arg("-o").arg(dir.path().join("x.png")).output().expect("run");
-    assert_eq!(png.status.code(), Some(2));
+    assert!(png.status.success(), "{}", String::from_utf8_lossy(&png.stderr));
+    assert_eq!(&std::fs::read(dir.path().join("x.png")).expect("png")[1..4], b"PNG");
     let far = bin()
         .args(["--json", "design", "--page", "9"])
         .arg(fixture("poster.pdf"))

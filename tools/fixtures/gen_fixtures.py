@@ -785,6 +785,58 @@ def build_caption_document(words: bool = True) -> bytes:
     return w.render(catalog, info)
 
 
+FONT_LINES = [
+    ("Times-Roman", 12, "Minutes of the annual meeting"),
+    ("Times-Roman", 18, "The quick brown fox jumps"),
+    ("Times-Bold", 24, "Grand Opening Night"),
+    ("Times-Italic", 16, "An evening of chamber music"),
+    ("Times-Roman", 36, "Certificate"),
+    ("Times-Bold", 14, "Hand made in small batches"),
+    ("Helvetica", 12, "Minutes of the annual meeting"),
+    ("Helvetica", 18, "The quick brown fox jumps"),
+    ("Helvetica-Bold", 24, "Grand Opening Night"),
+    ("Helvetica-Oblique", 16, "An evening of chamber music"),
+    ("Helvetica", 36, "Certificate"),
+    ("Helvetica-Bold", 14, "Hand made in small batches"),
+]
+
+
+HOLDOUT_FONT_LINES = [
+    ("Times-Roman", 10, "Please reply by the first of June"),
+    ("Times-Bold", 20, "Summer Menu"),
+    ("Times-Roman", 28, "Winners announced at noon"),
+    ("Times-Italic", 22, "with music and dancing"),
+    ("Times-Roman", 48, "Diploma"),
+    ("Helvetica", 10, "Please reply by the first of June"),
+    ("Helvetica-Bold", 20, "Summer Menu"),
+    ("Helvetica", 28, "Winners announced at noon"),
+    ("Helvetica-Oblique", 22, "with music and dancing"),
+    ("Helvetica", 48, "Diploma"),
+]
+
+
+def build_fonts_document(lines=None) -> bytes:
+    """Serif (Times) and sans (Helvetica) lines of several sizes and weights, for measuring how well
+    the Design Studio tells the two families apart (crates/pw-pdf/tests/studio.rs, FONT_LINES)."""
+    w = PdfWriter()
+    catalog, pages_obj = w.reserve(), w.reserve()
+    lines = lines or FONT_LINES
+    names = sorted({f for f, _, _ in lines})
+    fonts = {n: w.add(f"<< /Type /Font /Subtype /Type1 /BaseFont /{n} /Encoding /WinAnsiEncoding >>") for n in names}
+    ops, y = "", 800
+    for f, size, s in lines:
+        y -= size * 1.6 + 8
+        ops += f"BT /F{names.index(f)} {size} Tf 40 {y} Td ({esc(s)}) Tj ET\n"
+    content = w.stream(ops.encode("latin-1"))
+    res = " ".join(f"/F{i} {fonts[n]} 0 R" for i, n in enumerate(names))
+    page = w.add(f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 420 842] "
+                 f"/Resources << /Font << {res} >> >> /Contents {content} 0 R >>")
+    w.set(pages_obj, f"<< /Type /Pages /Kids [{page} 0 R] /Count 1 >>")
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R >>")
+    info = w.add("<< /Title (Fonts fixture) /Producer (gen_fixtures.py) >>")
+    return w.render(catalog, info)
+
+
 def build_borderless_tables_document() -> bytes:
     """Tables without drawn grids for table export (D-020): page 1 has a table of aligned columns
     with no lines at all and a table with only horizontal rules above and below its header and at
@@ -870,6 +922,8 @@ def main() -> int:
     files["poster.pdf"] = build_poster_document()
     files["badges.pdf"] = build_badges_document()
     files["caption.pdf"] = build_caption_document()
+    files["fonts.pdf"] = build_fonts_document()
+    files["fonts-holdout.pdf"] = build_fonts_document(HOLDOUT_FONT_LINES)
     files["caption-clean.pdf"] = build_caption_document(words=False)
     files["form-nested.pdf"] = build_nested_form_document()
     files["redaction.pdf"] = build_redaction_document()

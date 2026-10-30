@@ -2554,6 +2554,25 @@ await test("design studio: words over a picture become text and are painted out 
     assert(words.includes("OPEN DAY") && words.includes("Saturday from ten"), `words ${words}`);
     await s.click('[data-layer="text-1"]');
     assert((await s.text(".studio-note")).includes("painted out"), "the note says the wording was painted out");
+    // Font family and slant: drawn on the canvas, saved, and exported (PNG at the design's size).
+    await s.exec("const e=document.querySelector('[data-testid=studio-font]'); e.focus(); return 1");
+    await s.click('[data-testid="studio-font"]');
+    await s.click('[data-testid="studio-font"] option[value="serif"]');
+    await s.click('[data-testid="studio-italic"]');
+    await s.waitUntil(async () => (await s.exec("const t=document.querySelector('[data-object=\"text-1\"]'); return t.getAttribute('font-style') + '|' + t.getAttribute('font-family')")).startsWith("italic|'Times"), "serif italic drawn");
+    await s.keys(["Control", "s"]);
+    await s.waitUntil(async () => (await s.text('[data-testid="studio-status"]')).startsWith("Saved"), "saved");
+    const projectFile = join(work, "studio-caption-page1.pwdesign");
+    const t1 = JSON.parse(readFileSync(projectFile, "utf8")).objects.find((o) => o.id === "text-1");
+    assert(t1.font === "serif" && t1.italic === true, `saved font ${t1.font} italic ${t1.italic}`);
+    if (CLI) {
+      const out = join(work, "studio-caption.png");
+      execFileSync(CLI, ["design-export", projectFile, "-o", out]);
+      const png = readFileSync(out);
+      const [w, h] = [png.readUInt32BE(16), png.readUInt32BE(20)];
+      const d = JSON.parse(readFileSync(projectFile, "utf8"));
+      assert(png.subarray(1, 4).toString() === "PNG" && w === d.width && h === d.height, `PNG ${w}×${h}`);
+    }
     // Hide both lines: the picture underneath shows no words.
     for (const name of ["OPEN DAY", "Saturday from ten"]) {
       await s.click(`[data-layer="${await s.exec(`return [...document.querySelectorAll('[data-layer]')].find(b => b.textContent.includes(${JSON.stringify(name)})).dataset.layer`)}"]`);

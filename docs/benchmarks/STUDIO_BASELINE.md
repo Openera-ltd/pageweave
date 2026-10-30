@@ -25,3 +25,15 @@ Words over a picture (D-032) on `fixtures/pdf/caption.pdf` (white bold 30 pt and
 over a gradient picture): both lines recognised, white; inside each line's box the picture differs
 from `caption-clean.pdf` (same page, no words) by 0.20/255 (64.65 and 34.86 before painting); no
 white pixels left; PDF export mean difference 2.56/255.
+
+Font family (D-034), `python3 -m pwml.fontbench` (corpus pages rebuilt with the debug CLI; lines
+matched by wording). Val split (36 pages, tuning): 91.8 %. Blind split (72 pages, held-out fonts,
+measured once): 82.6 % serif-vs-sans over 2,562 lines (always-sans 35.8 %).
+
+| Condition | clean | lowres | blur | noise | jpeg | faded | shadow | skew | badscan |
+|---|---|---|---|---|---|---|---|---|---|
+| Blind accuracy | 99.7 % | 93.9 % | 96.1 % | 93.3 % | 96.9 % | 96.8 % | 83.3 % | 29.2 % | 49.8 % |
+
+By font (blind): Inter 99.3 %, DejaVu Sans 97.7 %, Carlito Bold 97.5 %, Carlito 94.1 %, DejaVu Serif
+93.8 %, Caladea Italic 75.4 %, Caladea 70.1 %; DejaVu Sans Mono kept sans 92.9 %. Fixtures
+(`fonts.pdf`, `fonts-holdout.pdf`): 22/22 families right, sizes within 7.5 %.

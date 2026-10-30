@@ -67,7 +67,14 @@ import {
   type Guide,
   type History,
 } from "../studio";
-import { toPwError, type Design, type DesignObject, type JobSnapshot, type PwError } from "../types";
+import { toPwError, type Design, type DesignFont, type DesignFormat, type DesignObject, type JobSnapshot, type PwError } from "../types";
+
+/** The same families the exports use (SVG generic families; PDF Helvetica, Times, Courier). */
+const FONT_CSS: Record<DesignFont, string> = {
+  sans: "Helvetica, Arial, sans-serif",
+  serif: "'Times New Roman', Times, serif",
+  mono: "'Courier New', Courier, monospace",
+};
 
 export type StudioSource = { kind: "rebuild"; input: string; page: number; docId?: number } | { kind: "open"; path: string };
 
@@ -209,7 +216,7 @@ export function Studio({ source, jobs, onClose }: Props) {
     }
   };
 
-  const exportAs = async (format: "svg" | "pdf") => {
+  const exportAs = async (format: DesignFormat) => {
     if (!hist || !path || exportJob) return;
     if (dirty && !(await save())) return;
     const output = await api.pickDesignExport(join(dirname(path), `${stem(path)}.${format}`), format);
@@ -401,6 +408,9 @@ export function Studio({ source, jobs, onClose }: Props) {
           <button type="button" className="btn outline" data-testid="studio-export-pdf" aria-disabled={!hist || !!exportJob || undefined} title="Export as PDF with real text" onClick={() => exportAs("pdf")}>
             <FileDown /> PDF
           </button>
+          <button type="button" className="btn outline" data-testid="studio-export-png" aria-disabled={!hist || !!exportJob || undefined} title="Export as a PNG picture at the design's size" onClick={() => exportAs("png")}>
+            <FileDown /> PNG
+          </button>
           <button type="button" className="btn primary" data-testid="studio-save" aria-disabled={!dirty || undefined} title={dirty ? "Save the design (Ctrl+S)" : "No unsaved changes"} onClick={() => dirty && save()}>
             <Save /> Save
           </button>
@@ -564,6 +574,10 @@ export function Studio({ source, jobs, onClose }: Props) {
                   {count(design, "text")} text · {count(design, "shape")} shapes · {count(design, "image")} pictures
                 </p>
                 <p className="hint">Rebuilt from a flat picture: these are likely objects, not the original layers.</p>
+                <label className="studio-num studio-background">
+                  <span>Background</span>
+                  <input type="color" data-testid="studio-background" value={design.background} onChange={(e) => change({ ...design, background: e.target.value }, "background")} />
+                </label>
                 {doubtful.length > 0 && (
                   <>
                     <h3>Check these ({doubtful.length})</h3>
@@ -623,9 +637,10 @@ export function DesignSvg({ design }: { design: Design }) {
             transform={turn}
             x={o.x}
             y={o.y + (o.baseline ?? (o.font_size ?? o.h) * 0.72)}
-            fontFamily="Helvetica, Arial, sans-serif"
+            fontFamily={FONT_CSS[o.font ?? "sans"]}
             fontSize={o.font_size ?? o.h}
             fontWeight={o.bold ? "bold" : "normal"}
+            fontStyle={o.italic ? "italic" : "normal"}
             fill={o.color}
             textLength={o.w}
             lengthAdjust="spacingAndGlyphs"
@@ -699,11 +714,23 @@ function Properties({
               <span>Colour</span>
               <input type="color" value={o.color ?? "#000000"} onChange={(e) => edit({ color: e.target.value }, "color")} />
             </label>
+          </div>
+          <div className="row">
+            <label className="studio-num">
+              <span>Font</span>
+              <select className="select" data-testid="studio-font" value={o.font ?? "sans"} title="Family guessed from the letter shapes (serif or sans); the original font is not identified. These fonts are on every computer." onChange={(e) => edit({ font: e.target.value as DesignFont })}>
+                <option value="sans">Sans serif</option>
+                <option value="serif">Serif</option>
+                <option value="mono">Monospace</option>
+              </select>
+            </label>
             <label className="row">
               <input type="checkbox" checked={o.bold} onChange={(e) => edit({ bold: e.target.checked })} /> Bold
             </label>
+            <label className="row">
+              <input type="checkbox" data-testid="studio-italic" checked={!!o.italic} onChange={(e) => edit({ italic: e.target.checked })} /> Italic
+            </label>
           </div>
-          <p className="hint">Font: Helvetica-style sans serif (the original font is not identified).</p>
         </>
       )}
       {o.kind === "image" && (

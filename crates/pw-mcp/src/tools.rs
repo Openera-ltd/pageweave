@@ -374,12 +374,12 @@ pub const TOOLS: &[Tool] = &[
     Tool {
         name: "export_design",
         title: "Export a design project",
-        description: "Export a design project (.pwdesign) as editable SVG (text, rectangles, embedded pictures; nothing external) or as PDF (real text), chosen by the output's extension. The file is read back and checked before it appears.",
+        description: "Export a design project (.pwdesign) as editable SVG (text, shapes, embedded pictures; nothing external), as PDF (real text) or as a PNG picture at the design's size, chosen by the output's extension. The file is read back and checked before it appears.",
         effect: Effect::WritesNewFiles,
         long: false,
         schema: || {
             obj(
-                json!({ "path": path_prop("Design project (.pwdesign)"), "output": path_prop("New .svg or .pdf file (must not exist)") }),
+                json!({ "path": path_prop("Design project (.pwdesign)"), "output": path_prop("New .svg, .pdf or .png file (must not exist)") }),
                 &["path", "output"],
             )
         },
@@ -741,13 +741,14 @@ pub fn operation(tool: &Tool, a: &Value, roots: &Roots) -> PwResult<Operation> {
         }
         "export_design" => {
             let x: PathOutArg = args(a)?;
-            let output = roots.output(&x.output, &["svg", "pdf"])?;
-            let svg = output.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg"));
-            Operation::ExportDesign {
-                input: roots.input(&x.path)?,
-                format: if svg { pw_core::ops::DesignFormat::Svg } else { pw_core::ops::DesignFormat::Pdf },
-                output,
-            }
+            let output = roots.output(&x.output, &["svg", "pdf", "png"])?;
+            let ext = output.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+            let format = match ext.as_str() {
+                "svg" => pw_core::ops::DesignFormat::Svg,
+                "png" => pw_core::ops::DesignFormat::Png,
+                _ => pw_core::ops::DesignFormat::Pdf,
+            };
+            Operation::ExportDesign { input: roots.input(&x.path)?, format, output }
         }
         other => {
             return Err(PwError::new(

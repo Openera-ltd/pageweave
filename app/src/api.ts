@@ -11,6 +11,7 @@ import { OFFICE_EXTENSIONS } from "./office";
 import type {
   AppInfo,
   Design,
+  DesignFormat,
   AttachmentInfo,
   ExistingAnnotation,
   ResourceReport,
@@ -39,6 +40,12 @@ import type {
   Settings,
 } from "./types";
 
+const EXPORT_FILTERS: Record<DesignFormat, { name: string; extensions: string[] }> = {
+  svg: { name: "SVG drawing", extensions: ["svg"] },
+  pdf: { name: "PDF document", extensions: ["pdf"] },
+  png: { name: "PNG picture", extensions: ["png"] },
+};
+
 export interface DropEvent {
   type: "enter" | "over" | "drop" | "leave";
   paths: string[];
@@ -61,7 +68,7 @@ export interface Api {
   pickPdfFiles(multiple: boolean): Promise<string[]>;
   pickSavePath(defaultPath: string): Promise<string | null>;
   /** Save dialog for a design export (SVG or PDF). */
-  pickDesignExport(defaultPath: string, format: "svg" | "pdf"): Promise<string | null>;
+  pickDesignExport(defaultPath: string, format: DesignFormat): Promise<string | null>;
   /** A picture, PDF or design project to open in the Studio. */
   pickDesignSource(): Promise<string | null>;
   loadDesign(path: string): Promise<Design>;
@@ -174,7 +181,7 @@ export const tauriApi: Api = {
   },
   pickSavePath: (defaultPath) => saveDialog({ defaultPath, filters: [{ name: "PDF document", extensions: ["pdf"] }] }),
   pickDesignExport: (defaultPath, format) =>
-    saveDialog({ defaultPath, filters: [format === "svg" ? { name: "SVG drawing", extensions: ["svg"] } : { name: "PDF document", extensions: ["pdf"] }] }),
+    saveDialog({ defaultPath, filters: [EXPORT_FILTERS[format]] }),
   pickDesignSource: async () => {
     const r = await openDialog({
       multiple: false,

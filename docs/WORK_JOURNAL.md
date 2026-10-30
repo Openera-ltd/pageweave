@@ -405,3 +405,12 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - Fixtures `caption.pdf` / `caption-clean.pdf`; unit test (estimate exact on a gradient; doubtful line left alone) and integration test (0.20/255 vs the clean page). E2E scenario added.
 - Disk allowance ran out during the full E2E (one launch timed out then); stale duplicate test binaries in target/debug/deps removed (11 GB).
 - Studio: corner handles on turned objects (`dragCorner`: opposite corner fixed on the canvas, size along the object's own sides); unit tests for 0°, 90° and arbitrary angles; E2E drags the "se" handle of a 90°-turned shape 40 px down → its width grows by 40 screen px, top unchanged. Studio E2E 3/3.
+
+## 2026-10-30 — Design Studio: font family, italic, background, PNG export (D-033)
+- Engine: `FontFamily` (sans/serif/mono) + `italic` on text (omitted when default; old projects load unchanged); SVG generic families + font-style; PDF built-in Helvetica/Times/Courier ×4 variants; `DesignFormat::Png` rendered from the PDF export by PDFium at the design's size and read back (first try used `image::open` on the staged temp file, whose extension is not .png — decoded from bytes now). CLI/MCP accept .png. Test `fonts_and_slant_reach_svg_and_pdf_and_png_is_the_design_size`.
+- UI: Font select, Italic, Background colour (nothing selected), PNG export button; canvas uses the same families. Component tests (undo of all three, PNG export request); E2E: serif italic drawn, saved, CLI PNG at the design size.
+
+## 2026-10-30 — Design Studio: serif vs sans (D-034)
+- Experiment first (PRD 14: benchmark before adopting): stem-end "foot" share on Times/Helvetica fixtures separated 12/12, then a pre-set threshold scored 10/10 on a holdout fixture. The corpus benchmark (`ml/pwml/fontbench.py`) showed it was not enough: blind 70.1 % with 20 % false serifs (bold sans curve bottoms). Requiring feet on both sides of the stem: val 91.8 %, blind 82.6 %, false serifs 3.5 %. Skewed and "badscan" pages remain weak (fall back to sans) — documented.
+- Also: a line's ink is limited to its main row band (a tight neighbour line inflated "Diploma" 48 pt to 56 pt); top/baseline from stem-tall columns only (a synthetic unit test caught serif-only columns dragging the median).
+- Checks: cargo clippy clean; pw-pdf studio unit 9/9, integration 8/8; vitest 201; Studio E2E 3/3; full E2E earlier this session 89/90 with "turn pages upright" timing out under CPU contention from parallel OCR tests — passed alone (37 s).
