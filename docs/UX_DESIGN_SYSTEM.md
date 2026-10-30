@@ -22,6 +22,13 @@ Before a major UI design/rework:
 - Do not put explanatory paragraphs below each toolbar item. Use clear names, familiar symbols, discoverable tooltips, accessible descriptions, and searchable documentation.
 - Make hierarchy clear: document canvas first, contextual tools second, secondary panels optional/collapsible. Avoid letting AI/assistant surfaces crowd core document work.
 
+## Toolbar and icon conventions (2026-10-30)
+
+- One row, `--toolbar-h` tall: frequent tools are icon-only buttons (Lucide, 16 px at 100 % text size, muted until hovered); only Open, the two dropdowns and All tools carry text. Groups are separated by short hairlines, not boxes.
+- An "on" tool uses an accent tint and accent icon (`aria-pressed`); an open dropdown uses the pressed grey and turns its chevron. Disabled controls are 45 % opacity and keep their tooltip reason.
+- Buttons respond within one frame: colour transitions of `--dur-fast` and a 0.96 press scale; menus drop in (4 px, `--dur-fast`), the All tools pane and sidebar slide in by 12 px (`--dur-med`). All durations are tokens and fall to 0 with reduced motion.
+- Document tabs show a file icon (accent when active) and an accent dot while the document has unsaved changes.
+
 ## Themes and density
 
 Support light, dark, and system modes; configurable accent color; compact and comfortable density; accessible contrast; scalable interface text; high-contrast considerations; and reduced motion. Ensure custom themes apply across every screen, popup, selected text, disabled control, validation message, canvas tool, and installer state. Preferences must survive restart and upgrade. Theme previews should not create a separate inconsistent UI implementation.

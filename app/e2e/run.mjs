@@ -704,6 +704,55 @@ const annotCount = (s, kind) => s.exec(`return document.querySelectorAll('.annot
 const unsavedText = (s) => s.exec("return document.querySelector('[data-testid=unsaved]')?.textContent ?? ''");
 const sha = (p) => createHash("sha256").update(readFileSync(p)).digest("hex");
 
+await test("toolbar: grouped tools, dropdowns, selection tools enable live, overflow in a narrow window", async () => {
+  await withApp([join(FIX, "single-page.pdf")], async (s) => {
+    // Default window size. (Menus close when the window resizes, so a resize here could race the
+    // dropdown checks below.)
+    await pageLoaded(s, 0);
+    const groups = await s.exec("return [...document.querySelectorAll('.toolbar [role=group]')].map(g => g.getAttribute('aria-label'))");
+    for (const g of ["File", "Comment", "Edit", "Pages", "Convert and read"]) assert(groups.includes(g), `toolbar group ${g} (${groups})`);
+    const disabled = (c) => s.exec(`return document.querySelector('.toolbar [data-command="${c}"]').getAttribute('aria-disabled')`);
+    // Convert dropdown: opens at its button, lists conversions, Escape closes and restores focus.
+    await s.click('[data-testid="menu-convert"]');
+    await s.waitFor('[role="menu"][aria-label="Convert"] [data-command="file.toWord"]');
+    assert((await s.attr('[data-testid="menu-convert"]', "aria-expanded")) === "true", "dropdown marked open");
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[role=menu]')")), "menu closed");
+    assert((await s.exec("return document.activeElement?.dataset.testid")) === "menu-convert", "focus back on the dropdown");
+    // Pages dropdown runs a command.
+    await s.click('[data-testid="menu-pages"]');
+    await s.click('[role="menuitem"][data-command="pages.organize"]');
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[role=dialog] h2')?.textContent")) === "Organize pages", "organize dialog");
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[role=dialog]')")), "dialog closed");
+    // Selection tools enable as soon as text is selected, without another click, and work.
+    assert((await disabled("annotate.highlight")) === "true", "highlight disabled without a selection");
+    const w = await markSpan(s, 0, "PWMARK001");
+    await s.doubleClick('[data-e2e="target"]', w * 0.3, 0);
+    await s.waitUntil(async () => (await disabled("annotate.highlight")) === null, "highlight enabled by the selection");
+    await s.click('.toolbar [data-command="annotate.highlight"]');
+    await s.waitUntil(async () => (await annotCount(s, "highlight")) === 1, "highlight drawn from the toolbar");
+    await s.waitFor(".tab.selected .dirty");
+    await s.click('.toolbar [data-command="edit.undo"]');
+    await s.waitUntil(async () => (await annotCount(s, "highlight")) === 0, "undone from the toolbar");
+    assert(!(await s.exec("return !!document.querySelector('.tab .dirty')")), "no unsaved dot after undo");
+    assert(!(await s.exec("return !!document.querySelector('[data-testid=toolbar-more]')")), "everything fits at 1366 px");
+    // Narrow: groups move into More tools; nothing overflows the window; their commands still run.
+    await s.setWindowRect(760, 520);
+    await s.waitUntil(async () => (await s.exec("return innerWidth")) <= 760, "window narrowed");
+    await s.waitFor('[data-testid="toolbar-more"]');
+    const fits = await s.exec("const t=document.querySelector('.toolbar'); return t.scrollWidth <= t.clientWidth && [...t.querySelectorAll('button')].every(b => b.getBoundingClientRect().right <= innerWidth)");
+    assert(fits, "toolbar fits the narrow window");
+    writeFileSync(join(ART, "toolbar-narrow.png"), await s.screenshot());
+    await s.click('[data-testid="toolbar-more"]');
+    await s.click('[role="menu"][aria-label="More tools"] [data-command="file.protect"]');
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[role=dialog] h2')?.textContent ?? ''")).includes("Protect"), "protect dialog from More tools");
+    await s.keys(["Escape"]);
+    await s.setWindowRect(1366, 860);
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=toolbar-more]')")), "More tools gone when wide again");
+  });
+});
+
 await test("annotate: highlight/underline/strike/note from selection and menus; undo/redo; save a verified copy", async () => {
   const src = join(FIX, "single-page.pdf");
   const before = sha(src);

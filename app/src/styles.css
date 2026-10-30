@@ -178,21 +178,83 @@ textarea {
   min-width: 0;
 }
 
-.toolbar .spacer {
-  flex: 1;
-}
-
 .toolbar .group {
   display: flex;
+  flex: none;
   align-items: center;
   gap: var(--space-1);
 }
 
-.toolbar .divider {
+/* The middle groups: a hairline between neighbours; groups that do not fit move to "More tools". */
+.toolbar-groups {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  padding-left: var(--space-2);
+}
+
+.toolbar-groups > .group {
+  position: relative;
+  padding: 0 var(--space-3);
+}
+
+.toolbar-groups > .group::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
   width: 1px;
-  height: 60%;
+  height: calc(var(--control-h) * 0.6);
+  transform: translateY(-50%);
   background: var(--border);
-  margin: 0 var(--space-2);
+}
+
+.toolbar .group.end {
+  padding-left: var(--space-2);
+}
+
+.toolbar .btn {
+  color: var(--text-muted);
+}
+
+.toolbar .btn:hover:not(:disabled):not([aria-disabled="true"]),
+.toolbar .btn[aria-expanded="true"] {
+  color: var(--text);
+}
+
+.toolbar .btn[data-command="file.open"] {
+  color: var(--text);
+}
+
+/* A tool that is on (sidebar shown, edit mode, marking areas…): accent tint, not just grey.
+   The label mixes the accent with the text colour so it keeps text contrast on the tint (axe:
+   pure accent on the tint is under 4.5:1; this is about 6:1 light, 4.8:1 dark). */
+.btn[aria-pressed="true"],
+.toolbar .btn[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  color: color-mix(in srgb, var(--accent) 70%, var(--text));
+}
+
+.btn[aria-pressed="true"]:hover:not(:disabled):not([aria-disabled="true"]) {
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+}
+
+.btn.dropdown {
+  gap: var(--space-2);
+  padding: 0 var(--space-2) 0 var(--space-3);
+}
+
+.btn.dropdown .chev {
+  width: calc(12px * var(--ui-scale));
+  height: calc(12px * var(--ui-scale));
+  opacity: 0.7;
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.btn.dropdown[aria-expanded="true"] .chev {
+  transform: rotate(180deg);
 }
 
 .workspace {
@@ -211,11 +273,19 @@ textarea {
   min-width: var(--control-h);
   padding: 0 var(--space-3);
   border: 1px solid transparent;
-  border-radius: var(--radius-1);
+  border-radius: var(--radius-2);
   background: transparent;
   cursor: pointer;
   white-space: nowrap;
-  transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+
+.btn:active:not(:disabled):not([aria-disabled="true"]) {
+  transform: scale(0.96);
 }
 
 .btn.icon {
@@ -227,7 +297,6 @@ textarea {
 }
 
 .btn:active:not(:disabled):not([aria-disabled="true"]),
-.btn[aria-pressed="true"],
 .btn[aria-expanded="true"] {
   background: var(--surface-pressed);
 }
@@ -475,6 +544,7 @@ textarea {
   border-radius: var(--radius-2) var(--radius-2) 0 0;
   background: transparent;
   cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
 }
 
 .tab.selected {
@@ -507,6 +577,27 @@ textarea {
   outline-offset: -2px;
 }
 
+.tab .tab-icon {
+  width: calc(14px * var(--ui-scale));
+  height: calc(14px * var(--ui-scale));
+  flex: none;
+  margin-right: var(--space-2);
+  color: var(--text-muted);
+}
+
+.tab.selected .tab-icon {
+  color: var(--accent);
+}
+
+.tab .dirty {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-left: var(--space-2);
+  border-radius: 50%;
+  background: var(--accent);
+}
+
 .tab .name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -521,6 +612,7 @@ textarea {
 
 /* ---------- Sidebar thumbnails ---------- */
 .sidebar {
+  animation: enter-left var(--dur-med) var(--ease);
   width: calc(200px * var(--ui-scale));
   background: var(--surface);
   border-right: 1px solid var(--border);
@@ -634,6 +726,7 @@ textarea {
   border-radius: var(--radius-2);
   background: transparent;
   cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
   content-visibility: auto;
   contain-intrinsic-size: auto 160px;
 }
@@ -959,31 +1052,101 @@ textarea {
   border-radius: var(--radius-3);
   padding: var(--space-6);
   box-shadow: var(--shadow-1);
+  animation: slide var(--dur-med) var(--ease);
+}
+
+.home-head {
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-start;
+  margin-bottom: var(--space-5);
+}
+
+.home-head .logo {
+  flex: none;
+  width: calc(36px * var(--ui-scale));
+  height: calc(36px * var(--ui-scale));
+  border-radius: var(--radius-2);
 }
 
 .home h1 {
   font-size: var(--font-size-4);
-  margin: 0 0 var(--space-2);
+  margin: 0 0 var(--space-1);
 }
 
 .home p {
-  margin: 0 0 var(--space-5);
+  margin: 0;
   color: var(--text-muted);
 }
 
 .home .drop {
-  border: 2px dashed var(--border-strong);
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  border: 1.5px dashed var(--border-strong);
   border-radius: var(--radius-2);
   padding: var(--space-6);
   text-align: center;
   color: var(--text-muted);
-  margin-bottom: var(--space-5);
+  margin-bottom: var(--space-4);
+  transition: border-color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.home .drop svg {
+  width: calc(24px * var(--ui-scale));
+  height: calc(24px * var(--ui-scale));
+  opacity: 0.7;
 }
 
 .home .drop.active {
   border-color: var(--accent);
   background: var(--selection);
   color: var(--text);
+}
+
+.home-open {
+  width: 100%;
+  height: calc(var(--control-h) + 6px);
+  font-weight: 600;
+}
+
+.home-open .kbd-hint {
+  margin-left: var(--space-2);
+  font-weight: 400;
+  font-size: var(--font-size-1);
+}
+
+/* Secondary starts as tiles: icon above a label that may wrap, so names are never cut off. */
+.home-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.home-actions .btn {
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: var(--space-2);
+  height: auto;
+  min-width: 0;
+  padding: var(--space-3) var(--space-2);
+  white-space: normal;
+  text-align: center;
+  line-height: 1.25;
+}
+
+.home-actions .btn svg {
+  width: calc(20px * var(--ui-scale));
+  height: calc(20px * var(--ui-scale));
+  color: var(--accent);
+}
+
+.home-section {
+  font-size: var(--font-size-1);
+  font-weight: 600;
+  color: var(--text-muted);
+  margin: var(--space-6) 0 var(--space-2);
 }
 
 .recent {
@@ -1025,7 +1188,8 @@ textarea {
   border: 1px solid var(--border);
   border-radius: var(--radius-2);
   box-shadow: var(--shadow-2);
-  animation: pop var(--dur-fast) var(--ease);
+  transform-origin: top left;
+  animation: drop var(--dur-fast) var(--ease);
 }
 
 .menu [role="menuitem"] {
@@ -1040,6 +1204,14 @@ textarea {
   background: transparent;
   text-align: left;
   cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+.menu [role="menuitem"] svg {
+  width: var(--icon);
+  height: var(--icon);
+  flex: none;
+  color: var(--text-muted);
 }
 
 .menu [role="menuitem"]:hover:not([aria-disabled="true"]),
@@ -1378,6 +1550,27 @@ kbd,
   from {
     opacity: 0;
     transform: scale(0.98);
+  }
+}
+
+@keyframes drop {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+}
+
+@keyframes enter-right {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+}
+
+@keyframes enter-left {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
   }
 }
 
@@ -2234,6 +2427,7 @@ kbd,
   border-left: 1px solid var(--border);
   background: var(--surface);
   overflow: hidden;
+  animation: enter-right var(--dur-med) var(--ease);
 }
 .tools-head {
   display: flex;
@@ -2255,16 +2449,11 @@ kbd,
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  font-size: 0.8rem;
+  font-size: var(--font-size-1);
   font-weight: 600;
   color: var(--text-muted);
   text-transform: none;
-  margin: var(--space-3) 0 var(--space-1);
-}
-.tools-group h3 svg {
-  width: 16px;
-  height: 16px;
-  color: var(--accent);
+  margin: var(--space-4) 0 var(--space-1) var(--space-2);
 }
 .tools-group ul {
   list-style: none;
@@ -2272,16 +2461,29 @@ kbd,
   padding: 0;
 }
 .tool-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
   width: 100%;
+  min-height: calc(26px * var(--ui-scale));
   text-align: left;
-  padding: 3px var(--space-2) 3px 28px;
+  padding: 3px var(--space-2);
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-2);
   background: transparent;
   color: var(--text);
   font: inherit;
   cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+.tool-item svg {
+  width: var(--icon);
+  height: var(--icon);
+  flex: none;
+  color: var(--text-muted);
+}
+.tool-item[aria-disabled="true"] svg {
+  opacity: 0.55;
 }
 .tool-item:hover {
   background: var(--surface-hover);

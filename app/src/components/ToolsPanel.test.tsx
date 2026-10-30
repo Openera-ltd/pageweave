@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { COMMANDS, type CommandHandlers } from "../commands";
 import { TOOL_GROUPS, ToolsPanel, matches } from "./ToolsPanel";
+import { COMMAND_ICONS } from "../commandIcons";
 
 afterEach(cleanup);
 
@@ -38,6 +39,12 @@ describe("All tools pane", () => {
     expect(run).toHaveBeenCalledWith("file.toWord");
     fireEvent.change(screen.getByTestId("tools-filter"), { target: { value: "zzzz" } });
     expect(screen.getByText(/No tool matches/)).toBeTruthy();
+  });
+
+  it("shows an icon next to every tool", () => {
+    for (const g of TOOL_GROUPS) for (const c of g.commands) expect(COMMAND_ICONS[c], c).toBeTruthy();
+    render(<ToolsPanel handlers={handlers().h} bindings={{}} onClose={() => undefined} />);
+    for (const item of document.querySelectorAll(".tool-item")) expect(item.querySelector("svg")).toBeTruthy();
   });
 
   it("closes", () => {

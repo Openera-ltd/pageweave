@@ -69,6 +69,15 @@ Maintain a single documented shortcut registry. Include common system convention
 - Destructive, irreversible, privacy-sensitive, or overwrite actions require safeguards proportional to risk. Avoid pointless confirmation dialogs for safe, reversible actions.
 - Never use fake delays to make progress look animated. Indeterminate progress must be identified as indeterminate; ETA appears only when there is enough data to estimate credibly.
 
+## Main toolbar
+
+- Layout (left to right): Menu and Open; then groups separated by hairlines — File (save a copy, print), Undo/redo, View (thumbnails, find), Comment (highlight, underline, strike through, note), Edit (edit text and pictures; Add text while Edit mode is on), Sign and protect (signature or initials, mark areas for redaction, password), Pages (organize, rotate, Pages ▾ dropdown), Convert and read (Convert ▾ dropdown, translate, OCR, read aloud); on the right the command palette, All tools and Preferences. Defined in `app/src/components/TopBar.tsx`.
+- Each button runs the registry command it names (same handler as its menu item, shortcut and palette entry); when unavailable it stays focusable with `aria-disabled` and its tooltip gives the reason (for example "Select text on a page first."). Selection tools enable as soon as page text is selected, without another click.
+- Tools that are on (thumbnails, find, edit mode, Add text, marking areas, reading, All tools) are shown pressed (`aria-pressed`, accent tint).
+- Dropdowns (Pages ▾, Convert ▾) and the app menu open below their button, mark it expanded, and Escape or an outside click closes them and returns focus to the button.
+- When the window is too narrow, whole groups move into a "More tools" (…) menu in priority order (Comment and Sign and protect first; File and View last). Every command of a hidden group, dropdown entries included, appears there exactly once. The toolbar never scrolls or clips; widening the window brings the groups back.
+- Icons come from one shared map (`app/src/commandIcons.tsx`) so a tool looks the same in the toolbar, its menus and the All tools pane.
+
 ## Tabs, windows, dialogs, and unsaved work
 
 - Preserve open documents, scroll positions, relevant selections, panel/workspace preferences, and active tab where reasonable.
