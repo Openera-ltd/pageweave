@@ -27,7 +27,8 @@ function setup(source: StudioSource, jobs: Record<string, JobSnapshot> = {}) {
   const pickDesignExport = vi.fn(async () => "/d/flyer.svg");
   const pickImageFiles = vi.fn(async () => ["/pics/logo.png"]);
   const loadPicture = vi.fn(async () => "iVBORw0KGgoNEW");
-  const api = { startOperation, cancelJob: vi.fn(), loadDesign, saveDesign, pickDesignExport, pickImageFiles, loadPicture, revealInFolder: vi.fn(async () => undefined) } as unknown as Api;
+  const cropPicture = vi.fn(async () => "iVBORw0KGgoCROPPED");
+  const api = { startOperation, cancelJob: vi.fn(), loadDesign, saveDesign, pickDesignExport, pickImageFiles, loadPicture, cropPicture, revealInFolder: vi.fn(async () => undefined) } as unknown as Api;
   const onClose = vi.fn();
   const view = render(
     <ApiContext.Provider value={api}>
@@ -40,7 +41,7 @@ function setup(source: StudioSource, jobs: Record<string, JobSnapshot> = {}) {
         <Studio source={source} jobs={j} onClose={onClose} />
       </ApiContext.Provider>,
     );
-  return { startOperation, loadDesign, saveDesign, pickDesignExport, pickImageFiles, loadPicture, onClose, rerender };
+  return { startOperation, loadDesign, saveDesign, pickDesignExport, pickImageFiles, loadPicture, cropPicture, onClose, rerender };
 }
 
 const job = (state: JobSnapshot["state"], out?: string): JobSnapshot => ({
@@ -292,6 +293,89 @@ describe("Design Studio", () => {
     fireEvent.keyDown(stage, { key: "z", ctrlKey: true });
     expect(document.querySelector('[data-object="text-1"] tspan')).toBeNull();
     expect(document.querySelector('[data-object="text-1"]')!.textContent).toBe("HELLO");
+  });
+
+  it("outlines a shape and removes its fill (only with an outline), undoable", async () => {
+    setup({ kind: "open", path: "/d/f.pwdesign" });
+    await flush();
+    fireEvent.click(document.querySelector('[data-layer="shape-1"]')!);
+    // Without an outline, removing the fill would make the shape invisible.
+    expect(screen.getByTestId("studio-no-fill")).toBeDisabled();
+    fireEvent.change(screen.getByTestId("studio-stroke-width"), { target: { value: "4" } });
+    let r = document.querySelector('[data-object="shape-1"]')!;
+    expect([r.getAttribute("stroke"), r.getAttribute("stroke-width"), r.getAttribute("x"), r.getAttribute("width")]).toEqual(["#000000", "4", "2", "196"]);
+    fireEvent.click(screen.getByTestId("studio-no-fill"));
+    r = document.querySelector('[data-object="shape-1"]')!;
+    expect(r.getAttribute("fill")).toBe("none");
+    // A shape without fill keeps at least a 1 px outline.
+    fireEvent.change(screen.getByTestId("studio-stroke-width"), { target: { value: "0" } });
+    expect(document.querySelector('[data-object="shape-1"]')!.getAttribute("stroke-width")).toBe("1");
+    const stage = document.querySelector(".studio-stage")!;
+    for (let i = 0; i < 3; i++) fireEvent.keyDown(stage, { key: "z", ctrlKey: true });
+    r = document.querySelector('[data-object="shape-1"]')!;
+    expect([r.getAttribute("fill"), r.getAttribute("stroke")]).toEqual(["#123456", null]);
+  });
+
+  it("crops a picture through the engine: preview, apply as one step keeping the kept part in place, undo", async () => {
+    const s = setup({ kind: "open", path: "/d/f.pwdesign" });
+    await flush();
+    fireEvent.click(document.querySelector('[data-layer="picture-1"]')!);
+    expect(screen.getByTestId("studio-crop-apply")).toBeDisabled();
+    fireEvent.change(document.querySelector('[data-crop="l"]')!, { target: { value: "10" } });
+    fireEvent.change(document.querySelector('[data-crop="b"]')!, { target: { value: "4" } });
+    const box = screen.getByTestId("studio-crop-box");
+    expect(box.style.width).not.toBe("");
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("studio-crop-apply"));
+    });
+    // Picture 1 is 40 × 40 at (120, 50): 10 off the left, 4 off the bottom.
+    expect(s.cropPicture).toHaveBeenCalledWith("", [0.25, 0, 0, 0.1]);
+    const img = document.querySelector('[data-object="picture-1"]')!;
+    expect([img.getAttribute("x"), img.getAttribute("y"), img.getAttribute("width"), img.getAttribute("height")]).toEqual(["130", "50", "30", "36"]);
+    expect(img.getAttribute("href")).toBe("data:image/png;base64,iVBORw0KGgoCROPPED");
+    expect(screen.queryByTestId("studio-crop-box")).toBeNull();
+    fireEvent.keyDown(document.querySelector(".studio-stage")!, { key: "z", ctrlKey: true });
+    expect(document.querySelector('[data-object="picture-1"]')!.getAttribute("width")).toBe("40");
+  });
+
+  it("does not crop a turned picture and says why", async () => {
+    setup({ kind: "open", path: "/d/f.pwdesign" });
+    await flush();
+    fireEvent.click(document.querySelector('[data-layer="picture-1"]')!);
+    fireEvent.click(screen.getByLabelText("Rotate 90° clockwise"));
+    const set = document.querySelector("fieldset.studio-crop") as HTMLFieldSetElement;
+    expect(set.disabled).toBe(true);
+    expect(set.title).toContain("rotation");
+  });
+
+  it("zooms with Ctrl+wheel and Ctrl+=/−/0, plain wheel left to scrolling; Space arms panning", async () => {
+    setup({ kind: "open", path: "/d/f.pwdesign" });
+    await flush();
+    const pct = () => Number(/(\d+)%/.exec(screen.getByTestId("studio-fit").title)![1]);
+    const fit = pct();
+    const cv = screen.getByTestId("studio-canvas");
+    const plain = new WheelEvent("wheel", { deltaY: -100, bubbles: true, cancelable: true });
+    cv.dispatchEvent(plain);
+    expect(pct()).toBe(fit);
+    expect(plain.defaultPrevented).toBe(false);
+    const zoomIn = new WheelEvent("wheel", { deltaY: -100, ctrlKey: true, bubbles: true, cancelable: true });
+    act(() => {
+      cv.dispatchEvent(zoomIn);
+    });
+    expect(zoomIn.defaultPrevented).toBe(true);
+    expect(pct()).toBeGreaterThan(fit);
+    const stage = document.querySelector(".studio-stage")!;
+    fireEvent.keyDown(stage, { key: "0", ctrlKey: true });
+    expect(pct()).toBe(fit);
+    fireEvent.keyDown(stage, { key: "=", ctrlKey: true });
+    fireEvent.keyDown(stage, { key: "=", ctrlKey: true });
+    const bigger = pct();
+    fireEvent.keyDown(stage, { key: "-", ctrlKey: true });
+    expect(pct()).toBeLessThan(bigger);
+    fireEvent.keyDown(stage, { key: " " });
+    expect(cv.className).toContain("pan-ready");
+    fireEvent.keyUp(stage, { key: " " });
+    expect(cv.className).not.toContain("pan-ready");
   });
 
   it("the start screen offers Open in Design Studio (studio.open)", () => {

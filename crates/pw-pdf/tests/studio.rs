@@ -325,6 +325,8 @@ fn rotation_and_groups_survive_export() {
         rotation: 90.0,
         ellipse: false,
         radius: 0.0,
+        stroke: None,
+        stroke_width: 0.0,
         font: FontFamily::Sans,
         italic: false,
         line_height: None,
@@ -509,6 +511,8 @@ fn fonts_and_slant_reach_svg_and_pdf_and_png_is_the_design_size() {
         rotation: 0.0,
         ellipse: false,
         radius: 0.0,
+        stroke: None,
+        stroke_width: 0.0,
         font,
         italic,
         line_height: None,
@@ -617,4 +621,52 @@ fn serif_and_sans_lines_are_told_apart_and_sized() {
         }
         eprintln!("{name}: families all right; worst size error {:.1} %", worst * 100.0);
     }
+}
+
+#[test]
+fn frames_and_rings_become_outlined_shapes() {
+    if !have_resources() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("test value");
+    let project = dir.path().join("frames.pwdesign");
+    let (_, s) =
+        reconstruct_design(&fixture("frames.pdf"), &OpenOptions::default(), 0, &project, CollisionPolicy::Fail, &never)
+            .expect("reconstruct");
+    let d = read_design(&project).expect("test value");
+    for o in &d.objects {
+        eprintln!(
+            "{:?} {} x{:.0} y{:.0} w{:.0} h{:.0} fill {:?} stroke {:?} {} ellipse {} {:?}",
+            o.kind, o.name, o.x, o.y, o.w, o.h, o.fill, o.stroke, o.stroke_width, o.ellipse, o.text
+        );
+    }
+    assert_eq!(s.images, 0, "frames are vectors: {s:?}");
+    // Outer edges in points (left, bottom, right, top) from gen_fixtures.py.
+    let (border, i1) = best(&d, ObjectKind::Shape, [10.0, 10.0, 290.0, 190.0]);
+    let (seal, i2) = best(&d, ObjectKind::Shape, [179.0, 39.0, 271.0, 101.0]);
+    assert!(i1 > 0.95 && i2 > 0.9, "boxes {i1} {i2}");
+    assert!(border.fill.is_none() && !border.ellipse && seal.fill.is_none() && seal.ellipse, "outlines, not fills");
+    assert!(
+        border.confidence >= 0.8 && seal.confidence >= 0.8,
+        "sure of both: {} {}",
+        border.confidence,
+        seal.confidence
+    );
+    let pt = |o: &pw_pdf::studio::DesignObject| o.stroke_width * d.pt_per_px;
+    assert!((pt(border) - 3.0).abs() < 0.6 && (pt(seal) - 2.0).abs() < 0.6, "widths {} {}", pt(border), pt(seal));
+    assert!(
+        border.stroke.as_deref().is_some_and(|c| c.starts_with("#1") || c.starts_with("#2")),
+        "{:?}",
+        border.stroke
+    );
+    let words: Vec<&str> = d.objects.iter().filter_map(|o| o.text.as_deref()).collect();
+    assert!(words.contains(&"Certificate") && words.contains(&"SEAL"), "{words:?}");
+    let pdf = dir.path().join("f.pdf");
+    export_design(&project, DesignFormat::Pdf, &pdf, CollisionPolicy::Fail).expect("pdf");
+    let diff = difference(&d, &pdf);
+    eprintln!("mean pixel difference {diff:.2}");
+    assert!(diff < 3.0, "export looks different: {diff}");
+    let svg = dir.path().join("f.svg");
+    export_design(&project, DesignFormat::Svg, &svg, CollisionPolicy::Fail).expect("svg");
+    assert_eq!(std::fs::read_to_string(&svg).expect("svg").matches("fill=\"none\" stroke=").count(), 2);
 }

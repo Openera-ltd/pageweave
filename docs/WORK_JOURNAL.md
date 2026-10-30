@@ -420,3 +420,16 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 - Owner asked why work kept stopping: turns were being ended at checkpoints to report; now continuing between items.
 - Engine `paragraphs()` groups lines (style, size, spacing, shared edge/centre); `stretch` measured with PDFium's built-in fonts (`reconstruct` takes a measure function; unit tests use a stand-in). SVG `<tspan>` per line (check reads them back), PDF one text object per line. Found and fixed: mean text confidence divided by paragraphs instead of lines (1.2 > 1).
 - UI: paragraph drawing shared with the exports' layout (`paragraphLayout`), Alignment radio group, Line spacing, `textPatch` grows the box. E2E: the poster's body is one paragraph, centred and undone; the snapping check now reads exact boxes from the saved project (a paragraph's drawn text has no box attributes, so the old check missed a valid snap to it).
+- Regression after paragraphs: workspace 458 passed, 0 failed (crate by crate). The MCP design test still expected 6 text objects; fixed in a follow-up commit (the paragraph commit was pushed before that test ran — gate commits on tests).
+
+## 2026-10-30 — Design Studio: outlined shapes (D-036)
+- First run: both frames were pictures — a thin anti-aliased line fails the exact-colour share (edges are blends). Judged by the blend between line and background instead. Width first came out +0.75 px (edge pixels counted whole); weighting by coverage fixed the width but moved the inner edge (export 3.42/255) until the box was shrunk by the same correction (2.22/255). The ring was flagged uncertain by the strict share; its confidence now uses the blend share.
+- UI: Outline colour/width, No fill (disabled without an outline), inset drawing shared with the exports (`shapeGeometry` / `shape_geometry`). Unit, component and E2E tests (frames scenario: fill on/off, width 12, saved, CLI SVG).
+
+## 2026-10-30 — Design Studio: crop pictures (D-037); a test race
+- Engine `crop_png` + host `crop_picture`; UI Crop fieldset with preview and one-step apply; unit (engine, `cropBox`), component (apply, undo, turned picture refused) and E2E (caption picture cropped 20 px left / 10 px bottom, rest in place).
+- The poster scenario failed once on "rotation saved": the earlier mid-test save left "Saved …" in the status, so the next save's wait passed before the file was written. All Studio saves in the E2E now wait for the project file to change (`studioSave`); Studio scenarios passed 3 × 4 in a row afterwards.
+
+## 2026-10-30 — Design Studio: zoom and pan
+- Ctrl+wheel zooms around the pointer (scroll corrected after layout), Ctrl+=/−/0, middle-button or Space+drag pan. Found while adding it: the canvas centred the page with `place-items: center`, so a zoomed page overflowed off the left/top out of scroll reach; now centred with auto margins. Component test (wheel only with Ctrl, keys, Space state) and E2E (zoom ×4 keys, top-left reachable, Space+drag pans exactly 120 px, Ctrl+0 back to fit).
+- Gate before committing outlines + crop + zoom: workspace 461/0 (crate by crate), vitest, tsc, audit 91/91, Studio E2E 4/4.

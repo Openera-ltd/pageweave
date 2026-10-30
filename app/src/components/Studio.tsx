@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
+  Crop,
   AlignCenter,
   AlignLeft,
   AlignRight,
@@ -62,6 +63,9 @@ import {
   uncertain,
   paragraphLayout,
   textPatch,
+  shapeGeometry,
+  cropBox,
+  type Trim,
   dragCorner,
   type Corner,
   undo,
@@ -110,6 +114,11 @@ export function Studio({ source, jobs, onClose }: Props) {
   const [selected, setSelectedIds] = useState<string[]>([]);
   const setSelected = (id: string | null) => setSelectedIds(id ? [id] : []);
   const [preview, setPreview] = useState<Design | null>(null);
+  // A picture being cropped: trims from each side (design pixels), previewed on the canvas.
+  const [crop, setCrop] = useState<(Trim & { id: string }) | null>(null);
+  const [cropping, setCropping] = useState(false);
+  const selId = selected.length === 1 ? selected[0] : null;
+  useEffect(() => setCrop(null), [selId]);
   const [guides, setGuides] = useState<Guide[]>([]);
   const [compare, setCompare] = useState<Compare>("design");
   const [opacity, setOpacity] = useState(50);
@@ -203,6 +212,64 @@ export function Studio({ source, jobs, onClose }: Props) {
   }, [design?.width, design?.height]);
 
   const scale = fit * zoom;
+
+  /* ---------- Zoom and pan ---------- */
+  // Ctrl+wheel zooms around the pointer: the design point under it stays under it.
+  const anchor = useRef<{ x: number; y: number; cx: number; cy: number } | null>(null);
+  const zoomBy = (factor: number, at?: { clientX: number; clientY: number }) => {
+    const st = stage.current;
+    if (at && st) {
+      const r = st.getBoundingClientRect();
+      anchor.current = { x: (at.clientX - r.left) / scale, y: (at.clientY - r.top) / scale, cx: at.clientX, cy: at.clientY };
+    }
+    setZoom((z) => Math.min(8, Math.max(0.25, z * factor)));
+  };
+  useLayoutEffect(() => {
+    const a = anchor.current;
+    const st = stage.current;
+    const cv = canvas.current;
+    anchor.current = null;
+    if (!a || !st || !cv) return;
+    const r = st.getBoundingClientRect();
+    cv.scrollLeft += r.left + a.x * scale - a.cx;
+    cv.scrollTop += r.top + a.y * scale - a.cy;
+  }, [scale]);
+  useEffect(() => {
+    const cv = canvas.current;
+    if (!cv) return;
+    // Not passive: Ctrl+wheel must not also zoom the whole window.
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      zoomBy(e.deltaY < 0 ? 1.25 : 1 / 1.25, e);
+    };
+    cv.addEventListener("wheel", onWheel, { passive: false });
+    return () => cv.removeEventListener("wheel", onWheel);
+  });
+  // Pan: middle-button drag, or Space held with the left button.
+  const [spaceDown, setSpaceDown] = useState(false);
+  const pan = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+  const [panning, setPanning] = useState(false);
+  const onCanvasPointerDown = (e: React.PointerEvent) => {
+    const cv = canvas.current;
+    if (!cv || !(e.button === 1 || (e.button === 0 && spaceDown))) return;
+    pan.current = { x: e.clientX, y: e.clientY, left: cv.scrollLeft, top: cv.scrollTop };
+    setPanning(true);
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    e.preventDefault();
+    e.stopPropagation();
+  };
+  const onCanvasPointerMove = (e: React.PointerEvent) => {
+    const p = pan.current;
+    const cv = canvas.current;
+    if (!p || !cv) return;
+    cv.scrollLeft = p.left - (e.clientX - p.x);
+    cv.scrollTop = p.top - (e.clientY - p.y);
+  };
+  const endPan = () => {
+    pan.current = null;
+    setPanning(false);
+  };
 
   const change = (next: Design, key?: string) => setHist((h) => (h ? commit(h, next, key) : h));
   const edit = (patch: Partial<DesignObject>, key?: string) => sel && hist && change(update(hist.present, sel.id, patch), key && `${sel.id}:${key}`);
@@ -306,6 +373,23 @@ export function Studio({ source, jobs, onClose }: Props) {
     setSelected(r.id);
   };
 
+  const applyCrop = async () => {
+    if (!sel || sel.kind !== "image" || !crop || crop.id !== sel.id || cropping) return;
+    const { box, fractions, empty } = cropBox(sel, crop);
+    if (empty) return;
+    const id = sel.id;
+    setCropping(true);
+    try {
+      const png = await api.cropPicture(sel.png ?? "", fractions);
+      setHist((h) => (h ? commit(h, update(h.present, id, { png, ...box })) : h));
+      setCrop(null);
+    } catch (e) {
+      setError(toPwError(e));
+    } finally {
+      setCropping(false);
+    }
+  };
+
   const replacePicture = async () => {
     if (!sel || sel.kind !== "image") return;
     const id = sel.id;
@@ -326,7 +410,12 @@ export function Studio({ source, jobs, onClose }: Props) {
     const k = e.key.toLowerCase();
     let handled = true;
     if (ctrl && k === "s") void save();
-    else if (ctrl && (k === "y" || (k === "z" && e.shiftKey))) setHist((h) => (h ? redo(h) : h));
+    else if (ctrl && (k === "=" || k === "+")) zoomBy(1.25);
+    else if (ctrl && k === "-") zoomBy(1 / 1.25);
+    else if (ctrl && k === "0") setZoom(1);
+    else if (e.key === " " && !typing && !(e.target as HTMLElement).closest("button, a, [role=radio]")) {
+      if (!e.repeat) setSpaceDown(true);
+    } else if (ctrl && (k === "y" || (k === "z" && e.shiftKey))) setHist((h) => (h ? redo(h) : h));
     else if (ctrl && k === "z") setHist((h) => (h ? undo(h) : h));
     else if (e.key === "Escape" && !typing) {
       if (confirmClose) setConfirmClose(false);
@@ -362,7 +451,7 @@ export function Studio({ source, jobs, onClose }: Props) {
   const sourceUrl = design ? `data:image/png;base64,${design.source_png}` : "";
 
   return (
-    <div className="studio" role="dialog" aria-modal="true" aria-label="Design Studio" ref={root} tabIndex={-1} onKeyDown={onKeyDown} data-testid="studio">
+    <div className="studio" role="dialog" aria-modal="true" aria-label="Design Studio" ref={root} tabIndex={-1} onKeyDown={onKeyDown} onKeyUp={(e) => e.key === " " && setSpaceDown(false)} onBlur={(e) => !e.currentTarget.contains(e.relatedTarget as Node) && setSpaceDown(false)} data-testid="studio">
       <header className="studio-bar" role="toolbar" aria-label="Design Studio">
         <h2 title={design?.source_name}>
           Design Studio{design && <span className="hint"> — {design.source_name}</span>}
@@ -396,13 +485,13 @@ export function Studio({ source, jobs, onClose }: Props) {
         )}
         <span className="spacer" />
         <div className="group">
-          <button type="button" className="btn icon" aria-label="Zoom out" title="Zoom out" onClick={() => setZoom((z) => Math.max(0.25, z / 1.25))}>
+          <button type="button" className="btn icon" aria-label="Zoom out" title="Zoom out (Ctrl+−)" onClick={() => zoomBy(1 / 1.25)}>
             <ZoomOut />
           </button>
-          <button type="button" className="btn icon" aria-label="Fit" title={`Fit (${Math.round(scale * 100)}%)`} onClick={() => setZoom(1)}>
+          <button type="button" className="btn icon" aria-label="Fit" title={`Fit (Ctrl+0) — ${Math.round(scale * 100)}%`} data-testid="studio-fit" onClick={() => setZoom(1)}>
             <Maximize />
           </button>
-          <button type="button" className="btn icon" aria-label="Zoom in" title="Zoom in" onClick={() => setZoom((z) => Math.min(8, z * 1.25))}>
+          <button type="button" className="btn icon" aria-label="Zoom in" title="Zoom in (Ctrl+=)" onClick={() => zoomBy(1.25)}>
             <ZoomIn />
           </button>
         </div>
@@ -500,7 +589,16 @@ export function Studio({ source, jobs, onClose }: Props) {
             </ul>
           </aside>
 
-          <div className="studio-canvas" ref={canvas}>
+          <div
+            className={`studio-canvas ${panning ? "panning" : spaceDown ? "pan-ready" : ""}`}
+            ref={canvas}
+            data-testid="studio-canvas"
+            onPointerDownCapture={onCanvasPointerDown}
+            onPointerMove={onCanvasPointerMove}
+            onPointerUp={endPan}
+            onPointerCancel={endPan}
+            onAuxClick={(e) => e.preventDefault()}
+          >
             <div
               className="studio-stage"
               ref={stage}
@@ -546,12 +644,16 @@ export function Studio({ source, jobs, onClose }: Props) {
                     {sel === o && !o.locked && (["nw", "ne", "sw", "se"] as const).map((c) => <span key={c} className={`handle ${c}`} data-corner={c} />)}
                   </div>
                 ))}
+              {sel && crop?.id === sel.id && !cropBox(sel, crop).empty && (() => {
+                const k = cropBox(sel, crop).box;
+                return <div className="studio-crop-box" data-testid="studio-crop-box" style={{ left: k.x * scale, top: k.y * scale, width: k.w * scale, height: k.h * scale }} />;
+              })()}
             </div>
           </div>
 
           <aside className="studio-props" aria-label="Properties">
             {sel ? (
-              <Properties o={sel} edit={edit} design={design} onReplace={replacePicture} onOrder={(step) => change(reorder(design, sel.id, step))} onDuplicate={() => {
+              <Properties o={sel} edit={edit} design={design} onReplace={replacePicture} crop={crop?.id === sel.id ? crop : null} cropping={cropping} onCrop={(t) => setCrop(t && { ...t, id: sel.id })} onApplyCrop={applyCrop} onOrder={(step) => change(reorder(design, sel.id, step))} onDuplicate={() => {
                 const r = duplicate(design, sel.id);
                 change(r.design);
                 setSelected(r.id);
@@ -621,6 +723,16 @@ export function Studio({ source, jobs, onClose }: Props) {
 const count = (d: Design, kind: DesignObject["kind"]) => d.objects.filter((o) => o.kind === kind).length;
 
 /** The design as SVG, drawn the way the engine's SVG export writes it. */
+function Shape({ o, turn }: { o: DesignObject; turn?: string }) {
+  const g = shapeGeometry(o);
+  const paint = { fill: o.fill ?? "none", stroke: g.sw ? (o.stroke ?? undefined) : undefined, strokeWidth: g.sw || undefined, transform: turn };
+  return o.ellipse ? (
+    <ellipse data-object={o.id} cx={o.x + o.w / 2} cy={o.y + o.h / 2} rx={g.w / 2} ry={g.h / 2} {...paint} />
+  ) : (
+    <rect data-object={o.id} x={g.x} y={g.y} width={g.w} height={g.h} rx={g.r || undefined} ry={g.r || undefined} {...paint} />
+  );
+}
+
 function Paragraph({ o, turn }: { o: DesignObject; turn?: string }) {
   const p = paragraphLayout(o);
   return (
@@ -651,11 +763,7 @@ export function DesignSvg({ design }: { design: Design }) {
       {design.objects.map((o) => {
         const turn = o.rotation ? `rotate(${o.rotation} ${o.x + o.w / 2} ${o.y + o.h / 2})` : undefined;
         return !o.visible ? null : o.kind === "shape" ? (
-          o.ellipse ? (
-            <ellipse key={o.id} data-object={o.id} cx={o.x + o.w / 2} cy={o.y + o.h / 2} rx={o.w / 2} ry={o.h / 2} fill={o.fill} transform={turn} />
-          ) : (
-            <rect key={o.id} data-object={o.id} x={o.x} y={o.y} width={o.w} height={o.h} rx={o.radius || undefined} ry={o.radius || undefined} fill={o.fill} transform={turn} />
-          )
+          <Shape key={o.id} o={o} turn={turn} />
         ) : o.kind === "image" ? (
           <image key={o.id} data-object={o.id} x={o.x} y={o.y} width={o.w} height={o.h} preserveAspectRatio="none" href={`data:image/png;base64,${o.png}`} transform={turn} />
         ) : o.text?.includes("\n") ? (
@@ -693,9 +801,17 @@ function Properties({
   onDelete,
   onReplace,
   onRotate,
+  crop,
+  cropping,
+  onCrop,
+  onApplyCrop,
 }: {
   o: DesignObject;
   design: Design;
+  crop: Trim | null;
+  cropping: boolean;
+  onCrop: (t: Trim | null) => void;
+  onApplyCrop: () => void;
   onReplace: () => void;
   onRotate: (degrees: number) => void;
   edit: (patch: Partial<DesignObject>, key?: string) => void;
@@ -783,12 +899,75 @@ function Properties({
           <ImageIcon /> Replace picture…
         </button>
       )}
+      {o.kind === "image" && (
+        <fieldset className="studio-crop" disabled={o.locked || !!o.rotation || cropping} title={o.locked ? "Unlock the picture first" : o.rotation ? "Set the rotation to 0 to crop" : undefined}>
+          <legend>Crop</legend>
+          <div className="studio-grid">
+            {(["l", "t", "r", "b"] as const).map((side) => (
+              <label key={side} className="studio-num">
+                <span>{{ l: "Left", t: "Top", r: "Right", b: "Bottom" }[side]}</span>
+                <input
+                  className="input"
+                  type="number"
+                  min={0}
+                  data-crop={side}
+                  value={crop?.[side] ?? 0}
+                  onChange={(e) => {
+                    const v = e.target.valueAsNumber;
+                    if (Number.isFinite(v)) onCrop({ ...(crop ?? { l: 0, t: 0, r: 0, b: 0 }), [side]: Math.max(0, v) });
+                  }}
+                />
+              </label>
+            ))}
+          </div>
+          <div className="row">
+            <button type="button" className="btn primary" data-testid="studio-crop-apply" disabled={!crop || cropBox(o, crop).empty} onClick={onApplyCrop}>
+              <Crop /> {cropping ? "Cropping…" : "Crop"}
+            </button>
+            <button type="button" className="btn outline" disabled={!crop} onClick={() => onCrop(null)}>
+              Reset
+            </button>
+          </div>
+        </fieldset>
+      )}
       {o.kind === "shape" && (
         <div className="row">
           <label className="studio-num">
             <span>Fill</span>
-            <input type="color" value={o.fill ?? "#000000"} onChange={(e) => edit({ fill: e.target.value }, "fill")} />
+            <input type="color" data-testid="studio-fill" value={o.fill ?? "#ffffff"} disabled={!o.fill} onChange={(e) => edit({ fill: e.target.value }, "fill")} />
           </label>
+          <label className="row" title={!o.stroke_width && o.fill ? "Add an outline first, or the shape would be invisible" : undefined}>
+            <input type="checkbox" data-testid="studio-no-fill" checked={!o.fill} disabled={!o.stroke_width && !!o.fill} onChange={(e) => edit({ fill: e.target.checked ? null : "#ffffff" })} /> No fill
+          </label>
+        </div>
+      )}
+      {o.kind === "shape" && (
+        <div className="row">
+          <label className="studio-num">
+            <span>Outline</span>
+            <input type="color" data-testid="studio-stroke" value={o.stroke ?? "#000000"} onChange={(e) => edit({ stroke: e.target.value, stroke_width: o.stroke_width || 2 }, "stroke")} />
+          </label>
+          <label className="studio-num">
+            <span>Outline width</span>
+            <input
+              className="input"
+              type="number"
+              min={0}
+              data-testid="studio-stroke-width"
+              value={o.stroke_width ?? 0}
+              title={!o.fill ? "A shape without fill keeps an outline" : "0: no outline"}
+              onChange={(e) => {
+                const v = e.target.valueAsNumber;
+                if (!Number.isFinite(v)) return;
+                const width = Math.min(Math.max(o.fill ? 0 : 1, v), Math.min(o.w, o.h) / 2);
+                edit({ stroke_width: width, stroke: o.stroke ?? "#000000" }, "stroke-width");
+              }}
+            />
+          </label>
+        </div>
+      )}
+      {o.kind === "shape" && (
+        <div className="row">
           <label className="studio-num">
             <span>Corner radius</span>
             <input

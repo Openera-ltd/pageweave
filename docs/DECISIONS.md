@@ -274,3 +274,17 @@ These were made by Claude Code under the owner's standing instruction to "start 
 - **Context:** Every recognised line was its own text object, so a block of text could not be edited as one, re-aligned or re-spaced (PRD 10: infer alignment and line breaks).
 - **Decision:** Consecutive lines with the same family, weight, slant and colour, size within 12 %, evenly spaced 1–1.9 sizes apart and sharing a left edge, centre or right edge (within 0.4 size) become one text object: lines joined by line breaks, `line_height` (baseline distance), `align`, and `stretch` — the median ratio of each line's measured width to its natural width in the chosen built-in font, so the glyphs keep the original width. No automatic re-wrapping: line breaks are the user's (Enter), so the canvas, SVG and PDF lay out identically without a shared text-shaping engine. A single line keeps fitting its box width as before.
 - **Consequences:** Poster: the two body lines are one left-aligned paragraph, 18 pt spacing measured exactly, PDF export difference 2.23/255 (2.21 before). Exports draw one `<tspan>` / PDF text object per line; the SVG check reads lines back. The Studio shows Alignment and Line spacing for paragraphs; Enter in the text grows the box. Two columns, headings, a differently coloured line or a far gap stay separate (unit tests).
+
+### D-036 — Studio: outlined shapes (frames and rings)
+- **Status:** Accepted
+- **Date:** 2026-10-30
+- **Context:** Borders, frames and rings (certificates, badges, forms) came back as pictures: only filled one-colour regions were vectors.
+- **Decision:** A one-colour region that is not a filled form is matched against a rectangular and an elliptical ring (overlap ≥ 0.85, line 1 px to a quarter of the shorter side). The line width follows from the ring's pixel count, with edge pixels weighted by how much line they hold (their position on the blend between line and background colour). The box shrinks by the same correction so its outer edge matches. Thin lines are judged by that blend, not by exact colour. Shapes gain `stroke` and `stroke_width`, drawn inside the box (path inset by half the width) on the canvas, in SVG and in PDF. `fill` may be absent when there is an outline. The Studio edits outline colour and width and "No fill" (only with an outline).
+- **Consequences:** Frames fixture: 3 pt border → 6.1 px (6.25 expected), 2 pt ring → 4.2 px (4.17); both no fill, confidence ≥ 0.8; PDF export difference 2.22/255; no pictures. Rounded frames and dashed lines are not recognised (they stay pictures).
+
+### D-037 — Studio: cropping a picture rewrites its pixels (undoable)
+- **Status:** Accepted
+- **Date:** 2026-10-30
+- **Context:** PRD 10 lists crop among the editing operations. Pictures are embedded PNGs; exports draw them whole.
+- **Decision:** Crop trims the picture's own pixels (engine `crop_png`, host `crop_picture`: decode with limits, crop, re-encode) and moves/resizes its box so the kept part stays where it was. It is one undo step (the previous picture stays in the history), so no crop rectangle has to be carried through SVG, PDF and PNG exports. Trims are entered per side in design pixels with a dashed preview on the canvas; a turned or locked picture cannot be cropped (said on the control).
+- **Consequences:** Exports need no change. Uncropping after saving and reopening is not possible (Replace picture restores a source); the undo history covers the session.

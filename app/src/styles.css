@@ -2732,9 +2732,10 @@ kbd,
   color: var(--warning);
 }
 
+/* The stage is centred with auto margins, not place-items: a zoomed-in page overflowing a centred
+   grid would be cut off on the left and top, out of scroll reach. */
 .studio-canvas {
   display: grid;
-  place-items: center;
   overflow: auto;
   background: var(--canvas);
   min-width: 0;
@@ -2742,8 +2743,18 @@ kbd,
   padding: var(--space-6);
 }
 
+.studio-canvas.panning,
+.studio-canvas.panning .studio-stage {
+  cursor: grabbing;
+}
+
+.studio-canvas.pan-ready .studio-stage {
+  cursor: grab;
+}
+
 .studio-stage {
   position: relative;
+  margin: auto;
   flex: none;
   box-shadow: var(--page-shadow);
   touch-action: none;
@@ -2960,4 +2971,27 @@ kbd,
   .studio-bar .segmented button {
     padding: 0 var(--space-2);
   }
+}
+
+/* Picture crop: trims in a compact fieldset; the kept area is outlined on the canvas. */
+.studio-crop {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-1);
+}
+
+.studio-crop > legend {
+  padding: 0 var(--space-1);
+  font-size: var(--font-size-1);
+  color: var(--text-muted);
+}
+
+.studio-crop-box {
+  position: absolute;
+  pointer-events: none;
+  outline: 2px dashed var(--accent);
+  box-shadow: 0 0 0 9999px color-mix(in srgb, var(--bg) 55%, transparent);
 }

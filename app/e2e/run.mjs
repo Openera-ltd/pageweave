@@ -2314,6 +2314,14 @@ await test("protect with password: AES-256 copy needs the password; wrong passwo
   }
 });
 
+/** Ctrl+S in the Studio, then wait until the project on disk has changed and the status says so
+ *  (a status left over from an earlier save must not count). */
+async function studioSave(s, file) {
+  const before = readFileSync(file, "utf8");
+  await s.keys(["Control", "s"]);
+  await s.waitUntil(async () => readFileSync(file, "utf8") !== before && (await s.text('[data-testid="studio-status"]')).startsWith("Saved"), "saved");
+}
+
 await test("design studio: rebuild a page, edit text with undo, nudge, drag, lock, hide, compare, save; the project reopens", async () => {
   const src = join(work, "studio-poster.pdf");
   copyFileSync(join(FIX, "poster.pdf"), src);
@@ -2400,8 +2408,7 @@ await test("design studio: rebuild a page, edit text with undo, nudge, drag, loc
     const [sl, st, sw, sh] = await s.exec("const r=document.querySelector('[data-testid=studio-stage]').getBoundingClientRect(); return [r.left, r.top, r.width, r.height]");
     await s.dragAt(rl + rw / 2, rt + rh / 2, sl + sw / 2 + 3, st + sh * 0.85, 12);
     // Exact boxes from the saved project (a paragraph's drawn <text> carries no box attributes).
-    await s.keys(["Control", "s"]);
-    await s.waitUntil(async () => (await s.text('[data-testid="studio-status"]')).startsWith("Saved"), "saved after the drop");
+    await studioSave(s, project);
     const snapped = JSON.parse(readFileSync(project, "utf8"));
     const span = (o) => [o.x, o.x + o.w / 2, o.x + o.w];
     const me = span(snapped.objects.find((o) => o.id === rectId));
@@ -2459,13 +2466,12 @@ await test("design studio: rebuild a page, edit text with undo, nudge, drag, loc
     assert(Math.abs(tw1 - tw0 - 40 / k) < 1.5 && Math.abs(top1 - top0) < 1 && Math.abs(th1 - th0 - 40) < 1.5, `turned resize: width ${tw0}→${tw1}, top ${top0}→${top1}, height ${th0}→${th1}`);
 
     // Save; the project on disk holds the edits.
-    await s.keys(["Control", "s"]);
-    await s.waitUntil(async () => (await s.text('[data-testid="studio-status"]')).startsWith("Saved"), "saved");
+    await studioSave(s, project);
     const saved = JSON.parse(readFileSync(project, "utf8"));
     const t1 = saved.objects.find((o) => o.id === "text-1");
     assert(t1.text === "SUMMER FAIR" && t1.x === x0 + 11, `saved text ${t1.text} x ${t1.x}`);
     assert(saved.objects.find((o) => o.id === "picture-1").locked && !saved.objects.find((o) => o.id === "shape-1").visible, "lock and visibility saved");
-    assert(saved.objects.find((o) => o.id === "shape-2").rotation === 90, "rotation saved");
+    assert(saved.objects.find((o) => o.id === "shape-2").rotation === 90, `rotation saved: ${JSON.stringify(saved.objects.filter((o) => o.kind === "shape").map(({ png, ...o }) => o))}`);
     if (CLI) {
       const svgOut = join(work, "studio-export.svg");
       execFileSync(CLI, ["design-export", project, "-o", svgOut]);
@@ -2537,8 +2543,7 @@ await test("design studio: circles, ellipses and rounded boxes come back as shap
     await s.exec("document.querySelector('[data-testid=studio-stage]').focus()");
     await s.keys(["Control", "z"]);
     await s.waitUntil(async () => (await forms()).find((x) => x[0] === id)[1] === "rect", "undo restores the box");
-    await s.keys(["Control", "s"]);
-    await s.waitUntil(async () => (await s.text('[data-testid="studio-status"]')).startsWith("Saved"), "saved");
+    await studioSave(s, project);
     const saved = JSON.parse(readFileSync(project, "utf8")).objects.find((o) => o.id === id);
     assert(saved.radius === 8 && !saved.ellipse, `saved ${JSON.stringify(saved)}`);
     if (CLI) {
@@ -2572,9 +2577,8 @@ await test("design studio: words over a picture become text and are painted out 
     await s.click('[data-testid="studio-font"] option[value="serif"]');
     await s.click('[data-testid="studio-italic"]');
     await s.waitUntil(async () => (await s.exec("const t=document.querySelector('[data-object=\"text-1\"]'); return t.getAttribute('font-style') + '|' + t.getAttribute('font-family')")).startsWith("italic|'Times"), "serif italic drawn");
-    await s.keys(["Control", "s"]);
-    await s.waitUntil(async () => (await s.text('[data-testid="studio-status"]')).startsWith("Saved"), "saved");
     const projectFile = join(work, "studio-caption-page1.pwdesign");
+    await studioSave(s, projectFile);
     const t1 = JSON.parse(readFileSync(projectFile, "utf8")).objects.find((o) => o.id === "text-1");
     assert(t1.font === "serif" && t1.italic === true, `saved font ${t1.font} italic ${t1.italic}`);
     if (CLI) {
@@ -2592,6 +2596,79 @@ await test("design studio: words over a picture become text and are painted out 
     }
     await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('[data-testid=studio-stage] text').length")) === 0, "text hidden");
     writeFileSync(join(ART, "design-studio-painted-out.png"), await s.screenshot());
+    // Crop the picture: 20 px off the left and 10 off the bottom; the rest stays where it was.
+    await s.click('[data-layer="picture-1"]');
+    const pic = () => s.exec("const e=document.querySelector('[data-object=\"picture-1\"]'); return ['x','y','width','height'].map(a => Number(e.getAttribute(a)))");
+    const [px0, py0, pw0, ph0] = await pic();
+    for (const [side, v] of [["l", "20"], ["b", "10"]]) {
+      await s.exec(`const i=document.querySelector('[data-crop="${side}"]'); i.focus(); i.select(); return 1`);
+      await s.keys([...v]);
+    }
+    await s.waitFor('[data-testid="studio-crop-box"]');
+    await s.click('[data-testid="studio-crop-apply"]');
+    await s.waitUntil(async () => (await pic())[2] === pw0 - 20, "cropped");
+    const [px1, py1, , ph1] = await pic();
+    assert(px1 === px0 + 20 && py1 === py0 && ph1 === ph0 - 10, `crop kept the rest in place (${px0},${py0},${pw0},${ph0} → ${await pic()})`);
+    assert(!(await s.exec("return !!document.querySelector('[data-testid=studio-crop-box]')")), "preview gone after cropping");
+  });
+});
+
+await test("design studio: borders and rings come back as outlined shapes; outline and fill are editable", async () => {
+  const src = join(work, "studio-frames.pdf");
+  copyFileSync(join(FIX, "frames.pdf"), src);
+  const project = join(work, "studio-frames-page1.pwdesign");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('.toolbar [data-command="studio.rebuildPage"]');
+    await s.waitFor('[data-testid="studio-layers"] [data-layer]', { timeout: 60000 });
+    const shapes = () => s.exec("return [...document.querySelectorAll('[data-testid=studio-stage] [data-object^=shape]')].map(e => [e.dataset.object, e.tagName.toLowerCase(), e.getAttribute('fill'), Number(e.getAttribute('stroke-width'))])");
+    const f = await shapes();
+    assert(f.length === 2 && f.every((x) => x[2] === "none" && x[3] > 3) && f.some((x) => x[1] === "ellipse"), `frames ${JSON.stringify(f)}`);
+    await axeCheck(s, "design-studio-frames");
+    writeFileSync(join(ART, "design-studio-frames.png"), await s.screenshot());
+    // Zoom in from the keyboard: the page grows and its top-left corner stays reachable by scrolling.
+    await s.exec("document.querySelector('[data-testid=studio-stage]').focus()");
+    const stageW = () => s.exec("return document.querySelector('[data-testid=studio-stage]').getBoundingClientRect().width");
+    const w0 = await stageW();
+    for (let i = 0; i < 4; i++) await s.keys(["Control", "="]);
+    await s.waitUntil(async () => (await stageW()) > w0 * 2, "zoomed in");
+    const reach = await s.exec("const c=document.querySelector('[data-testid=studio-canvas]'); c.scrollLeft=0; c.scrollTop=0; const a=c.getBoundingClientRect(), b=document.querySelector('[data-testid=studio-stage]').getBoundingClientRect(); return [b.left - a.left, b.top - a.top, c.scrollWidth > c.clientWidth]");
+    assert(reach[0] >= 0 && reach[1] >= 0 && reach[2], `zoomed page reachable from its top-left (${reach})`);
+    // Pan: hold Space and drag left by 120 px → the canvas scrolls right by 120.
+    const [cx, cy] = await s.exec("const r=document.querySelector('[data-testid=studio-canvas]').getBoundingClientRect(); return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)]");
+    await s.cmd("POST", "/actions", { actions: [
+      { type: "key", id: "kb", actions: [{ type: "keyDown", value: " " }, { type: "pause", duration: 0 }, { type: "pause", duration: 0 }, { type: "pause", duration: 0 }, { type: "pause", duration: 0 }, { type: "keyUp", value: " " }] },
+      { type: "pointer", id: "mouse", parameters: { pointerType: "mouse" }, actions: [
+        { type: "pointerMove", origin: "viewport", x: cx, y: cy },
+        { type: "pointerDown", button: 0 },
+        { type: "pointerMove", origin: "viewport", duration: 150, x: cx - 120, y: cy },
+        { type: "pointerUp", button: 0 },
+        { type: "pause", duration: 0 },
+      ] },
+    ] });
+    await s.cmd("DELETE", "/actions");
+    const scrolled = await s.exec("return document.querySelector('[data-testid=studio-canvas]').scrollLeft");
+    assert(Math.abs(scrolled - 120) <= 2, `Space+drag panned (${scrolled})`);
+    await s.keys(["Control", "0"]);
+    await s.waitUntil(async () => Math.abs((await stageW()) - w0) < 1, "back to fit");
+    const border = f.find((x) => x[1] === "rect")[0];
+    await s.click(`[data-layer="${border}"]`);
+    // Fill the frame, then take the fill away again; thicken the outline.
+    await s.click('[data-testid="studio-no-fill"]');
+    await s.waitUntil(async () => (await shapes()).find((x) => x[0] === border)[2] !== "none", "filled");
+    await s.click('[data-testid="studio-no-fill"]');
+    await s.waitUntil(async () => (await shapes()).find((x) => x[0] === border)[2] === "none", "fill removed");
+    await s.exec("const i=document.querySelector('[data-testid=studio-stroke-width]'); i.focus(); i.select(); return 1");
+    await s.keys(["1", "2"]);
+    await s.waitUntil(async () => (await shapes()).find((x) => x[0] === border)[3] === 12, "outline 12 px");
+    await studioSave(s, project);
+    const saved = JSON.parse(readFileSync(project, "utf8")).objects.find((o) => o.id === border);
+    assert(saved.fill === undefined && saved.stroke_width === 12, `saved ${JSON.stringify(saved)}`);
+    if (CLI) {
+      const out = join(work, "studio-frames.svg");
+      execFileSync(CLI, ["design-export", project, "-o", out]);
+      assert(new RegExp(`id="${border}"[^>]*fill="none" stroke="[^"]+" stroke-width="12"`).test(readFileSync(out, "utf8")), "SVG keeps the outline");
+    }
   });
 });
 

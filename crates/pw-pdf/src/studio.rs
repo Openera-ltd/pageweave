@@ -152,6 +152,12 @@ pub struct DesignObject {
     /// Shape: corner radius in design pixels (0: square corners).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub radius: f32,
+    /// Shape: outline colour and width in design pixels, drawn inside the box (D-036). A shape
+    /// without `fill` has an outline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stroke: Option<String>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub stroke_width: f32,
 }
 
 fn is_false(v: &bool) -> bool {
@@ -577,6 +583,8 @@ pub fn reconstruct(
             rotation: 0.0,
             ellipse: false,
             radius: 0.0,
+            stroke: None,
+            stroke_width: 0.0,
             font,
             italic: false,
             line_height: None,
@@ -814,6 +822,8 @@ fn regions(img: &Rgb, mask: &[bool], bg: [i32; 3], under_text: &[bool]) -> Vec<D
                 rotation: 0.0,
                 ellipse: false,
                 radius: 0.0,
+                stroke: None,
+                stroke_width: 0.0,
                 font: FontFamily::Sans,
                 italic: false,
                 line_height: None,
@@ -823,8 +833,32 @@ fn regions(img: &Rgb, mask: &[bool], bg: [i32; 3], under_text: &[bool]) -> Vec<D
             // One colour: the best of a rectangle, a rounded rectangle and an ellipse, if it covers
             // the region's pixels closely enough (overlap ≥ 0.95). Otherwise a picture.
             let form = (share > 0.92).then(|| best_form(&pixels, w, x0, y0, rw, rh)).flatten();
+            // A thin line is mostly anti-aliased edge: its pixels are blends of its colour and
+            // the background, so a frame's colour test accepts anything on that blend.
+            // The line's width comes from its coverage (edge pixels count by how much line they hold).
+            let blends: Vec<f32> =
+                colour_from.iter().filter_map(|&i| on_blend(img.at(i % w, i / w), fill, bg)).collect();
+            let blended = blends.len() as f32 / colour_from.len().max(1) as f32;
+            let coverage = blends.iter().sum::<f32>() * pixels.len() as f32 / colour_from.len().max(1) as f32;
+            let frame = (blended > 0.92 && form.is_none())
+                .then(|| best_outline(&pixels, coverage, w, x0, y0, rw, rh))
+                .flatten();
             if let Some((ellipse, radius, overlap)) = form {
                 DesignObject { fill: Some(hex(fill)), ellipse, radius, confidence: share.min(overlap), ..base }
+            } else if let Some((ellipse, width, inset, overlap)) = frame {
+                let round1 = |v: f32| (v * 10.0).round() / 10.0;
+                DesignObject {
+                    x: round1(base.x + inset),
+                    y: round1(base.y + inset),
+                    w: round1(base.w - 2.0 * inset),
+                    h: round1(base.h - 2.0 * inset),
+                    fill: None,
+                    stroke: Some(hex(fill)),
+                    stroke_width: width,
+                    ellipse,
+                    confidence: blended.min(overlap),
+                    ..base
+                }
             } else {
                 // A picture: the region's own pixels; background around it is transparent.
                 let mut rgba = image::RgbaImage::new(rw as u32, rh as u32);
@@ -854,13 +888,36 @@ fn regions(img: &Rgb, mask: &[bool], bg: [i32; 3], under_text: &[bool]) -> Vec<D
 /// The vector form that matches a one-colour region best: (ellipse, corner radius, overlap), when
 /// the overlap (intersection over union of pixel sets) is at least 0.95. A rounded rectangle wins
 /// over a plain one only when clearly better and its radius is at least 2 px.
-fn best_form(pixels: &[usize], w: usize, x0: usize, y0: usize, rw: usize, rh: usize) -> Option<(bool, f32, f32)> {
+/// How much of colour `a` pixel `c` holds when it lies on the blend between `a` and `b` (within
+/// the "same colour" distance): 1 for `a`, 0 for `b`; `None` off the blend.
+fn on_blend(c: [i32; 3], a: [i32; 3], b: [i32; 3]) -> Option<f32> {
+    let d = [0, 1, 2].map(|k| (b[k] - a[k]) as f32);
+    let len2 = d.iter().map(|v| v * v).sum::<f32>();
+    let t = if len2 > 0.0 {
+        ([0, 1, 2].map(|k| (c[k] - a[k]) as f32 * d[k]).iter().sum::<f32>() / len2).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let near = [0, 1, 2].map(|k| (a[k] as f32 + t * d[k]).round() as i32);
+    (dist(c, near) <= SAME).then_some(1.0 - t)
+}
+
+/// The region's pixels as a mask over its box, and the overlap (intersection over union) of that
+/// mask with a model shape given as a test on pixel centres in box coordinates.
+fn region_mask(
+    pixels: &[usize],
+    w: usize,
+    x0: usize,
+    y0: usize,
+    rw: usize,
+    rh: usize,
+) -> impl Fn(&dyn Fn(f32, f32) -> bool) -> f32 {
     let mut inside = vec![false; rw * rh];
     for &i in pixels {
         inside[(i / w - y0) * rw + (i % w - x0)] = true;
     }
     let n = pixels.len() as f32;
-    let overlap = |model: &dyn Fn(f32, f32) -> bool| {
+    move |model: &dyn Fn(f32, f32) -> bool| {
         let (mut both, mut area) = (0f32, 0f32);
         for y in 0..rh {
             for x in 0..rw {
@@ -871,7 +928,47 @@ fn best_form(pixels: &[usize], w: usize, x0: usize, y0: usize, rw: usize, rh: us
             }
         }
         both / (n + area - both).max(1.0)
-    };
+    }
+}
+
+/// A one-colour region that is a frame (D-036): (ellipse, line width, inset, overlap) of the best
+/// rectangular or elliptical ring, when the overlap is at least 0.85 and the line is between 1 px
+/// and a quarter of the shorter side. The line width follows from the pixel count: a rectangular
+/// ring holds 2t(w + h) − 4t² pixels, an elliptical one π(ab − (a − t)(b − t)).
+/// `coverage` is the region's pixel count weighted by how much of the line each pixel holds.
+fn best_outline(
+    pixels: &[usize],
+    coverage: f32,
+    w: usize,
+    x0: usize,
+    y0: usize,
+    rw: usize,
+    rh: usize,
+) -> Option<(bool, f32, f32, f32)> {
+    let overlap = region_mask(pixels, w, x0, y0, rw, rh);
+    let n = pixels.len() as f32;
+    let (fw, fh) = (rw as f32, rh as f32);
+    // The mask is fitted with whole pixels; the reported width uses the coverage.
+    let rect_t = |n: f32| ((fw + fh) - ((fw + fh).powi(2) - 4.0 * n).max(0.0).sqrt()) / 4.0;
+    let (a, b) = (fw / 2.0, fh / 2.0);
+    let ell_t = |n: f32| ((a + b) - ((a + b).powi(2) - 4.0 * n / std::f32::consts::PI).max(0.0).sqrt()) / 2.0;
+    let (t_rect, t_ell) = (rect_t(n), ell_t(n));
+    let ring = overlap(&|x, y| !(x > t_rect && x < fw - t_rect && y > t_rect && y < fh - t_rect));
+    let oval = overlap(&|x, y| {
+        let outer = ((x - a) / a).powi(2) + ((y - b) / b).powi(2) <= 1.0;
+        let (ia, ib) = ((a - t_ell).max(0.01), (b - t_ell).max(0.01));
+        outer && ((x - a) / ia).powi(2) + ((y - b) / ib).powi(2) > 1.0
+    });
+    let (ellipse, whole, t, fit) =
+        if oval > ring { (true, t_ell, ell_t(coverage), oval) } else { (false, t_rect, rect_t(coverage), ring) };
+    // Partly covered pixels at the outer edge widen the box as much as they widen the line.
+    let inset = ((whole - t) / 2.0).max(0.0);
+    (fit >= 0.85 && t >= 1.0 && t <= fw.min(fh) / 4.0).then_some((ellipse, (t * 10.0).round() / 10.0, inset, fit))
+}
+
+fn best_form(pixels: &[usize], w: usize, x0: usize, y0: usize, rw: usize, rh: usize) -> Option<(bool, f32, f32)> {
+    let overlap = region_mask(pixels, w, x0, y0, rw, rh);
+    let n = pixels.len() as f32;
     let (fw, fh) = (rw as f32, rh as f32);
     let rect = n / (fw * fh);
     let (rx, ry) = (fw / 2.0, fh / 2.0);
@@ -1018,6 +1115,26 @@ pub fn picture_png(path: &Path) -> PwResult<String> {
     Ok(png_base64(&image::DynamicImage::ImageRgba8(img.to_rgba8())))
 }
 
+/// A design picture (PNG, base64) with the given fractions of its width and height trimmed from
+/// the left, top, right and bottom, re-encoded as PNG. At least one pixel is kept each way.
+pub fn crop_png(b64: &str, trim: [f32; 4]) -> PwResult<String> {
+    if trim.iter().any(|v| !v.is_finite() || *v < 0.0 || *v >= 1.0)
+        || trim[0] + trim[2] >= 1.0
+        || trim[1] + trim[3] >= 1.0
+    {
+        return Err(PwError::invalid("design.crop", "The crop would leave nothing of the picture."));
+    }
+    let img = decode_png(b64, "picture")?;
+    let (w, h) = (img.width() as f32, img.height() as f32);
+    let x0 = (trim[0] * w).round() as u32;
+    let y0 = (trim[1] * h).round() as u32;
+    let x1 = ((w - trim[2] * w).round() as u32).max(x0 + 1).min(img.width());
+    let y1 = ((h - trim[3] * h).round() as u32).max(y0 + 1).min(img.height());
+    let x0 = x0.min(x1 - 1);
+    let y0 = y0.min(y1 - 1);
+    Ok(png_base64(&img.crop_imm(x0, y0, x1 - x0, y1 - y0)))
+}
+
 /// Rebuild `input` (page `page` of a PDF, or a picture) and save it as a design project.
 pub fn reconstruct_design(
     input: &Path,
@@ -1124,7 +1241,12 @@ impl Design {
                     }
                 }
                 ObjectKind::Shape => {
-                    if o.fill.as_deref().and_then(parse_hex).is_none() {
+                    let fill_ok = o.fill.as_deref().is_none_or(|c| parse_hex(c).is_some());
+                    let outlined = o.stroke_width > 0.0 && o.stroke.as_deref().and_then(parse_hex).is_some();
+                    let width_ok = o.stroke_width.is_finite()
+                        && o.stroke_width >= 0.0
+                        && o.stroke_width <= o.w.min(o.h) / 2.0 + 0.01;
+                    if !fill_ok || !width_ok || (o.fill.is_none() && !outlined) {
                         return bad(format!("The shape “{}” has no valid colour.", o.name));
                     }
                 }
@@ -1222,24 +1344,27 @@ pub fn to_svg(d: &Design) -> String {
             format!("id=\"{}\"", xml(&o.id))
         };
         match o.kind {
-            ObjectKind::Shape if o.ellipse => s += &format!(
-                "<ellipse {id} cx=\"{}\" cy=\"{}\" rx=\"{}\" ry=\"{}\" fill=\"{}\"/>\n",
-                o.x + o.w / 2.0,
-                o.y + o.h / 2.0,
-                o.w / 2.0,
-                o.h / 2.0,
-                o.fill.as_deref().unwrap_or("#000000")
-            ),
             ObjectKind::Shape => {
-                let corner = if o.radius > 0.0 { format!(" rx=\"{}\" ry=\"{}\"", o.radius, o.radius) } else { String::new() };
-                s += &format!(
-                    "<rect {id} x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"{corner} fill=\"{}\"/>\n",
-                    o.x,
-                    o.y,
-                    o.w,
-                    o.h,
-                    o.fill.as_deref().unwrap_or("#000000")
-                )
+                let g = shape_geometry(o);
+                let paint = match o.stroke.as_deref().filter(|_| g.sw > 0.0) {
+                    Some(c) => format!(" fill=\"{}\" stroke=\"{c}\" stroke-width=\"{}\"", o.fill.as_deref().unwrap_or("none"), g.sw),
+                    None => format!(" fill=\"{}\"", o.fill.as_deref().unwrap_or("none")),
+                };
+                if o.ellipse {
+                    s += &format!(
+                        "<ellipse {id} cx=\"{}\" cy=\"{}\" rx=\"{}\" ry=\"{}\"{paint}/>\n",
+                        o.x + o.w / 2.0,
+                        o.y + o.h / 2.0,
+                        g.w / 2.0,
+                        g.h / 2.0
+                    );
+                } else {
+                    let corner = if g.r > 0.0 { format!(" rx=\"{}\" ry=\"{}\"", g.r, g.r) } else { String::new() };
+                    s += &format!(
+                        "<rect {id} x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"{corner}{paint}/>\n",
+                        g.x, g.y, g.w, g.h
+                    );
+                }
             }
             ObjectKind::Image => s += &format!(
                 "<image {id} x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" preserveAspectRatio=\"none\" href=\"data:image/png;base64,{}\"/>\n",
@@ -1399,6 +1524,29 @@ fn pdf_color(hex6: &str, alpha: u8) -> PdfColor {
 
 /// A one-page PDF of the design: real text (built-in Helvetica, stretched to the box width),
 /// vector rectangles and embedded pictures.
+/// A shape's drawn path: inset by half its outline so the box stays the outer edge (the Studio's
+/// `shapeGeometry`).
+struct Geometry {
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    r: f32,
+    sw: f32,
+}
+
+fn shape_geometry(o: &DesignObject) -> Geometry {
+    let sw = if o.stroke.is_some() { o.stroke_width.min(o.w.min(o.h) / 2.0).max(0.0) } else { 0.0 };
+    Geometry {
+        x: o.x + sw / 2.0,
+        y: o.y + sw / 2.0,
+        w: (o.w - sw).max(0.0),
+        h: (o.h - sw).max(0.0),
+        r: (o.radius - sw / 2.0).max(0.0),
+        sw,
+    }
+}
+
 /// PDF built-in fonts by family, then [regular, bold, italic, bold italic].
 fn builtin_fonts(doc: &mut PdfDocument) -> [[PdfFontToken; 4]; 3] {
     let f = doc.fonts_mut();
@@ -1464,16 +1612,22 @@ fn to_pdf(d: &Design) -> PwResult<(Vec<u8>, Vec<String>)> {
     for o in d.objects.iter().filter(|o| o.visible && o.w > 0.0 && o.h > 0.0) {
         match o.kind {
             ObjectKind::Shape => {
-                let fill = Some(pdf_color(o.fill.as_deref().unwrap_or(""), 255));
+                let fill = o.fill.as_deref().map(|c| pdf_color(c, 255));
+                let g = shape_geometry(o);
+                let (stroke, sw) = match o.stroke.as_deref().filter(|_| g.sw > 0.0) {
+                    Some(c) => (Some(pdf_color(c, 255)), Some(PdfPoints::new(g.sw * k))),
+                    None => (None, None),
+                };
+                let o = &DesignObject { x: g.x, y: g.y, w: g.w, h: g.h, radius: g.r, ..o.clone() };
                 let mut p = if o.ellipse {
-                    PdfPagePathObject::new_ellipse(&doc, rect(o.x, o.y, o.w, o.h), None, None, fill).map_err(err)?
+                    PdfPagePathObject::new_ellipse(&doc, rect(o.x, o.y, o.w, o.h), stroke, sw, fill).map_err(err)?
                 } else if o.radius > 0.0 {
                     // Four straight sides and four quarter-circle corners (Bezier, k = 0.5523).
                     let (l, b, r_, t) = (o.x * k, ph - (o.y + o.h) * k, (o.x + o.w) * k, ph - o.y * k);
                     let r = o.radius.min(o.w.min(o.h) / 2.0) * k;
                     let c = r * (1.0 - 0.5523);
                     let pt = PdfPoints::new;
-                    let mut p = PdfPagePathObject::new(&doc, pt(l + r), pt(b), None, None, fill).map_err(err)?;
+                    let mut p = PdfPagePathObject::new(&doc, pt(l + r), pt(b), stroke, sw, fill).map_err(err)?;
                     p.line_to(pt(r_ - r), pt(b)).map_err(err)?;
                     p.bezier_to(pt(r_), pt(b + r), pt(r_ - c), pt(b), pt(r_), pt(b + c)).map_err(err)?;
                     p.line_to(pt(r_), pt(t - r)).map_err(err)?;
@@ -1485,7 +1639,7 @@ fn to_pdf(d: &Design) -> PwResult<(Vec<u8>, Vec<String>)> {
                     p.close_path().map_err(err)?;
                     p
                 } else {
-                    PdfPagePathObject::new_rect(&doc, rect(o.x, o.y, o.w, o.h), None, None, fill).map_err(err)?
+                    PdfPagePathObject::new_rect(&doc, rect(o.x, o.y, o.w, o.h), stroke, sw, fill).map_err(err)?
                 };
                 turn!(p, o);
                 page.objects_mut().add_path_object(p).map_err(err)?;
@@ -1836,6 +1990,8 @@ mod tests {
             rotation: 0.0,
             ellipse: false,
             radius: 0.0,
+            stroke: None,
+            stroke_width: 0.0,
             font: FontFamily::Sans,
             italic: false,
             line_height: None,
@@ -1897,6 +2053,43 @@ mod tests {
     }
 
     #[test]
+    fn a_hollow_frame_is_an_outline_and_a_thick_one_is_not() {
+        let frame = |t: usize| {
+            let mut img = canvas(200, 120, [250, 250, 250]);
+            fill(&mut img, 20, 20, 180, 100, [20, 40, 120]);
+            fill(&mut img, 20 + t, 20 + t, 180 - t, 100 - t, [250, 250, 250]);
+            img
+        };
+        let (objects, _, s) = reconstruct(&frame(4), &[], &chars);
+        assert_eq!((s.shapes, s.images), (1, 0));
+        let o = &objects[0];
+        assert_eq!(
+            (o.fill.as_deref(), o.stroke.as_deref(), o.stroke_width, o.ellipse),
+            (None, Some("#142878"), 4.0, false)
+        );
+        assert_eq!((o.x, o.y, o.w, o.h), (20.0, 20.0, 160.0, 80.0));
+        // A ring thicker than a quarter of the shorter side is not a line: it stays a picture.
+        let (_, _, s) = reconstruct(&frame(30), &[], &chars);
+        assert_eq!((s.shapes, s.images), (0, 1));
+    }
+
+    #[test]
+    fn crops_keep_the_chosen_part_and_refuse_nothing_left() {
+        let mut img = image::RgbaImage::new(100, 50);
+        for (x, _, p) in img.enumerate_pixels_mut() {
+            *p = image::Rgba([if x < 25 { 255 } else { 0 }, 0, 0, 255]);
+        }
+        let b64 = png_base64(&image::DynamicImage::ImageRgba8(img));
+        let out = decode_png(&crop_png(&b64, [0.25, 0.1, 0.0, 0.2]).expect("crop"), "t").expect("png").to_rgba8();
+        assert_eq!(out.dimensions(), (75, 35));
+        assert!(out.pixels().all(|p| p[0] == 0), "the red quarter was cut away");
+        for bad in [[0.6, 0.0, 0.5, 0.0], [0.0, 1.0, 0.0, 0.0], [-0.1, 0.0, 0.0, 0.0], [f32::NAN, 0.0, 0.0, 0.0]] {
+            assert_eq!(crop_png(&b64, bad).expect_err("refused").code, "design.crop");
+        }
+        assert_eq!(crop_png("not base64!", [0.1, 0.0, 0.0, 0.0]).expect_err("bad data").code, "design.png");
+    }
+
+    #[test]
     fn noise_becomes_at_most_a_bounded_number_of_objects() {
         let mut img = canvas(300, 300, [255, 255, 255]);
         for y in (0..300).step_by(4) {
@@ -1941,6 +2134,8 @@ mod tests {
                 rotation: 0.0,
                 ellipse: false,
                 radius: 0.0,
+                stroke: None,
+                stroke_width: 0.0,
                 font: FontFamily::Sans,
                 italic: false,
                 line_height: None,
@@ -2010,6 +2205,8 @@ mod tests {
             rotation: 0.0,
             ellipse: false,
             radius: 0.0,
+            stroke: None,
+            stroke_width: 0.0,
             font: FontFamily::Sans,
             italic: false,
             line_height: None,

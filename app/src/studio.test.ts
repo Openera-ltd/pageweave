@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addObject, align, dragCorner, paragraphLayout, textPatch, bounds, commit, distribute, duplicate, group, hit, isStudioSource, moveMany, removeMany, rotate, snap, studioSourceFor, ungroup, withGroup, moveBy, redo, remove, reorder, resize, start, uncertain, undo, update } from "./studio";
+import { addObject, align, cropBox, dragCorner, paragraphLayout, shapeGeometry, textPatch, bounds, commit, distribute, duplicate, group, hit, isStudioSource, moveMany, removeMany, rotate, snap, studioSourceFor, ungroup, withGroup, moveBy, redo, remove, reorder, resize, start, uncertain, undo, update } from "./studio";
 import type { Design, DesignObject } from "./types";
 
 const obj = (id: string, extra: Partial<DesignObject> = {}): DesignObject => ({
@@ -234,6 +234,20 @@ describe("design studio: several objects", () => {
     expect(l.lines).toEqual([{ text: "a", x: 350, y: 15 }, { text: "bb", x: 350, y: 40 }]);
     expect(l.scale).toBe("matrix(0.8 0 0 1 20 0)");
     expect(100 + (350 - 100) * 0.8).toBe(300);
+  });
+
+  it("draws an outline inside the box, never wider than half the shorter side", () => {
+    expect(shapeGeometry(obj("s", { x: 10, y: 10, w: 40, h: 20, radius: 6, stroke: "#000", stroke_width: 4 }))).toEqual({ x: 12, y: 12, w: 36, h: 16, r: 4, sw: 4 });
+    expect(shapeGeometry(obj("s", { w: 40, h: 20, stroke: "#000", stroke_width: 50 })).sw).toBe(10);
+    expect(shapeGeometry(obj("s", { w: 40, h: 20, stroke_width: 3 })).sw).toBe(0);
+  });
+
+  it("crops at least 1 × 1 and reports trims as fractions", () => {
+    const p = obj("p", { kind: "image", x: 10, y: 20, w: 50, h: 40 });
+    expect(cropBox(p, { l: 5, t: 0, r: 0, b: 10 })).toEqual({ box: { x: 15, y: 20, w: 45, h: 30 }, fractions: [0.1, 0, 0, 0.25], empty: false });
+    const all = cropBox(p, { l: 100, t: 100, r: 100, b: 100 });
+    expect(all.box).toEqual({ x: 59, y: 59, w: 1, h: 1 });
+    expect(cropBox(p, { l: 0, t: 0, r: 0, b: 0 }).empty).toBe(true);
   });
 
   it("grows a text box to hold its lines; one line keeps its box", () => {

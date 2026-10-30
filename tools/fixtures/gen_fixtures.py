@@ -837,6 +837,34 @@ def build_fonts_document(lines=None) -> bytes:
     return w.render(catalog, info)
 
 
+def build_frames_document() -> bytes:
+    """Outlined shapes the Design Studio rebuilds as vector frames (D-036): a 3 pt dark blue border
+    inset 10 pt, a 2 pt red elliptical ring with "SEAL" inside it, and a heading, on a tinted page.
+    Expected forms and widths are in crates/pw-pdf/tests/studio.rs."""
+    w = PdfWriter()
+    catalog, pages_obj = w.reserve(), w.reserve()
+    bold = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>")
+    k = 0.5523
+    cx, cy, rx, ry = 225, 70, 45, 30
+    ring = (f"{cx + rx} {cy} m "
+            f"{cx + rx} {cy + k * ry} {cx + k * rx} {cy + ry} {cx} {cy + ry} c "
+            f"{cx - k * rx} {cy + ry} {cx - rx} {cy + k * ry} {cx - rx} {cy} c "
+            f"{cx - rx} {cy - k * ry} {cx - k * rx} {cy - ry} {cx} {cy - ry} c "
+            f"{cx + k * rx} {cy - ry} {cx + rx} {cy - k * ry} {cx + rx} {cy} c S\n")
+    ops = "0.98 0.96 0.90 rg 0 0 300 200 re f\n"
+    ops += "0.10 0.20 0.50 RG 3 w 11.5 11.5 277 177 re S\n"
+    ops += "0.80 0.10 0.10 RG 2 w " + ring
+    ops += "0.1 g BT /F1 18 Tf 40 140 Td (Certificate) Tj ET\n"
+    ops += "0.8 0.1 0.1 rg BT /F1 14 Tf 207 65 Td (SEAL) Tj ET\n"
+    content = w.stream(ops.encode("latin-1"))
+    page = w.add(f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 300 200] "
+                 f"/Resources << /Font << /F1 {bold} 0 R >> >> /Contents {content} 0 R >>")
+    w.set(pages_obj, f"<< /Type /Pages /Kids [{page} 0 R] /Count 1 >>")
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R >>")
+    info = w.add("<< /Title (Frames fixture) /Producer (gen_fixtures.py) >>")
+    return w.render(catalog, info)
+
+
 def build_borderless_tables_document() -> bytes:
     """Tables without drawn grids for table export (D-020): page 1 has a table of aligned columns
     with no lines at all and a table with only horizontal rules above and below its header and at
@@ -923,6 +951,7 @@ def main() -> int:
     files["badges.pdf"] = build_badges_document()
     files["caption.pdf"] = build_caption_document()
     files["fonts.pdf"] = build_fonts_document()
+    files["frames.pdf"] = build_frames_document()
     files["fonts-holdout.pdf"] = build_fonts_document(HOLDOUT_FONT_LINES)
     files["caption-clean.pdf"] = build_caption_document(words=False)
     files["form-nested.pdf"] = build_nested_form_document()

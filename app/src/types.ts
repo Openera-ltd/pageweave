@@ -642,7 +642,7 @@ export interface DesignObject {
   bold: boolean;
   /** Text baseline below the top of the box. */
   baseline?: number;
-  fill?: string;
+  fill?: string | null;
   /** PNG, base64. */
   png?: string;
   /** Objects with the same group id are selected and moved together. */
@@ -653,6 +653,9 @@ export interface DesignObject {
   ellipse?: boolean;
   /** Shape: corner radius in design pixels. */
   radius?: number;
+  /** Shape: outline colour and width (drawn inside the box); `fill` absent = no fill. */
+  stroke?: string | null;
+  stroke_width?: number;
   /** Text: typeface family (absent: sans) and slant. */
   font?: DesignFont;
   italic?: boolean;

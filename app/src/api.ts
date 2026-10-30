@@ -74,6 +74,8 @@ export interface Api {
   loadDesign(path: string): Promise<Design>;
   /** A PNG/JPEG file decoded and re-encoded as PNG (base64), for replacing a picture. */
   loadPicture(path: string): Promise<string>;
+  /** A picture (PNG, base64) with fractions of its width/height trimmed from each side, re-encoded. */
+  cropPicture(png: string, trim: [number, number, number, number]): Promise<string>;
   /** Save edits over the design project at `path` (an existing .pwdesign only); returns its size. */
   saveDesign(path: string, design: Design): Promise<number>;
   pickFolder(defaultPath?: string): Promise<string | null>;
@@ -192,6 +194,7 @@ export const tauriApi: Api = {
   },
   loadDesign: (path) => invoke("load_design", { path }),
   loadPicture: (path) => invoke("load_picture", { path }),
+  cropPicture: (png, trim) => invoke("crop_picture", { png, left: trim[0], top: trim[1], right: trim[2], bottom: trim[3] }),
   saveDesign: (path, design) => invoke("save_design", { path, design }),
   pickFolder: async (defaultPath) => {
     const r = await openDialog({ directory: true, multiple: false, defaultPath });

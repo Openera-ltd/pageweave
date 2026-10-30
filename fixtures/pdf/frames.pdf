@@ -1,0 +1,42 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Length 344 >>
+stream
+0.98 0.96 0.90 rg 0 0 300 200 re f
+0.10 0.20 0.50 RG 3 w 11.5 11.5 277 177 re S
+0.80 0.10 0.10 RG 2 w 270 70 m 270 86.569 249.8535 100 225 100 c 200.1465 100 180 86.569 180 70 c 180 53.431 200.1465 40 225 40 c 249.8535 40 270 53.431 270 70 c S
+0.1 g BT /F1 18 Tf 40 140 Td (Certificate) Tj ET
+0.8 0.1 0.1 rg BT /F1 14 Tf 207 65 Td (SEAL) Tj ET
+
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Title (Frames fixture) /Producer (gen_fixtures.py) >>
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000121 00000 n 
+0000000223 00000 n 
+0000000618 00000 n 
+0000000744 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R /Info 6 0 R /ID [<70616765776561766566697874757265> <70616765776561766566697874757265>] >>
+startxref
+817
+%%EOF

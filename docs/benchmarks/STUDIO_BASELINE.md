@@ -37,3 +37,7 @@ measured once): 82.6 % serif-vs-sans over 2,562 lines (always-sans 35.8 %).
 By font (blind): Inter 99.3 %, DejaVu Sans 97.7 %, Carlito Bold 97.5 %, Carlito 94.1 %, DejaVu Serif
 93.8 %, Caladea Italic 75.4 %, Caladea 70.1 %; DejaVu Sans Mono kept sans 92.9 %. Fixtures
 (`fonts.pdf`, `fonts-holdout.pdf`): 22/22 families right, sizes within 7.5 %.
+
+Frames (D-036) on `fixtures/pdf/frames.pdf`: 3 pt rectangular border and 2 pt elliptical ring
+rebuilt as outlines (6.1 px / 4.2 px against 6.25 / 4.17), text inside kept; PDF export mean
+difference 2.22/255. Paragraphs (D-035): poster PDF export 2.23/255.

@@ -219,6 +219,12 @@ async fn load_picture(path: String) -> CmdResult<String> {
     blocking(move || pw_pdf::studio::picture_png(&PathBuf::from(path))).await
 }
 
+/// Crop a Studio picture: fractions of its width/height trimmed from each side, re-encoded as PNG.
+#[tauri::command]
+async fn crop_picture(png: String, left: f32, top: f32, right: f32, bottom: f32) -> CmdResult<String> {
+    blocking(move || pw_pdf::studio::crop_png(&png, [left, top, right, bottom])).await
+}
+
 /// Save the Studio's edits over the design project it opened: only an existing, valid .pwdesign
 /// file is replaced (never another kind of file), atomically and read back. Returns its size.
 #[tauri::command]
@@ -760,6 +766,7 @@ pub fn run() {
             load_design,
             save_design,
             load_picture,
+            crop_picture,
             update_info,
             check_for_update,
             install_update,

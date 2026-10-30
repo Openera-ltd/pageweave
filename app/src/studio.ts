@@ -334,3 +334,30 @@ export function textPatch(o: DesignObject, text: string): Partial<DesignObject> 
   const { lineHeight } = paragraphLayout(o);
   return { text, h: round((o.baseline ?? size * 0.72) + (n - 1) * lineHeight + size * 0.25) };
 }
+
+/** A shape's drawn path: inset by half its outline so the box stays the outer edge (as exported). */
+export function shapeGeometry(o: DesignObject) {
+  const sw = o.stroke && o.stroke_width ? Math.min(o.stroke_width, Math.min(o.w, o.h) / 2) : 0;
+  return { x: o.x + sw / 2, y: o.y + sw / 2, w: Math.max(0, o.w - sw), h: Math.max(0, o.h - sw), r: Math.max(0, (o.radius ?? 0) - sw / 2), sw };
+}
+
+/** Trims (design pixels from each side) of a picture being cropped. */
+export interface Trim {
+  l: number;
+  t: number;
+  r: number;
+  b: number;
+}
+
+/** The part of `o` a crop keeps (at least 1 × 1), and the trims as fractions of its size. */
+export function cropBox(o: DesignObject, c: Trim) {
+  const l = Math.max(0, Math.min(c.l, o.w - 1));
+  const r = Math.max(0, Math.min(c.r, o.w - 1 - l));
+  const t = Math.max(0, Math.min(c.t, o.h - 1));
+  const b = Math.max(0, Math.min(c.b, o.h - 1 - t));
+  return {
+    box: { x: round(o.x + l), y: round(o.y + t), w: round(o.w - l - r), h: round(o.h - t - b) },
+    fractions: [l / o.w, t / o.h, r / o.w, b / o.h] as [number, number, number, number],
+    empty: !l && !t && !r && !b,
+  };
+}
