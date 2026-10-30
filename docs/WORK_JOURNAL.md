@@ -433,3 +433,4 @@ Timestamp; commit/branch; requirement IDs; changed files; exact commands/results
 ## 2026-10-30 — Design Studio: zoom and pan
 - Ctrl+wheel zooms around the pointer (scroll corrected after layout), Ctrl+=/−/0, middle-button or Space+drag pan. Found while adding it: the canvas centred the page with `place-items: center`, so a zoomed page overflowed off the left/top out of scroll reach; now centred with auto margins. Component test (wheel only with Ctrl, keys, Space state) and E2E (zoom ×4 keys, top-left reachable, Space+drag pans exactly 120 px, Ctrl+0 back to fit).
 - Gate before committing outlines + crop + zoom: workspace 461/0 (crate by crate), vitest, tsc, audit 91/91, Studio E2E 4/4.
+- Full E2E on af7de00 (nothing else running): 91 passed, 0 failed, 0 launch retries.
