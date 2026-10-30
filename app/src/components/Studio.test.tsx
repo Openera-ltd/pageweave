@@ -378,6 +378,31 @@ describe("Design Studio", () => {
     expect(cv.className).not.toContain("pan-ready");
   });
 
+  it("keeps its status row while idle, so a message never changes the canvas size", async () => {
+    setup({ kind: "open", path: "/d/f.pwdesign" });
+    await flush();
+    expect(screen.getByTestId("studio-status").textContent).toBe("");
+  });
+
+  it("a drag ends where the pointer is released, even when its last moves were merged away", async () => {
+    setup({ kind: "open", path: "/d/f.pwdesign" });
+    await flush();
+    // jsdom has no layout: the page is fitted at the smallest scale, 0.05 (1 screen px = 20 design px).
+    Object.assign(HTMLElement.prototype, { setPointerCapture: () => undefined, releasePointerCapture: () => undefined });
+    const stage = document.querySelector(".studio-stage")!;
+    const x = () => Number(document.querySelector('[data-object="text-1"]')!.getAttribute("x"));
+    expect(x()).toBe(10);
+    // Press on the text (design 50, 20), release 1 px to the right with no move event between.
+    fireEvent.pointerDown(stage, { button: 0, clientX: 2.5, clientY: 1, pointerId: 1 });
+    fireEvent.pointerUp(stage, { button: 0, clientX: 3.5, clientY: 1, pointerId: 1, altKey: true });
+    expect(x()).toBe(30);
+    // A press and release in place changes nothing (no undo step).
+    fireEvent.pointerDown(stage, { button: 0, clientX: 2.5, clientY: 1, pointerId: 1 });
+    fireEvent.pointerUp(stage, { button: 0, clientX: 2.5, clientY: 1, pointerId: 1 });
+    fireEvent.keyDown(stage, { key: "z", ctrlKey: true });
+    expect(x()).toBe(10);
+  });
+
   it("the start screen offers Open in Design Studio (studio.open)", () => {
     const onStudio = vi.fn();
     render(

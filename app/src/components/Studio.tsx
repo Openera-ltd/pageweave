@@ -339,9 +339,10 @@ export function Studio({ source, jobs, onClose }: Props) {
     e.preventDefault();
   };
 
-  const onPointerMove = (e: React.PointerEvent) => {
+  /** The design while (or after) dragging to the pointer position of `e`, or null when not dragging. */
+  const dragResult = (e: React.PointerEvent): Design | null => {
     const d = drag.current;
-    if (!d || !hist) return;
+    if (!d || !hist) return null;
     const p = toDesign(e);
     const dx = p.x - d.x0;
     const dy = p.y - d.y0;
@@ -352,15 +353,27 @@ export function Studio({ source, jobs, onClose }: Props) {
       setGuides(s.guides);
       // Exact delta: rounding it to whole pixels pulled snapped objects that sit at fractional
       // positions up to half a pixel off the guide (moveBy keeps tenths).
-      setPreview(moveMany(hist.present, d.ids, s.x - d.box.x, s.y - d.box.y));
-      return;
+      return moveMany(hist.present, d.ids, s.x - d.box.x, s.y - d.box.y);
     }
     const turned = hist.present.objects.find((o) => o.id === d.ids[0])?.rotation ?? 0;
-    setPreview(resize(hist.present, d.ids[0]!, dragCorner(d.box, turned, d.corner, dx, dy)));
+    return resize(hist.present, d.ids[0]!, dragCorner(d.box, turned, d.corner, dx, dy));
   };
 
-  const onPointerUp = () => {
-    if (drag.current && preview) change(preview);
+  const onPointerMove = (e: React.PointerEvent) => {
+    const next = dragResult(e);
+    if (next) setPreview(next);
+  };
+
+  const onPointerUp = (e: React.PointerEvent) => {
+    // The release position counts too: the browser may merge the last moves of a quick drag, and
+    // the object must end where the pointer was let go. A press without movement changes nothing.
+    const d = drag.current;
+    if (d) {
+      const p = toDesign(e);
+      const moved = preview !== null || Math.hypot(p.x - d.x0, p.y - d.y0) * scale >= 1;
+      const next = moved ? dragResult(e) : null;
+      if (next) change(next);
+    }
     drag.current = null;
     setPreview(null);
     setGuides([]);
@@ -706,16 +719,16 @@ export function Studio({ source, jobs, onClose }: Props) {
         </div>
       ) : null}
 
-      {status && (
-        <div className="studio-status" role="status" data-testid="studio-status">
-          {status.text}
-          {status.reveal && (
-            <button type="button" className="btn link" onClick={() => api.revealInFolder(status.reveal!).catch((e) => setError(toPwError(e)))}>
-              Show in folder
-            </button>
-          )}
-        </div>
-      )}
+      {/* Always there (empty when idle): a status row appearing would shrink the canvas and
+          re-fit the page, so the design would jump in size whenever a message shows. */}
+      <div className="studio-status" role="status" data-testid="studio-status">
+        {status?.text}
+        {status?.reveal && (
+          <button type="button" className="btn link" onClick={() => api.revealInFolder(status.reveal!).catch((e) => setError(toPwError(e)))}>
+            Show in folder
+          </button>
+        )}
+      </div>
     </div>
   );
 }

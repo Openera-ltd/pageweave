@@ -2391,12 +2391,36 @@ await test("protect with password: AES-256 copy needs the password; wrong passwo
   }
 });
 
+/** A pointer drag with Alt held throughout. Alt is pressed in its own action call and stays down
+ *  (WebDriver keeps input state between calls) until the release: when key and pointer actions
+ *  share one call, their order within a tick is up to the driver, and the last move sometimes went
+ *  out without Alt (snapping then moved the object 2.5 px). */
+async function altDrag(s, x0, y0, x1, y1) {
+  await s.cmd("POST", "/actions", { actions: [{ type: "key", id: "kb", actions: [{ type: "keyDown", value: "\uE00A" }] }] });
+  await s.cmd("POST", "/actions", { actions: [
+    { type: "pointer", id: "mouse", parameters: { pointerType: "mouse" }, actions: [
+      { type: "pointerMove", origin: "viewport", x: Math.round(x0), y: Math.round(y0) },
+      { type: "pointerDown", button: 0 },
+      { type: "pointerMove", origin: "viewport", duration: 100, x: Math.round(x1), y: Math.round(y1) },
+      { type: "pointerUp", button: 0 },
+    ] },
+  ] });
+  await s.cmd("POST", "/actions", { actions: [{ type: "key", id: "kb", actions: [{ type: "keyUp", value: "\uE00A" }] }] });
+  await s.cmd("DELETE", "/actions");
+}
+
 /** Ctrl+S in the Studio, then wait until the project on disk has changed and the status says so
  *  (a status left over from an earlier save must not count). */
 async function studioSave(s, file) {
   const before = readFileSync(file, "utf8");
+  const size = () => s.exec("const r=document.querySelector('[data-testid=studio-stage]').getBoundingClientRect(); return [r.width, r.height]");
+  const [w0, h0] = await size();
   await s.keys(["Control", "s"]);
   await s.waitUntil(async () => readFileSync(file, "utf8") !== before && (await s.text('[data-testid="studio-status"]')).startsWith("Saved"), "saved");
+  // The "Saved" message must not re-fit the page (it once added a row and shrank the canvas).
+  await new Promise((r) => setTimeout(r, 100));
+  const [w1, h1] = await size();
+  assert(Math.abs(w1 - w0) < 0.5 && Math.abs(h1 - h0) < 0.5, `page size unchanged by the save message (${w0}×${h0} → ${w1}×${h1})`);
 }
 
 await test("design studio: rebuild a page, edit text with undo, nudge, drag, lock, hide, compare, save; the project reopens", async () => {
@@ -2495,16 +2519,7 @@ await test("design studio: rebuild a page, edit text with undo, nudge, drag, loc
     assert(!(await s.exec("return !!document.querySelector('[data-testid=studio-guide]')")), "guides gone after the drag");
     // Alt places freely: a drop 3 px off is kept as dropped (not pulled onto a guide).
     const [al, at2, aw, ah] = await at(rectId);
-    await s.cmd("POST", "/actions", { actions: [
-      { type: "key", id: "kb", actions: [{ type: "keyDown", value: "\uE00A" }, { type: "pause", duration: 0 }, { type: "pause", duration: 0 }, { type: "pause", duration: 0 }, { type: "keyUp", value: "\uE00A" }] },
-      { type: "pointer", id: "mouse", parameters: { pointerType: "mouse" }, actions: [
-        { type: "pointerMove", origin: "viewport", x: Math.round(al + aw / 2), y: Math.round(at2 + ah / 2) },
-        { type: "pointerDown", button: 0 },
-        { type: "pointerMove", origin: "viewport", duration: 100, x: Math.round(al + aw / 2 + 40), y: Math.round(at2 + ah / 2) },
-        { type: "pointerUp", button: 0 },
-      ] },
-    ] });
-    await s.cmd("DELETE", "/actions");
+    await altDrag(s, al + aw / 2, at2 + ah / 2, al + aw / 2 + 40, at2 + ah / 2);
     const [al2] = await at(rectId);
     assert(Math.abs(al2 - (al + 40)) < 0.75, `with Alt the rectangle moved exactly as dragged (${al2 - al} px)`);
 
@@ -2516,16 +2531,7 @@ await test("design studio: rebuild a page, edit text with undo, nudge, drag, loc
     const [a0] = await at("text-4");
     const [b0] = await at("text-5");
     const [, t4top, t4w, t4h] = await at("text-4");
-    await s.cmd("POST", "/actions", { actions: [
-      { type: "key", id: "kb", actions: [{ type: "keyDown", value: "\uE00A" }, { type: "pause", duration: 0 }, { type: "pause", duration: 0 }, { type: "pause", duration: 0 }, { type: "keyUp", value: "\uE00A" }] },
-      { type: "pointer", id: "mouse", parameters: { pointerType: "mouse" }, actions: [
-        { type: "pointerMove", origin: "viewport", x: Math.round(a0 + t4w / 2), y: Math.round(t4top + t4h / 2) },
-        { type: "pointerDown", button: 0 },
-        { type: "pointerMove", origin: "viewport", duration: 100, x: Math.round(a0 + t4w / 2 + 30), y: Math.round(t4top + t4h / 2) },
-        { type: "pointerUp", button: 0 },
-      ] },
-    ] });
-    await s.cmd("DELETE", "/actions");
+    await altDrag(s, a0 + t4w / 2, t4top + t4h / 2, a0 + t4w / 2 + 30, t4top + t4h / 2);
     const [a1] = await at("text-4");
     const [b1] = await at("text-5");
     assert(Math.abs(a1 - a0 - 30) < 0.75 && Math.abs(b1 - b0 - 30) < 0.75, `both moved 30 px (${a1 - a0}, ${b1 - b0})`);
