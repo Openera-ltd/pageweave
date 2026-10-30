@@ -6,7 +6,7 @@
 
 **A free, open-source document studio for Windows that works on your computer — no account, no cloud, no AI subscription.**
 
-[![CI](https://img.shields.io/github/actions/workflow/status/kuyamcliff/pageweave/ci.yml?branch=main&style=flat&logo=githubactions&logoColor=white&label=CI)](https://github.com/kuyamcliff/pageweave/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/Openera-ltd/pageweave/ci.yml?branch=main&style=flat&logo=githubactions&logoColor=white&label=CI)](https://github.com/Openera-ltd/pageweave/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-4c9a2a?style=flat)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows-0078D4?style=flat&logo=windows&logoColor=white)](#install-and-build)
 [![Status](https://img.shields.io/badge/status-early%20development-e8710a?style=flat)](#status)
@@ -31,6 +31,25 @@ your documents never leave the machine, and every feature works without an inter
 outside AI service. Your original files are never changed — every edit is saved as a **new** file that
 PageWeave checks before it is kept.
 
+<p align="center">
+  <img src="docs/assets/screenshots/main-light.png" alt="PageWeave with a two-column article open: grouped tools in the top bar, page thumbnails on the left, the All tools pane on the right" width="900">
+</p>
+
+<details>
+<summary><b>More screenshots</b></summary>
+
+<br>
+
+<p align="center">
+  <img src="docs/assets/screenshots/design-studio.png" alt="The Design Studio: a flyer rebuilt as layers, the title selected with its wording, size, colour and position" width="900">
+  <br><em>Design Studio: a flat flyer rebuilt as editable text, shapes and pictures.</em>
+  <br><br>
+  <img src="docs/assets/screenshots/main-dark.png" alt="The main window in the dark theme" width="900">
+  <br><em>Dark theme.</em>
+</p>
+
+</details>
+
 ## What you can do
 
 | | |
@@ -40,7 +59,7 @@ PageWeave checks before it is kept.
 | **Edit** | Change text in place, move and replace pictures, add text, highlight, underline, sticky notes |
 | **Forms** | Fill in forms on the page, clear or reset them, export and import the answers |
 | **Convert** | PDF → Word, PowerPoint, Excel/CSV tables, text and images; images → PDF; open Word, Excel and PowerPoint files (with LibreOffice installed) |
-| **Translate** | Translate pages between English, German, French, Spanish and Italian into a Word file that keeps the layout |
+| **Translate** | Translate pages between English, German, French, Spanish, Italian and Portuguese into a Word file that keeps the layout |
 | **Design Studio** | Rebuild a flat poster, flyer or screenshot (picture or PDF page) as editable text, shapes and pictures; edit, compare with the original, export SVG or PDF |
 | **Read aloud** | Hear the document with your computer's voices, the spoken word highlighted; save it as audio |
 | **Scans** | Make scans searchable (OCR), straighten them, turn them upright, remove blank pages |
@@ -64,7 +83,7 @@ PageWeave checks before it is kept.
 | Form data | Export the form's values (including unsaved changes) as XFDF — readable by most PDF apps — or JSON; import an XFDF or JSON file with a preview of which fields it fills and why any value is not used (unknown name, read-only field, no such option), then the values become unsaved changes (Undo available) to save as a copy. CLI: `pageweave form-export`, `pageweave form-import` (`--preview` or `-o`). Data files are treated as untrusted: size, count and nesting limits; XML document type declarations and custom entities are refused | format tests (round trips, nested names, special and control characters, hostile files); engine tests fill copies and check values with an independent parser, including that the data file can never be overwritten; E2E exports, previews, imports, undoes and saves in the real app, then checks the copy with the CLI |
 | Convert to Word | PDF → editable Word (.docx): paragraphs re-flowed from the PDF's lines, headings (as Word heading styles), columns, centred/right/justified alignment, indents and spacing, bold/italic/colour/size, superscripts, web and mail links, pictures (JPEG kept exactly as stored; masked pictures keep their transparency), ruled tables as Word tables (merged cells included), other aligned rows on tab stops, each page's own size and orientation; a report lists what was not carried over | every character of the PDF is checked in the Word file before it is written, and again by an independent reader in the tests; LibreOffice opens and re-lays-out every test file with the same page count, 100% word agreement and measured ink overlap (`docs/benchmarks/DOCX_BASELINE.md`); E2E in the real app |
 | Convert to PowerPoint | PDF → PowerPoint (.pptx): one slide per page at the page's size, paragraphs as editable text boxes in place (fonts, sizes, bold/italic, colours, links), ruled tables as PowerPoint tables, pictures in place; pages of another size are scaled to the first page's (reported) | every character checked in the slides before the file is written; LibreOffice lays the slides out again with the same characters and ink coverage ≥ 0.947 (`crates/pw-pdf/tests/pptx.rs`); E2E in the real app |
-| Translate | PDF pages → translated Word document (same headings, columns, tables and pictures) or text, on this computer with OPUS-MT models (included in the full installer; a missing direction downloads once, about 110 MB, resumed if interrupted and checked against its pinned checksum; kept across app updates): English ↔ German, French, Spanish, Italian (other pairs of these through English); language detected or chosen; names, codes, numbers and addresses kept, and any not kept are listed (also CLI `translate`, MCP `translate_document`) | FLORES-200 scores in `docs/benchmarks/TRANSLATION_BASELINE.md`; engine tests check values kept and routes; E2E in the real app |
+| Translate | PDF pages → translated Word document (same headings, columns, tables and pictures) or text, on this computer with OPUS-MT models (included in the full installer; a missing language downloads its shared model once, about 290–320 MB, resumed if interrupted and checked against its pinned checksum; kept across app updates): every pair of English, German, French, Spanish, Italian and Portuguese, each translated directly (30 directions from three shared models, D-027); language detected or chosen; names, codes, numbers and addresses kept, and any not kept are listed (also CLI `translate`, MCP `translate_document`) | FLORES-200 scores in `docs/benchmarks/TRANSLATION_BASELINE.md`; engine tests check values kept and routes; E2E in the real app |
 | Read aloud | Read the document aloud with the computer's own voices (Windows speech voices; nothing bundled): from the current page (toolbar, Ctrl+Shift+L, palette), from a text selection or from a page's menu; columns are read one after another and tables cell by cell; the word being heard is highlighted and kept in view (scrolling by hand stops following until "Follow"); pause/resume, previous/next sentence, speed 0.75–2× and voice (both remembered); save pages as a WAV file (also CLI `speak`, MCP `read_aloud_to_wav`) | highlighting follows the audio's own clock and the engine's word timings (Windows) or sentence timings (Linux development builds use `flite`), never a timer; unit tests of the reader logic and bar, engine tests (reading order, word positions equal search results, WAV verified), E2E in the real app with a virtual sound device |
 | Open Office files | Word, Excel, PowerPoint, OpenDocument, RTF, text, CSV and HTML files are converted to PDF and opened (start screen, palette, dropping the file, or passing it to the app); uses LibreOffice when it is installed on the computer (not bundled), in a private profile with macros switched off, on a copy of the file, with a time limit | text of Word/Excel/PowerPoint/text files checked in the PDF; a document with an auto-run macro does not run it; missing LibreOffice, damaged files, time limit and cancellation tested; E2E in the real app |
 | Export tables | Ruled tables (drawn grids) to an Excel workbook (one sheet per table, merged cells kept) or CSV files; values kept exactly — only plain exact numbers become numbers, while codes with leading zeros, long identifiers, dates, grouped amounts and trailing zeros stay text; CSV cells that a spreadsheet would run as formulas are defused | every workbook and CSV file is read back cell by cell before it is written; LibreOffice reads the workbook back with every value unchanged; E2E in the real app |
@@ -107,7 +126,7 @@ PageWeave checks before it is kept.
 - OCR: accuracy measured on synthetic English/Latin pages only; the text layer carries Latin characters; no handwriting, layout or table structure; Windows speed not yet measured.
 - Office formats: PDF → Word, PowerPoint and (tables) Excel/CSV. Opening Office files needs LibreOffice installed separately (not bundled; Settings ▸ Resources shows it as optional) and is not tested on Windows CI (no LibreOffice there). In Word/PowerPoint, tables without drawn lines stay rows of text on tab stops; other drawn lines/shapes, comments and fillable fields are not carried over, and turned text is placed after its page (all reported per file). Measured on synthetic fixtures with LibreOffice as the reader; not yet checked in Microsoft Word. Tables export to Excel/CSV from drawn grids and from columns of text aligned over three or more rows (a wrapped cell becomes its own row); no PowerPoint export, and no opening of Office files yet.
 - Read aloud: voices and languages are whatever the computer has installed (Windows Settings ▸ Speech); a voice reads every language with its own pronunciation (no automatic language switching yet); no pronunciation dictionary, audio formats other than WAV, or voice cloning; resuming where you stopped after closing the document is not kept. The Windows path's word timings are checked on Windows CI only.
-- Translation: machine translation (review it); five languages only; mixed formatting inside a paragraph becomes one style; no glossary, bilingual output or batch translation yet; scanned pages need text recognition first.
+- Translation: machine translation (review it); six languages only; with the currently pinned models English → German gets some short sentences wrong (a test catches "The house is small." becoming "very beautiful"; under review, D-027); mixed formatting inside a paragraph becomes one style; no glossary, bilingual output or batch translation yet; scanned pages need text recognition first.
 - XFA forms are detected but cannot be displayed or filled.
 - Design Studio: flat pictures have no layers, so objects are the Studio's best guess: text lines (one object per line, Helvetica-style font), single-colour rectangles, and everything else kept as pictures marked for checking; text over a picture also stays in the picture; no rotation, grouping, snapping or picture replacement yet; measured on a synthetic poster only.
 - No measured performance budgets or hardware support claims yet (`docs/HARDWARE_SUPPORT.md`).
@@ -120,7 +139,7 @@ PageWeave checks before it is kept.
 ## Install and build
 
 **Download:** get `PageWeave_<version>_x64-setup.exe` (about 1 GB, every translation language
-included) from the [latest release](https://github.com/kuyamcliff/pageweave/releases/latest) and run it
+included) from the [latest release](https://github.com/Openera-ltd/pageweave/releases/latest) and run it
 (installs for the current user, no administrator rights). The installer is not yet code-signed with a Windows certificate,
 so Windows SmartScreen may ask you to confirm ("More info" → "Run anyway").
 
@@ -249,7 +268,8 @@ the network — and only touches files inside the folders you name:
 - **Nothing is uploaded.** PageWeave's own code makes no network requests while you work with documents
   (not yet confirmed with network monitoring on Windows, where the WebView2 runtime is a separate
   Microsoft component). It goes online only to:
-  - download a translation language when you first use it (from its pinned Hugging Face address);
+  - download a translation language when you first use it (from this project's GitHub release,
+    checked against pinned SHA-256 hashes);
   - check this project's GitHub release page for a new version at startup (Settings ▸ Updates can
     switch this off), and download the update when you choose to.
 

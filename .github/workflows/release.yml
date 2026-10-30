@@ -237,6 +237,8 @@ jobs:
               "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
               "platforms": {
                   "windows-x86_64": {
+                      # The old address on purpose: copies installed before the repository moved to
+                      # Openera-ltd accept only it (GitHub redirects it); newer copies accept both.
                       "url": f"https://github.com/kuyamcliff/pageweave/releases/download/v{v}/{name}",
                       "signature": open(setup + ".sig", encoding="utf-8").read().strip(),
                       "size": len(data),

@@ -646,7 +646,7 @@ async fn install_update(state: State<'_, AppState>, app: tauri::AppHandle, versi
 fn open_releases_page(app: tauri::AppHandle) -> CmdResult<()> {
     use tauri_plugin_opener::OpenerExt;
     app.opener()
-        .open_url("https://github.com/kuyamcliff/pageweave/releases/latest", None::<&str>)
+        .open_url("https://github.com/Openera-ltd/pageweave/releases/latest", None::<&str>)
         .map_err(|_| PwError::internal("open.url", "The releases page could not be opened."))
 }
 

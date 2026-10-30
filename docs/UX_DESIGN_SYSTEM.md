@@ -65,9 +65,13 @@ Capture screenshots of key screens/states at representative resolutions and disp
 
 ## Brand identity
 
-- Official logo: `docs/assets/pageweave-logo.png` (master, 1254 × 1254) and `docs/assets/pageweave-logo-512.png`
-  (README). A white page with text lines wrapped in blue-to-violet layers on a near-black background.
-- App and installer icons (`app/src-tauri/icons/`) are generated from the logo cut to a rounded square:
-  `npx tauri icon <rounded-square.png> -o src-tauri/icons` (run in `app/`; delete the android/ios folders,
-  which PageWeave does not ship).
+- Official logo: `docs/assets/pageweave-logo.png` (master, 807 × 807, transparent background) and
+  `docs/assets/pageweave-logo-512.png` (README). A white page with text lines wrapped in blue-to-violet layers; no
+  backdrop, so it sits on light and dark surfaces alike. The original artwork on its near-black square is kept as
+  `docs/assets/pageweave-logo-on-dark.png` (1254 × 1254, for social previews).
+- The transparent master is cut from that artwork with `tools/brand/cutout_logo.py` (interior kept opaque; each
+  edge pixel takes its local colour and its blend fraction as alpha, so there is no dark fringe). From it:
+  `pageweave-logo-512.png` and `app/assets/icon-source.png` (1024 × 1024) are resized, and the app and installer
+  icons are generated with `npx tauri icon assets/icon-source.png -o src-tauri/icons` (run in `app/`; delete the
+  android/ios folders, which PageWeave does not ship). Check 16–48 px on light and dark backgrounds after any change.
 - The interface accent (`#2f6fde`) stays the default; the logo's blues and violet are its brand range.
