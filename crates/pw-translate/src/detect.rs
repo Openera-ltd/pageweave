@@ -62,7 +62,7 @@ pub fn detect(text: &str) -> Option<(&'static str, f32)> {
     }
     let mut hits: Vec<(&'static str, usize)> =
         WORDS.iter().map(|(lang, list)| (*lang, words.iter().filter(|w| list.contains(&w.as_str())).count())).collect();
-    hits.sort_by(|a, b| b.1.cmp(&a.1));
+    hits.sort_by_key(|h| std::cmp::Reverse(h.1));
     let (best, second) = (hits[0], hits[1]);
     let n = words.len() as f32;
     let share = |h: usize| h as f32 / n;
