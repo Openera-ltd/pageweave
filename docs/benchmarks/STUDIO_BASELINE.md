@@ -20,3 +20,8 @@ Shapes (D-031) on `fixtures/pdf/badges.pdf` (300 × 200 pt page): circle and ell
 ellipses, the rounded button as a rounded rectangle (radius 34.7 px; the drawn 16 pt is 33.3 px),
 the square box with radius 0, the white "SALE 50%" as text on it; no pictures. PDF export mean
 pixel difference 1.05/255. The poster is unchanged (2.21/255).
+
+Words over a picture (D-032) on `fixtures/pdf/caption.pdf` (white bold 30 pt and regular 14 pt
+over a gradient picture): both lines recognised, white; inside each line's box the picture differs
+from `caption-clean.pdf` (same page, no words) by 0.20/255 (64.65 and 34.86 before painting); no
+white pixels left; PDF export mean difference 2.56/255.

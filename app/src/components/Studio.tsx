@@ -57,6 +57,8 @@ import {
   snap,
   start,
   uncertain,
+  dragCorner,
+  type Corner,
   undo,
   ungroup,
   update,
@@ -71,7 +73,7 @@ export type StudioSource = { kind: "rebuild"; input: string; page: number; docId
 
 type Compare = "design" | "original" | "overlay" | "difference";
 /** A pointer drag: the moved objects (one for a resize) and their box when it started. */
-type Drag = { ids: string[]; corner: "move" | "nw" | "ne" | "sw" | "se"; x0: number; y0: number; box: { x: number; y: number; w: number; h: number } };
+type Drag = { ids: string[]; corner: "move" | Corner; x0: number; y0: number; box: { x: number; y: number; w: number; h: number } };
 
 interface Props {
   source: StudioSource;
@@ -274,14 +276,8 @@ export function Studio({ source, jobs, onClose }: Props) {
       setPreview(moveMany(hist.present, d.ids, s.x - d.box.x, s.y - d.box.y));
       return;
     }
-    const b = d.box;
-    const left = d.corner === "nw" || d.corner === "sw";
-    const top = d.corner === "nw" || d.corner === "ne";
-    const x = left ? Math.min(b.x + dx, b.x + b.w - 1) : b.x;
-    const y = top ? Math.min(b.y + dy, b.y + b.h - 1) : b.y;
-    const w = left ? b.x + b.w - x : Math.max(1, b.w + dx);
-    const h = top ? b.y + b.h - y : Math.max(1, b.h + dy);
-    setPreview(resize(hist.present, d.ids[0]!, { x, y, w, h }));
+    const turned = hist.present.objects.find((o) => o.id === d.ids[0])?.rotation ?? 0;
+    setPreview(resize(hist.present, d.ids[0]!, dragCorner(d.box, turned, d.corner, dx, dy)));
   };
 
   const onPointerUp = () => {
@@ -531,8 +527,8 @@ export function Studio({ source, jobs, onClose }: Props) {
                     data-selected={o.id}
                     style={{ left: o.x * scale, top: o.y * scale, width: o.w * scale, height: o.h * scale, transform: o.rotation ? `rotate(${o.rotation}deg)` : undefined }}
                   >
-                    {/* Corner handles for one unturned object; a turned one is sized in its fields. */}
-                    {sel === o && !o.locked && !o.rotation && (["nw", "ne", "sw", "se"] as const).map((c) => <span key={c} className={`handle ${c}`} data-corner={c} />)}
+                    {/* Corner handles for one object; they turn with it. */}
+                    {sel === o && !o.locked && (["nw", "ne", "sw", "se"] as const).map((c) => <span key={c} className={`handle ${c}`} data-corner={c} />)}
                   </div>
                 ))}
             </div>

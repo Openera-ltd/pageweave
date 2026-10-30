@@ -397,3 +397,71 @@ fn circles_ellipses_and_rounded_rectangles_become_vectors() {
     eprintln!("mean pixel difference {diff:.2}");
     assert!(diff < 4.0, "export looks different: {diff}");
 }
+
+#[test]
+fn words_over_a_picture_are_painted_out_of_it() {
+    if !have_resources() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("test value");
+    let project = dir.path().join("caption.pwdesign");
+    let (_, s) = reconstruct_design(
+        &fixture("caption.pdf"),
+        &OpenOptions::default(),
+        0,
+        &project,
+        CollisionPolicy::Fail,
+        &never,
+    )
+    .expect("reconstruct");
+    let d = read_design(&project).expect("test value");
+    assert_eq!((s.text, s.images), (2, 1), "two lines over one picture: {s:?}");
+    let texts: Vec<&str> =
+        d.objects.iter().filter(|o| o.kind == ObjectKind::Text).filter_map(|o| o.text.as_deref()).collect();
+    assert!(texts.contains(&"OPEN DAY") && texts.contains(&"Saturday from ten"), "wording {texts:?}");
+    let picture = d.objects.iter().find(|o| o.kind == ObjectKind::Image).expect("picture");
+    let pic = image::load_from_memory(
+        &base64::engine::general_purpose::STANDARD.decode(picture.png.as_deref().expect("picture data")).expect("b64"),
+    )
+    .expect("png")
+    .to_rgba8();
+    // The same page without the words, at the same scale: what the picture should look like.
+    let clean =
+        pw_pdf::studio::load_source(&fixture("caption-clean.pdf"), &OpenOptions::default(), 0).expect("clean").0;
+    let source = pw_pdf::studio::load_source(&fixture("caption.pdf"), &OpenOptions::default(), 0).expect("source").0;
+    assert_eq!((clean.w, clean.h), (source.w, source.h));
+    let px = |img: &pw_pdf::studio::Rgb, x: usize, y: usize| {
+        let i = (y * img.w + x) * 3;
+        [img.px[i] as i32, img.px[i + 1] as i32, img.px[i + 2] as i32]
+    };
+    for t in d.objects.iter().filter(|o| o.kind == ObjectKind::Text) {
+        assert!(
+            t.color.as_deref().is_some_and(|c| c.to_lowercase().as_str() >= "#f0f0f0"),
+            "white wording {:?}",
+            t.color
+        );
+        assert!(t.note.as_deref().is_some_and(|n| n.contains("painted out")), "noted {:?}", t.note);
+        // Inside the line's box: the picture now matches the clean page; the source with the words did not.
+        let (mut painted, mut before, mut n, mut white) = (0i64, 0i64, 0i64, 0);
+        for y in t.y as usize..(t.y + t.h) as usize {
+            for x in t.x as usize..(t.x + t.w) as usize {
+                let p = pic.get_pixel((x as f32 - picture.x) as u32, (y as f32 - picture.y) as u32);
+                let want = px(&clean, x, y);
+                painted += (0..3).map(|k| (p[k] as i32 - want[k]).abs() as i64).sum::<i64>();
+                before += (0..3).map(|k| (px(&source, x, y)[k] - want[k]).abs() as i64).sum::<i64>();
+                white += (p[0] > 230 && p[1] > 230 && p[2] > 230) as i32;
+                n += 3;
+            }
+        }
+        let (painted, before) = (painted as f32 / n as f32, before as f32 / n as f32);
+        eprintln!("{:?}: mean difference to the clean picture {painted:.2} (with the words {before:.2}); white pixels left {white}", t.text);
+        assert!(white == 0, "no white ink left in the picture: {white}");
+        assert!(painted < 4.0 && painted < before / 5.0, "painted out: {painted} vs {before}");
+    }
+    // The export still looks like the source (the words now drawn as text).
+    let pdf = dir.path().join("c.pdf");
+    export_design(&project, DesignFormat::Pdf, &pdf, CollisionPolicy::Fail).expect("pdf");
+    let diff = difference(&d, &pdf);
+    eprintln!("mean pixel difference {diff:.2}");
+    assert!(diff < 4.0, "export looks different: {diff}");
+}

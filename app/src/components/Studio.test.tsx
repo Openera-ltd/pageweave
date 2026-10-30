@@ -215,8 +215,9 @@ describe("Design Studio", () => {
     expect(document.querySelector('[data-object="shape-1"]')!.getAttribute("transform")).toBe("rotate(90 100 20)");
     fireEvent.change(screen.getByTestId("studio-rotation"), { target: { value: "-30" } });
     expect(document.querySelector('[data-object="shape-1"]')!.getAttribute("transform")).toBe("rotate(-30 100 20)");
-    // A turned object has no corner handles (it is sized in its fields).
-    expect(document.querySelector("[data-corner]")).toBeNull();
+    // A turned object keeps its corner handles; they turn with its outline.
+    expect(document.querySelectorAll("[data-corner]")).toHaveLength(4);
+    expect((document.querySelector("[data-corner]")!.parentElement as HTMLElement).style.transform).toBe("rotate(-30deg)");
   });
 
   it("rounds a shape's corners and turns it into an ellipse, both undoable", async () => {

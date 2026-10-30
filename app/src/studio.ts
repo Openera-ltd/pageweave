@@ -280,3 +280,29 @@ export function rotate(d: Design, id: string, degrees: number): Design {
   const r = round(((((degrees + 180) % 360) + 360) % 360) - 180);
   return mapObject(d, id, (o) => (o.locked || (o.rotation ?? 0) === r ? o : { ...o, rotation: r }));
 }
+
+export type Corner = "nw" | "ne" | "sw" | "se";
+
+/** The box after dragging one corner by (dx, dy) on the canvas, for an object turned `rotation`
+ *  degrees around its centre: the opposite corner stays where it is on the canvas, and the size is
+ *  measured along the object's own (turned) sides. At least 1 × 1. */
+export function dragCorner(b: Box, rotation: number, corner: Corner, dx: number, dy: number): Box {
+  const t = (rotation * Math.PI) / 180;
+  const [cos, sin] = [Math.cos(t), Math.sin(t)];
+  const turn = (x: number, y: number) => ({ x: x * cos - y * sin, y: x * sin + y * cos });
+  const sx = corner === "ne" || corner === "se" ? 1 : -1;
+  const sy = corner === "sw" || corner === "se" ? 1 : -1;
+  const c = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+  // Opposite corner and dragged corner on the canvas.
+  const o = turn((-sx * b.w) / 2, (-sy * b.h) / 2);
+  const fixed = { x: c.x + o.x, y: c.y + o.y };
+  const d = turn((sx * b.w) / 2, (sy * b.h) / 2);
+  const to = { x: c.x + d.x + dx, y: c.y + d.y + dy };
+  // The new diagonal in the object's own frame.
+  const v = { x: (to.x - fixed.x) * cos + (to.y - fixed.y) * sin, y: -(to.x - fixed.x) * sin + (to.y - fixed.y) * cos };
+  const w = Math.max(1, v.x * sx);
+  const h = Math.max(1, v.y * sy);
+  const half = turn((sx * w) / 2, (sy * h) / 2);
+  const centre = { x: fixed.x + half.x, y: fixed.y + half.y };
+  return { x: centre.x - w / 2, y: centre.y - h / 2, w, h };
+}

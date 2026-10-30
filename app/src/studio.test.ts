@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addObject, align, bounds, commit, distribute, duplicate, group, hit, isStudioSource, moveMany, removeMany, rotate, snap, studioSourceFor, ungroup, withGroup, moveBy, redo, remove, reorder, resize, start, uncertain, undo, update } from "./studio";
+import { addObject, align, dragCorner, bounds, commit, distribute, duplicate, group, hit, isStudioSource, moveMany, removeMany, rotate, snap, studioSourceFor, ungroup, withGroup, moveBy, redo, remove, reorder, resize, start, uncertain, undo, update } from "./studio";
 import type { Design, DesignObject } from "./types";
 
 const obj = (id: string, extra: Partial<DesignObject> = {}): DesignObject => ({
@@ -194,6 +194,36 @@ describe("design studio: several objects", () => {
     const d = three();
     // Moving a+b: their own edges are no targets; c's left (80) is.
     expect(snap(d, ["a", "b"], { x: 28, y: 90, w: 50, h: 10 }, 3).x).toBe(30);
+  });
+
+  it("drags a corner of an unturned box like before, never below 1 × 1", () => {
+    const b = { x: 10, y: 20, w: 100, h: 50 };
+    const near = (r: { x: number; y: number; w: number; h: number }, e: number[]) =>
+      [r.x, r.y, r.w, r.h].forEach((v, i) => expect(v).toBeCloseTo(e[i]!, 6));
+    near(dragCorner(b, 0, "se", 20, 10), [10, 20, 120, 60]);
+    near(dragCorner(b, 0, "nw", 20, 10), [30, 30, 80, 40]);
+    near(dragCorner(b, 0, "ne", -30, -5), [10, 15, 70, 55]);
+    near(dragCorner(b, 0, "nw", 500, 500), [109, 69, 1, 1]);
+  });
+
+  it("drags a corner of a turned box along its own sides; the opposite corner stays put", () => {
+    const b = { x: 0, y: 0, w: 100, h: 40 };
+    const corner = (r: { x: number; y: number; w: number; h: number }, rot: number, sx: number, sy: number) => {
+      const t = (rot * Math.PI) / 180;
+      const [lx, ly] = [(sx * r.w) / 2, (sy * r.h) / 2];
+      return [r.x + r.w / 2 + lx * Math.cos(t) - ly * Math.sin(t), r.y + r.h / 2 + lx * Math.sin(t) + ly * Math.cos(t)];
+    };
+    // Turned 90°: the box's own width runs down the canvas. Dragging the "se" corner 30 px down
+    // makes it 30 wider; the "nw" corner does not move.
+    const r = dragCorner(b, 90, "se", 0, 30);
+    expect(r.w).toBeCloseTo(130, 6);
+    expect(r.h).toBeCloseTo(40, 6);
+    corner(r, 90, -1, -1).forEach((v, i) => expect(v).toBeCloseTo(corner(b, 90, -1, -1)[i]!, 6));
+    // Any angle: the opposite corner is fixed.
+    for (const rot of [30, -45, 135]) {
+      const q = dragCorner(b, rot, "nw", 7, -11);
+      corner(q, rot, 1, 1).forEach((v, i) => expect(v).toBeCloseTo(corner(b, rot, 1, 1)[i]!, 6));
+    }
   });
 
   it("keeps a corner radius within half the shorter side when edited or resized", () => {

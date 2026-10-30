@@ -151,6 +151,51 @@ impl Rgb {
         let i = (y * self.w + x) * 3;
         [self.px[i] as i32, self.px[i + 1] as i32, self.px[i + 2] as i32]
     }
+
+    fn set(&mut self, x: usize, y: usize, c: [i32; 3]) {
+        let i = (y * self.w + x) * 3;
+        for (dst, v) in self.px[i..i + 3].iter_mut().zip(c) {
+            *dst = v.clamp(0, 255) as u8;
+        }
+    }
+}
+
+/// What lies behind a box, pixel by pixel, estimated from the ring just outside it: the mean of
+/// the top-to-bottom and left-to-right interpolations of the ring (each side smoothed over 5 px).
+/// Exact for flat colours and linear gradients; a soft guess on photographs. Row-major over the
+/// box `x0..x1 × y0..y1`; the ring is `rx0..rx1 × ry0..ry1` (its outermost rows and columns).
+fn behind_box(
+    img: &Rgb,
+    (x0, y0, x1, y1): (usize, usize, usize, usize),
+    (rx0, ry0, rx1, ry1): (usize, usize, usize, usize),
+) -> Vec<[i32; 3]> {
+    let smooth = |side: Vec<[i32; 3]>| -> Vec<[i32; 3]> {
+        (0..side.len())
+            .map(|i| {
+                let near = &side[i.saturating_sub(2)..(i + 3).min(side.len())];
+                [0, 1, 2].map(|k| near.iter().map(|c| c[k]).sum::<i32>() / near.len() as i32)
+            })
+            .collect()
+    };
+    let top = smooth((x0..x1).map(|x| img.at(x, ry0)).collect());
+    let bottom = smooth((x0..x1).map(|x| img.at(x, ry1 - 1)).collect());
+    let left = smooth((y0..y1).map(|y| img.at(rx0, y)).collect());
+    let right = smooth((y0..y1).map(|y| img.at(rx1 - 1, y)).collect());
+    let (span_y, span_x) = ((ry1 - 1 - ry0).max(1) as f32, (rx1 - 1 - rx0).max(1) as f32);
+    let mut out = Vec::with_capacity((x1 - x0) * (y1 - y0));
+    for y in y0..y1 {
+        let t = (y - ry0) as f32 / span_y;
+        for x in x0..x1 {
+            let s = (x - rx0) as f32 / span_x;
+            let (a, b, l, r) = (top[x - x0], bottom[x - x0], left[y - y0], right[y - y0]);
+            out.push([0, 1, 2].map(|k| {
+                let v = a[k] as f32 * (1.0 - t) + b[k] as f32 * t;
+                let h = l[k] as f32 * (1.0 - s) + r[k] as f32 * s;
+                ((v + h) / 2.0).round() as i32
+            }));
+        }
+    }
+    out
 }
 
 fn dist(a: [i32; 3], b: [i32; 3]) -> i32 {
@@ -231,8 +276,12 @@ pub fn reconstruct(img: &Rgb, lines: &[Line]) -> (Vec<DesignObject>, [i32; 3], R
     let mut mask: Vec<bool> = (0..w * h).map(|i| dist(img.at(i % w, i / w), bg) > SAME).collect();
     // Pixels of text lines that sit on a box: part of the box's area, not of its colour.
     let mut under_text = vec![false; w * h];
+    // The picture the regions are cut from: words recognised over a picture are painted out of it,
+    // so the editable text is not doubled by the original wording underneath.
+    let mut work = Rgb { w, h, px: img.px.clone() };
 
     let mut texts = Vec::new();
+    let mut painted = Vec::new(); // per text: its wording was painted out of the picture
     let mut summary = ReconstructSummary::default();
     let mut conf_sum = 0f32;
     for l in lines.iter().filter(|l| !l.text.is_empty() && l.x1 > l.x0 + 1 && l.y1 > l.y0 + 1) {
@@ -242,6 +291,18 @@ pub fn reconstruct(img: &Rgb, lines: &[Line]) -> (Vec<DesignObject>, [i32; 3], R
         let ring =
             (rx0..rx1).flat_map(|x| [(x, ry0), (x, ry1 - 1)]).chain((ry0..ry1).flat_map(|y| [(rx0, y), (rx1 - 1, y)]));
         let (behind, uniform) = dominant(ring.map(|(x, y)| img.at(x, y)));
+        let on_background = dist(behind, bg) <= SAME;
+        let on_box = !on_background && uniform > 0.6;
+        // Not on the page background, and recognised confidently: what is behind each pixel is
+        // estimated from the ring, and the words are painted out with it (on a box that is its
+        // colour; on a picture, a gentle gradient counts as one colour over a short ring, so both
+        // are painted). A doubtful line leaves the picture untouched (it may be texture, not words).
+        let estimate =
+            (!on_background && l.score >= 0.8).then(|| behind_box(img, (l.x0, l.y0, l.x1, l.y1), (rx0, ry0, rx1, ry1)));
+        let behind_at = |x: usize, y: usize| match &estimate {
+            Some(e) => e[(y - l.y0) * (l.x1 - l.x0) + (x - l.x0)],
+            None => behind,
+        };
         // Ink of the line: pixels far from what is behind it.
         let (mut ix0, mut iy0, mut ix1, mut iy1) = (usize::MAX, usize::MAX, 0, 0);
         let mut ink = Vec::new();
@@ -250,9 +311,10 @@ pub fn reconstruct(img: &Rgb, lines: &[Line]) -> (Vec<DesignObject>, [i32; 3], R
             let mut inside = false;
             for x in l.x0..l.x1 {
                 let c = img.at(x, y);
-                let on = dist(c, behind) > INK;
+                let d = dist(c, behind_at(x, y));
+                let on = d > INK;
                 if on {
-                    ink.push(c);
+                    ink.push((c, d));
                     (ix0, iy0, ix1, iy1) = (ix0.min(x), iy0.min(y), ix1.max(x + 1), iy1.max(y + 1));
                     runs.0 += 1;
                     if !inside {
@@ -265,21 +327,34 @@ pub fn reconstruct(img: &Rgb, lines: &[Line]) -> (Vec<DesignObject>, [i32; 3], R
         if ink.is_empty() {
             continue;
         }
-        // The line's own pixels leave the ink mask: on plain background they were text; on a filled
-        // box they are holes in the box, filled so the box is found whole.
-        let on_background = dist(behind, bg) <= SAME;
-        let on_box = !on_background && uniform > 0.6;
+        if estimate.is_some() {
+            // Paint out the ink and one pixel around it (anti-aliased edges).
+            for y in l.y0..l.y1 {
+                for x in l.x0..l.x1 {
+                    let near = (y.saturating_sub(1).max(l.y0)..(y + 2).min(l.y1)).any(|ny| {
+                        (x.saturating_sub(1).max(l.x0)..(x + 2).min(l.x1))
+                            .any(|nx| dist(img.at(nx, ny), behind_at(nx, ny)) > INK)
+                    });
+                    if near {
+                        work.set(x, y, behind_at(x, y));
+                    }
+                }
+            }
+        }
+        // The line's own pixels leave the ink mask: on plain background they were text; on a
+        // filled box they are holes in the box, filled so the box is found whole; on a picture
+        // the painted pixels are part of it wherever they are not plain background.
         for y in l.y0..l.y1 {
             for x in l.x0..l.x1 {
-                mask[y * w + x] = on_box;
+                mask[y * w + x] = on_box || (estimate.is_some() && dist(work.at(x, y), bg) > SAME);
                 under_text[y * w + x] |= on_box;
             }
         }
-        // Text colour: the ink pixels furthest from the background behind it (anti-aliased edges
-        // are in between).
-        ink.sort_by_key(|c| -dist(*c, behind));
+        // Text colour: the ink pixels furthest from what is behind them (anti-aliased edges are
+        // in between).
+        ink.sort_by_key(|&(_, d)| -d);
         let core = &ink[..(ink.len() / 2).max(1)];
-        let color = [0, 1, 2].map(|k| core.iter().map(|c| c[k]).sum::<i32>() / core.len() as i32);
+        let color = [0, 1, 2].map(|k| core.iter().map(|(c, _)| c[k]).sum::<i32>() / core.len() as i32);
         // Size from the ink height and which letters reach above x-height / below the baseline
         // (Helvetica-like proportions: cap height 0.72 em, x-height 0.52, descender 0.21).
         let tall = l.text.chars().any(|c| c.is_uppercase() || c.is_ascii_digit() || "bdfhklt/()[]{}|!?'\"".contains(c));
@@ -297,13 +372,14 @@ pub fn reconstruct(img: &Rgb, lines: &[Line]) -> (Vec<DesignObject>, [i32; 3], R
         // Anti-aliased edges add about a pixel to every stroke. Measured on the poster fixture:
         // regular 0.08–0.10, bold 0.18–0.20 of the size.
         let bold = (stroke - 1.0) / size > 0.14;
-        let note = if uniform < 0.6 {
+        let note = if uniform < 0.6 && estimate.is_none() {
             Some("Over a picture: the original wording also stays in the picture.".to_string())
         } else if l.score < 0.8 {
             Some("Low recognition confidence: check the wording.".to_string())
         } else {
             None
         };
+        painted.push(estimate.is_some());
         summary.low_confidence_text += (l.score < 0.8) as u32;
         conf_sum += l.score;
         texts.push(DesignObject {
@@ -332,7 +408,18 @@ pub fn reconstruct(img: &Rgb, lines: &[Line]) -> (Vec<DesignObject>, [i32; 3], R
         });
     }
 
-    let mut regions = regions(img, &mask, bg, &under_text);
+    let mut regions = regions(&work, &mask, bg, &under_text);
+    // Painted-out wording that lies on a picture: say so (the painting is a guess on photographs).
+    for (t, _) in texts.iter_mut().zip(painted).filter(|(t, p)| *p && t.note.is_none()) {
+        let (cx, cy) = (t.x + t.w / 2.0, t.y + t.h / 2.0);
+        if regions
+            .iter()
+            .any(|r| r.kind == ObjectKind::Image && cx > r.x && cy > r.y && cx < r.x + r.w && cy < r.y + r.h)
+        {
+            t.note =
+                Some("Over a picture: the original wording was painted out of it; check the picture there.".into());
+        }
+    }
     // Back to front: large regions first.
     regions.sort_by(|a, b| (b.w * b.h).total_cmp(&(a.w * a.h)));
     summary.text = texts.len() as u32;
@@ -1190,6 +1277,46 @@ mod tests {
         assert!((t.font_size.expect("test value") - 20.0 / 0.72).abs() < 0.1);
         let b = objects.iter().find(|o| o.kind == ObjectKind::Shape).expect("test value");
         assert_eq!((b.w, b.h), (160.0, 40.0));
+    }
+
+    #[test]
+    fn behind_a_box_is_exact_for_a_gradient_and_a_doubtful_line_is_not_painted() {
+        // A horizontal-and-vertical gradient: the estimate from the ring reproduces it.
+        let mut img = canvas(120, 80, [0, 0, 0]);
+        for y in 0..80 {
+            for x in 0..120 {
+                img.set(x, y, [x as i32 * 2, 40 + y as i32, 200]);
+            }
+        }
+        let est = behind_box(&img, (30, 20, 90, 50), (28, 18, 92, 52));
+        let worst = (20..50)
+            .flat_map(|y| (30..90).map(move |x| (x, y)))
+            .map(|(x, y)| dist(est[(y - 20) * 60 + (x - 30)], img.at(x, y)))
+            .max()
+            .expect("pixels");
+        assert!(worst <= 2, "estimate off by {worst}");
+        // White bars over it as words: painted out when recognised confidently, kept when doubtful.
+        for x0 in [40, 60, 80] {
+            fill(&mut img, x0, 25, x0 + 5, 45, [255, 255, 255]);
+        }
+        let white_left = |objects: &[DesignObject]| {
+            objects
+                .iter()
+                .filter(|o| o.kind == ObjectKind::Image)
+                .map(|p| {
+                    let png = decode_png(p.png.as_deref().expect("data"), "test").expect("png").to_rgba8();
+                    png.pixels().filter(|c| c[0] == 255 && c[1] == 255 && c[2] == 255 && c[3] == 255).count()
+                })
+                .sum::<usize>()
+        };
+        let line = |score| Line { text: "III".into(), score, x0: 38, y0: 23, x1: 87, y1: 47 };
+        let (objects, _, _) = reconstruct(&img, &[line(0.95)]);
+        assert_eq!(white_left(&objects), 0, "words painted out");
+        let t = objects.iter().find(|o| o.kind == ObjectKind::Text).expect("text");
+        assert_eq!(t.color.as_deref(), Some("#ffffff"));
+        assert!(t.note.as_deref().is_some_and(|n| n.contains("painted out")), "{:?}", t.note);
+        let (objects, _, _) = reconstruct(&img, &[line(0.5)]);
+        assert!(white_left(&objects) > 0, "a doubtful line leaves the picture as it was");
     }
 
     #[test]

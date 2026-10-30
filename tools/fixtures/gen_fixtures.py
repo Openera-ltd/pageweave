@@ -758,6 +758,33 @@ def build_badges_document() -> bytes:
     return w.render(catalog, info)
 
 
+def build_caption_document(words: bool = True) -> bytes:
+    """White words over a gradient picture (Design Studio, painting words out of a picture). With
+    words=False the same page without them: what the picture should look like once the words are
+    painted out (crates/pw-pdf/tests/studio.rs compares the two)."""
+    w = PdfWriter()
+    catalog, pages_obj = w.reserve(), w.reserve()
+    font = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    bold = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>")
+    pw_, ph = 130, 80
+    pixels = bytes(v for y in range(ph) for x in range(pw_) for v in (40 + x, 70 + y, 150 - y))
+    picture = w.stream(pixels, f"/Type /XObject /Subtype /Image /Width {pw_} /Height {ph} "
+                               "/ColorSpace /DeviceRGB /BitsPerComponent 8 ")
+    ops = "0.98 0.96 0.90 rg 0 0 300 200 re f\n"
+    ops += "q 260 0 0 160 20 20 cm /Im1 Do Q\n"
+    if words:
+        ops += "1 g BT /F2 30 Tf 45 110 Td (OPEN DAY) Tj ET\n"
+        ops += "1 g BT /F1 14 Tf 45 75 Td (Saturday from ten) Tj ET\n"
+    content = w.stream(ops.encode("latin-1"))
+    page = w.add(f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 300 200] "
+                 f"/Resources << /Font << /F1 {font} 0 R /F2 {bold} 0 R >> /XObject << /Im1 {picture} 0 R >> >> "
+                 f"/Contents {content} 0 R >>")
+    w.set(pages_obj, f"<< /Type /Pages /Kids [{page} 0 R] /Count 1 >>")
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R >>")
+    info = w.add("<< /Title (Caption fixture) /Producer (gen_fixtures.py) >>")
+    return w.render(catalog, info)
+
+
 def build_borderless_tables_document() -> bytes:
     """Tables without drawn grids for table export (D-020): page 1 has a table of aligned columns
     with no lines at all and a table with only horizontal rules above and below its header and at
@@ -842,6 +869,8 @@ def main() -> int:
     files["borderless-tables.pdf"] = build_borderless_tables_document()
     files["poster.pdf"] = build_poster_document()
     files["badges.pdf"] = build_badges_document()
+    files["caption.pdf"] = build_caption_document()
+    files["caption-clean.pdf"] = build_caption_document(words=False)
     files["form-nested.pdf"] = build_nested_form_document()
     files["redaction.pdf"] = build_redaction_document()
     files["redaction-hard.pdf"] = build_redaction_hard_document()

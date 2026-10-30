@@ -2436,6 +2436,15 @@ await test("design studio: rebuild a page, edit text with undo, nudge, drag, loc
     await s.click('[data-layer="shape-2"]');
     await s.click('[aria-label="Rotate 90° clockwise"]');
     await s.waitUntil(async () => ((await s.exec("return document.querySelector('[data-object=\"shape-2\"]').getAttribute('transform')")) ?? "").startsWith("rotate(90 "), "turned 90°");
+    // A turned object keeps its handles: dragging the "se" handle 40 px down lengthens it along its
+    // own (now vertical) width; its opposite corner stays where it was.
+    const turned = () => s.exec("const e=document.querySelector('[data-object=\"shape-2\"]'), r=e.getBoundingClientRect(); return [Number(e.getAttribute('width')), r.top, r.height]");
+    const [tw0, top0, th0] = await turned();
+    const [hx, hy] = await s.exec("const r=document.querySelector('[data-corner=\"se\"]').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]");
+    await s.dragAt(hx, hy, hx, hy + 40);
+    const [tw1, top1, th1] = await turned();
+    const k = th0 / tw0; // screen pixels per design pixel
+    assert(Math.abs(tw1 - tw0 - 40 / k) < 1.5 && Math.abs(top1 - top0) < 1 && Math.abs(th1 - th0 - 40) < 1.5, `turned resize: width ${tw0}→${tw1}, top ${top0}→${top1}, height ${th0}→${th1}`);
 
     // Save; the project on disk holds the edits.
     await s.keys(["Control", "s"]);
@@ -2530,6 +2539,28 @@ await test("design studio: circles, ellipses and rounded boxes come back as shap
       const text = JSON.parse(execFileSync(CLI, ["--json", "text", pdfOut], { encoding: "utf8" })).result.data.pages[0].text;
       assert(text.includes("SALE 50%"), `exported text: ${text}`);
     }
+  });
+});
+
+await test("design studio: words over a picture become text and are painted out of the picture", async () => {
+  const src = join(work, "studio-caption.pdf");
+  copyFileSync(join(FIX, "caption.pdf"), src);
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('.toolbar [data-command="studio.rebuildPage"]');
+    await s.waitFor('[data-testid="studio-layers"] [data-layer]', { timeout: 60000 });
+    assert((await s.text('[data-testid="studio-summary"]')).includes("2 text · 0 shapes · 1 pictures"), "summary counts");
+    const words = await s.exec("return [...document.querySelectorAll('[data-testid=studio-stage] text')].map(t => t.textContent)");
+    assert(words.includes("OPEN DAY") && words.includes("Saturday from ten"), `words ${words}`);
+    await s.click('[data-layer="text-1"]');
+    assert((await s.text(".studio-note")).includes("painted out"), "the note says the wording was painted out");
+    // Hide both lines: the picture underneath shows no words.
+    for (const name of ["OPEN DAY", "Saturday from ten"]) {
+      await s.click(`[data-layer="${await s.exec(`return [...document.querySelectorAll('[data-layer]')].find(b => b.textContent.includes(${JSON.stringify(name)})).dataset.layer`)}"]`);
+      await s.click(`[aria-label="Hide ${name}"]`);
+    }
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('[data-testid=studio-stage] text').length")) === 0, "text hidden");
+    writeFileSync(join(ART, "design-studio-painted-out.png"), await s.screenshot());
   });
 });
 
