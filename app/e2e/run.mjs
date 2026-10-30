@@ -2412,6 +2412,31 @@ await test("design studio: rebuild a page, edit text with undo, nudge, drag, loc
     const [al2] = await at(rectId);
     assert(Math.abs(al2 - (al + 40)) < 0.75, `with Alt the rectangle moved exactly as dragged (${al2 - al} px)`);
 
+    // Several objects: Shift+click two layers, drag one on the canvas → both move by the same amount
+    // (Alt: no snapping). Then turn one 90° from its properties.
+    await s.click('[data-layer="text-4"]');
+    await s.exec("document.querySelector('[data-layer=\"text-5\"]').dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }))");
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('[data-layer][aria-current]').length")) === 2, "two selected");
+    const [a0] = await at("text-4");
+    const [b0] = await at("text-5");
+    const [, t4top, t4w, t4h] = await at("text-4");
+    await s.cmd("POST", "/actions", { actions: [
+      { type: "key", id: "kb", actions: [{ type: "keyDown", value: "\uE00A" }, { type: "pause", duration: 0 }, { type: "pause", duration: 0 }, { type: "pause", duration: 0 }, { type: "keyUp", value: "\uE00A" }] },
+      { type: "pointer", id: "mouse", parameters: { pointerType: "mouse" }, actions: [
+        { type: "pointerMove", origin: "viewport", x: Math.round(a0 + t4w / 2), y: Math.round(t4top + t4h / 2) },
+        { type: "pointerDown", button: 0 },
+        { type: "pointerMove", origin: "viewport", duration: 100, x: Math.round(a0 + t4w / 2 + 30), y: Math.round(t4top + t4h / 2) },
+        { type: "pointerUp", button: 0 },
+      ] },
+    ] });
+    await s.cmd("DELETE", "/actions");
+    const [a1] = await at("text-4");
+    const [b1] = await at("text-5");
+    assert(Math.abs(a1 - a0 - 30) < 0.75 && Math.abs(b1 - b0 - 30) < 0.75, `both moved 30 px (${a1 - a0}, ${b1 - b0})`);
+    await s.click('[data-layer="shape-2"]');
+    await s.click('[aria-label="Rotate 90° clockwise"]');
+    await s.waitUntil(async () => ((await s.exec("return document.querySelector('[data-object=\"shape-2\"]').getAttribute('transform')")) ?? "").startsWith("rotate(90 "), "turned 90°");
+
     // Save; the project on disk holds the edits.
     await s.keys(["Control", "s"]);
     await s.waitUntil(async () => (await s.text('[data-testid="studio-status"]')).startsWith("Saved"), "saved");
@@ -2419,7 +2444,11 @@ await test("design studio: rebuild a page, edit text with undo, nudge, drag, loc
     const t1 = saved.objects.find((o) => o.id === "text-1");
     assert(t1.text === "SUMMER FAIR" && t1.x === x0 + 11, `saved text ${t1.text} x ${t1.x}`);
     assert(saved.objects.find((o) => o.id === "picture-1").locked && !saved.objects.find((o) => o.id === "shape-1").visible, "lock and visibility saved");
+    assert(saved.objects.find((o) => o.id === "shape-2").rotation === 90, "rotation saved");
     if (CLI) {
+      const svgOut = join(work, "studio-export.svg");
+      execFileSync(CLI, ["design-export", project, "-o", svgOut]);
+      assert(/id="shape-2" transform="rotate\(90 /.test(readFileSync(svgOut, "utf8")), "SVG export carries the turn");
       const out = join(work, "studio-export.pdf");
       execFileSync(CLI, ["design-export", project, "-o", out]);
       const text = JSON.parse(execFileSync(CLI, ["--json", "text", out], { encoding: "utf8" })).result.data.pages[0].text;

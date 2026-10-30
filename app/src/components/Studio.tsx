@@ -3,9 +3,20 @@
 // selected object's properties and the reconstruction's uncertainty on the right; the original can
 // be shown, overlaid or differenced. Exports go through the engine (SVG/PDF, read back).
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
+  AlignCenterHorizontal,
+  AlignCenterVertical,
+  AlignEndHorizontal,
+  AlignEndVertical,
+  AlignHorizontalDistributeCenter,
+  AlignStartHorizontal,
+  AlignStartVertical,
+  AlignVerticalDistributeCenter,
+  Group as GroupIcon,
+  RotateCw,
+  Ungroup as UngroupIcon,
   ArrowDown,
   ArrowUp,
   Copy,
@@ -28,13 +39,39 @@ import {
 } from "lucide-react";
 import { useApi } from "../api";
 import { basename, dirname, join, stem } from "../paths";
-import { addObject, commit, duplicate, hit, moveBy, redo, remove, reorder, resize, snap, start, uncertain, undo, update, type Guide, type History } from "../studio";
+import {
+  addObject,
+  align,
+  bounds,
+  commit,
+  distribute,
+  duplicate,
+  group,
+  hit,
+  moveMany,
+  redo,
+  removeMany,
+  reorder,
+  resize,
+  rotate,
+  snap,
+  start,
+  uncertain,
+  undo,
+  ungroup,
+  update,
+  withGroup,
+  type Align,
+  type Guide,
+  type History,
+} from "../studio";
 import { toPwError, type Design, type DesignObject, type JobSnapshot, type PwError } from "../types";
 
 export type StudioSource = { kind: "rebuild"; input: string; page: number; docId?: number } | { kind: "open"; path: string };
 
 type Compare = "design" | "original" | "overlay" | "difference";
-type Drag = { id: string; corner: "move" | "nw" | "ne" | "sw" | "se"; x0: number; y0: number; box: { x: number; y: number; w: number; h: number } };
+/** A pointer drag: the moved objects (one for a resize) and their box when it started. */
+type Drag = { ids: string[]; corner: "move" | "nw" | "ne" | "sw" | "se"; x0: number; y0: number; box: { x: number; y: number; w: number; h: number } };
 
 interface Props {
   source: StudioSource;
@@ -56,7 +93,8 @@ export function Studio({ source, jobs, onClose }: Props) {
   const [path, setPath] = useState<string | null>(source.kind === "open" ? source.path : null);
   const [hist, setHist] = useState<History | null>(null);
   const [saved, setSaved] = useState<Design | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelectedIds] = useState<string[]>([]);
+  const setSelected = (id: string | null) => setSelectedIds(id ? [id] : []);
   const [preview, setPreview] = useState<Design | null>(null);
   const [guides, setGuides] = useState<Guide[]>([]);
   const [compare, setCompare] = useState<Compare>("design");
@@ -75,7 +113,9 @@ export function Studio({ source, jobs, onClose }: Props) {
 
   const design = preview ?? hist?.present ?? null;
   const dirty = !!hist && hist.present !== saved;
-  const sel = design?.objects.find((o) => o.id === selected) ?? null;
+  const chosen = design ? design.objects.filter((o) => selected.includes(o.id)) : [];
+  // One object: its properties; several: the arrange panel.
+  const sel = chosen.length === 1 ? chosen[0]! : null;
   const job = jobId ? jobs[jobId] : undefined;
   const xjob = exportJob ? jobs[exportJob.id] : undefined;
   const building = source.kind === "rebuild" && !hist && !error;
@@ -194,11 +234,26 @@ export function Studio({ source, jobs, onClose }: Props) {
     if (!hist || e.button !== 0) return;
     const p = toDesign(e);
     const corner = (e.target as HTMLElement).dataset.corner as Drag["corner"] | undefined;
-    const o = corner && sel ? sel : hit(hist.present, p.x, p.y);
-    setSelected(o?.id ?? null);
     stage.current?.focus();
-    if (!o || o.locked) return;
-    drag.current = { id: o.id, corner: corner ?? "move", x0: p.x, y0: p.y, box: { x: o.x, y: o.y, w: o.w, h: o.h } };
+    if (corner && sel) {
+      drag.current = { ids: [sel.id], corner, x0: p.x, y0: p.y, box: { x: sel.x, y: sel.y, w: sel.w, h: sel.h } };
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      e.preventDefault();
+      return;
+    }
+    const o = hit(hist.present, p.x, p.y);
+    // Shift adds or removes an object (with its group); a plain click selects it (and its group);
+    // a click on an already selected object keeps the selection so all of it can be dragged.
+    const ids = o ? withGroup(hist.present, o.id) : [];
+    let next = ids;
+    if (e.shiftKey) next = o && selected.includes(o.id) ? selected.filter((x) => !ids.includes(x)) : [...new Set([...selected, ...ids])];
+    else if (o && selected.includes(o.id)) next = selected;
+    setSelectedIds(next);
+    if (!o || e.shiftKey) return;
+    const moving = next.filter((id) => !hist.present.objects.find((x) => x.id === id)?.locked);
+    const box = bounds(hist.present, moving);
+    if (!box) return;
+    drag.current = { ids: moving, corner: "move", x0: p.x, y0: p.y, box };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     e.preventDefault();
   };
@@ -212,11 +267,11 @@ export function Studio({ source, jobs, onClose }: Props) {
     if (d.corner === "move") {
       // Snap to the canvas and other objects within about 6 screen pixels; Alt places freely.
       const box = { x: d.box.x + dx, y: d.box.y + dy, w: d.box.w, h: d.box.h };
-      const s = e.altKey ? { x: box.x, y: box.y, guides: [] } : snap(hist.present, d.id, box, 6 / scale);
+      const s = e.altKey ? { x: box.x, y: box.y, guides: [] } : snap(hist.present, d.ids, box, 6 / scale);
       setGuides(s.guides);
       // Exact delta: rounding it to whole pixels pulled snapped objects that sit at fractional
       // positions up to half a pixel off the guide (moveBy keeps tenths).
-      setPreview(moveBy(hist.present, d.id, s.x - d.box.x, s.y - d.box.y));
+      setPreview(moveMany(hist.present, d.ids, s.x - d.box.x, s.y - d.box.y));
       return;
     }
     const b = d.box;
@@ -226,7 +281,7 @@ export function Studio({ source, jobs, onClose }: Props) {
     const y = top ? Math.min(b.y + dy, b.y + b.h - 1) : b.y;
     const w = left ? b.x + b.w - x : Math.max(1, b.w + dx);
     const h = top ? b.y + b.h - y : Math.max(1, b.h + dy);
-    setPreview(resize(hist.present, d.id, { x, y, w, h }));
+    setPreview(resize(hist.present, d.ids[0]!, { x, y, w, h }));
   };
 
   const onPointerUp = () => {
@@ -267,20 +322,24 @@ export function Studio({ source, jobs, onClose }: Props) {
     else if (ctrl && k === "z") setHist((h) => (h ? undo(h) : h));
     else if (e.key === "Escape" && !typing) {
       if (confirmClose) setConfirmClose(false);
-      else if (selected) setSelected(null);
+      else if (selected.length) setSelected(null);
       else close();
-    } else if (typing || !sel || !hist) handled = false;
-    else if (ctrl && k === "d") {
+    } else if (typing || !hist) handled = false;
+    else if (ctrl && k === "a") setSelectedIds(hist.present.objects.filter((o) => o.visible).map((o) => o.id));
+    else if (!selected.length) handled = false;
+    else if (ctrl && k === "g" && e.shiftKey) change(ungroup(hist.present, selected));
+    else if (ctrl && k === "g") change(group(hist.present, selected));
+    else if (ctrl && k === "d" && sel) {
       const r = duplicate(hist.present, sel.id);
       change(r.design);
       setSelected(r.id);
     } else if (e.key === "Delete" || e.key === "Backspace") {
-      change(remove(hist.present, sel.id));
+      change(removeMany(hist.present, selected));
       setSelected(null);
     } else if (e.key.startsWith("Arrow")) {
       const step = e.shiftKey ? 10 : 1;
       const [dx, dy] = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key] ?? [0, 0];
-      change(moveBy(hist.present, sel.id, dx!, dy!), `${sel.id}:nudge`);
+      change(moveMany(hist.present, selected, dx!, dy!), `${selected.join(",")}:nudge`);
     } else handled = false;
     if (handled) {
       e.preventDefault();
@@ -402,8 +461,19 @@ export function Studio({ source, jobs, onClose }: Props) {
             </div>
             <ul aria-label="Layers, front first" data-testid="studio-layers">
               {layers.map((o) => (
-                <li key={o.id} className={`layer ${o.id === selected ? "selected" : ""} ${o.visible ? "" : "hidden"}`}>
-                  <button type="button" aria-current={o.id === selected || undefined} className="layer-name" data-layer={o.id} title={o.note ?? KIND_LABEL[o.kind]} onClick={() => setSelected(o.id)}>
+                <li key={o.id} className={`layer ${selected.includes(o.id) ? "selected" : ""} ${o.visible ? "" : "hidden"}`}>
+                  <button
+                    type="button"
+                    aria-current={selected.includes(o.id) || undefined}
+                    className="layer-name"
+                    data-layer={o.id}
+                    title={`${o.note ?? KIND_LABEL[o.kind]}${o.group ? " · grouped" : ""} (Shift+click adds to the selection)`}
+                    onClick={(e) => {
+                      const ids = withGroup(design, o.id);
+                      if (!e.shiftKey) setSelectedIds(ids);
+                      else setSelectedIds((cur) => (cur.includes(o.id) ? cur.filter((x) => !ids.includes(x)) : [...new Set([...cur, ...ids])]));
+                    }}
+                  >
                     {KIND_ICON[o.kind]}
                     <span>{o.name || KIND_LABEL[o.kind]}</span>
                     {uncertain(o) && <AlertTriangle className="warn" aria-label="Uncertain" />}
@@ -426,7 +496,7 @@ export function Studio({ source, jobs, onClose }: Props) {
               tabIndex={0}
               role="application"
               aria-roledescription="design canvas"
-              aria-label="Design canvas: arrow keys move the selected object (Shift for 10 pixels), Delete removes it, Ctrl+D duplicates it"
+              aria-label="Design canvas: Shift+click selects several objects; arrow keys move the selection (Shift for 10 pixels), Delete removes it, Ctrl+D duplicates, Ctrl+G groups, Ctrl+A selects all"
               data-testid="studio-stage"
               style={{ width: design.width * scale, height: design.height * scale }}
               onPointerDown={onPointerDown}
@@ -452,11 +522,19 @@ export function Studio({ source, jobs, onClose }: Props) {
                   style={g.axis === "x" ? { left: g.at * scale } : { top: g.at * scale }}
                 />
               ))}
-              {sel && sel.visible && (
-                <div className={`studio-selection ${sel.locked ? "locked" : ""}`} style={{ left: sel.x * scale, top: sel.y * scale, width: sel.w * scale, height: sel.h * scale }}>
-                  {!sel.locked && (["nw", "ne", "sw", "se"] as const).map((c) => <span key={c} className={`handle ${c}`} data-corner={c} />)}
-                </div>
-              )}
+              {chosen
+                .filter((o) => o.visible)
+                .map((o) => (
+                  <div
+                    key={o.id}
+                    className={`studio-selection ${o.locked ? "locked" : ""}`}
+                    data-selected={o.id}
+                    style={{ left: o.x * scale, top: o.y * scale, width: o.w * scale, height: o.h * scale, transform: o.rotation ? `rotate(${o.rotation}deg)` : undefined }}
+                  >
+                    {/* Corner handles for one unturned object; a turned one is sized in its fields. */}
+                    {sel === o && !o.locked && !o.rotation && (["nw", "ne", "sw", "se"] as const).map((c) => <span key={c} className={`handle ${c}`} data-corner={c} />)}
+                  </div>
+                ))}
             </div>
           </div>
 
@@ -467,9 +545,22 @@ export function Studio({ source, jobs, onClose }: Props) {
                 change(r.design);
                 setSelected(r.id);
               }} onDelete={() => {
-                change(remove(design, sel.id));
+                change(removeMany(design, [sel.id]));
                 setSelected(null);
-              }} />
+              }} onRotate={(deg) => change(rotate(design, sel.id, deg), `${sel.id}:rotation`)} />
+            ) : chosen.length > 1 ? (
+              <Arrange
+                count={chosen.length}
+                grouped={chosen.some((o) => o.group)}
+                onAlign={(how) => change(align(design, selected, how))}
+                onDistribute={(axis) => change(distribute(design, selected, axis))}
+                onGroup={() => change(group(design, selected))}
+                onUngroup={() => change(ungroup(design, selected))}
+                onDelete={() => {
+                  change(removeMany(design, selected));
+                  setSelected(null);
+                }}
+              />
             ) : (
               <div className="studio-summary" data-testid="studio-summary">
                 <h3>Reconstruction</h3>
@@ -519,15 +610,17 @@ export function DesignSvg({ design }: { design: Design }) {
   return (
     <svg className="studio-svg" viewBox={`0 0 ${design.width} ${design.height}`} aria-hidden="true">
       <rect width={design.width} height={design.height} fill={design.background} />
-      {design.objects.map((o) =>
-        !o.visible ? null : o.kind === "shape" ? (
-          <rect key={o.id} data-object={o.id} x={o.x} y={o.y} width={o.w} height={o.h} fill={o.fill} />
+      {design.objects.map((o) => {
+        const turn = o.rotation ? `rotate(${o.rotation} ${o.x + o.w / 2} ${o.y + o.h / 2})` : undefined;
+        return !o.visible ? null : o.kind === "shape" ? (
+          <rect key={o.id} data-object={o.id} x={o.x} y={o.y} width={o.w} height={o.h} fill={o.fill} transform={turn} />
         ) : o.kind === "image" ? (
-          <image key={o.id} data-object={o.id} x={o.x} y={o.y} width={o.w} height={o.h} preserveAspectRatio="none" href={`data:image/png;base64,${o.png}`} />
+          <image key={o.id} data-object={o.id} x={o.x} y={o.y} width={o.w} height={o.h} preserveAspectRatio="none" href={`data:image/png;base64,${o.png}`} transform={turn} />
         ) : (
           <text
             key={o.id}
             data-object={o.id}
+            transform={turn}
             x={o.x}
             y={o.y + (o.baseline ?? (o.font_size ?? o.h) * 0.72)}
             fontFamily="Helvetica, Arial, sans-serif"
@@ -540,8 +633,8 @@ export function DesignSvg({ design }: { design: Design }) {
           >
             {o.text}
           </text>
-        ),
-      )}
+        );
+      })}
     </svg>
   );
 }
@@ -554,10 +647,12 @@ function Properties({
   onDuplicate,
   onDelete,
   onReplace,
+  onRotate,
 }: {
   o: DesignObject;
   design: Design;
   onReplace: () => void;
+  onRotate: (degrees: number) => void;
   edit: (patch: Partial<DesignObject>, key?: string) => void;
   onOrder: (step: 1 | -1) => void;
   onDuplicate: () => void;
@@ -628,6 +723,22 @@ function Properties({
         {num("w", "Width")}
         {num("h", "Height")}
       </div>
+      <div className="row studio-rotate">
+        <label className="studio-num">
+          <span>Rotation (°)</span>
+          <input
+            className="input"
+            type="number"
+            data-testid="studio-rotation"
+            value={o.rotation ?? 0}
+            disabled={o.locked}
+            onChange={(e) => Number.isFinite(e.target.valueAsNumber) && onRotate(e.target.valueAsNumber)}
+          />
+        </label>
+        <button type="button" className="btn icon" aria-label="Rotate 90° clockwise" title="Rotate 90° clockwise" disabled={o.locked} onClick={() => onRotate((o.rotation ?? 0) + 90)}>
+          <RotateCw />
+        </button>
+      </div>
       <div className="row studio-actions">
         <button type="button" className="btn icon" aria-label="Bring forward" title="Bring forward" aria-disabled={i >= design.objects.length - 1 || undefined} onClick={() => onOrder(1)}>
           <ArrowUp />
@@ -642,6 +753,71 @@ function Properties({
           <Trash2 />
         </button>
       </div>
+    </div>
+  );
+}
+
+/** Several objects selected: line them up, space them, group them. */
+function Arrange({
+  count,
+  grouped,
+  onAlign,
+  onDistribute,
+  onGroup,
+  onUngroup,
+  onDelete,
+}: {
+  count: number;
+  grouped: boolean;
+  onAlign: (how: Align) => void;
+  onDistribute: (axis: "x" | "y") => void;
+  onGroup: () => void;
+  onUngroup: () => void;
+  onDelete: () => void;
+}) {
+  const aligns: [Align, string, ReactNode][] = [
+    ["left", "Align left edges", <AlignStartVertical key="l" />],
+    ["center", "Align centres horizontally", <AlignCenterVertical key="c" />],
+    ["right", "Align right edges", <AlignEndVertical key="r" />],
+    ["top", "Align top edges", <AlignStartHorizontal key="t" />],
+    ["middle", "Align centres vertically", <AlignCenterHorizontal key="m" />],
+    ["bottom", "Align bottom edges", <AlignEndHorizontal key="b" />],
+  ];
+  const few = count < 3 ? "Select three or more objects to space them evenly" : undefined;
+  return (
+    <div className="studio-form" data-testid="studio-arrange">
+      <div className="studio-pane-head">
+        <h3>{count} objects</h3>
+      </div>
+      <span className="label">Align</span>
+      <div className="row studio-actions">
+        {aligns.map(([how, label, icon]) => (
+          <button key={how} type="button" className="btn icon" aria-label={label} title={label} data-align={how} onClick={() => onAlign(how)}>
+            {icon}
+          </button>
+        ))}
+      </div>
+      <span className="label">Distribute</span>
+      <div className="row studio-actions">
+        <button type="button" className="btn icon" aria-label="Space evenly across" title={few ?? "Space evenly across"} aria-disabled={!!few || undefined} data-distribute="x" onClick={() => !few && onDistribute("x")}>
+          <AlignHorizontalDistributeCenter />
+        </button>
+        <button type="button" className="btn icon" aria-label="Space evenly down" title={few ?? "Space evenly down"} aria-disabled={!!few || undefined} data-distribute="y" onClick={() => !few && onDistribute("y")}>
+          <AlignVerticalDistributeCenter />
+        </button>
+      </div>
+      <div className="row studio-actions">
+        <button type="button" className="btn outline" data-testid="studio-group" title="Group (Ctrl+G)" onClick={onGroup}>
+          <GroupIcon /> Group
+        </button>
+        <button type="button" className="btn outline" data-testid="studio-ungroup" title={grouped ? "Ungroup (Ctrl+Shift+G)" : "Nothing selected is grouped"} aria-disabled={!grouped || undefined} onClick={() => grouped && onUngroup()}>
+          <UngroupIcon /> Ungroup
+        </button>
+        <button type="button" className="btn icon" aria-label="Delete the selected objects" title="Delete (Delete)" onClick={onDelete}>
+          <Trash2 />
+        </button>
+      </div>
+      <p className="hint">Shift+click adds or removes objects; arrow keys move them all.</p>
     </div>
   );
 }

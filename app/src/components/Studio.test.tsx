@@ -178,6 +178,47 @@ describe("Design Studio", () => {
     expect(document.querySelector('[data-object="picture-1"]')!.getAttribute("href")).toBe("data:image/png;base64,");
   });
 
+  it("Shift+click selects several; align, group (selects together), select all and delete many", async () => {
+    setup({ kind: "open", path: "/d/f.pwdesign" });
+    await flush();
+    fireEvent.click(document.querySelector('[data-layer="shape-1"]')!);
+    fireEvent.click(document.querySelector('[data-layer="picture-1"]')!, { shiftKey: true });
+    expect(screen.getByTestId("studio-arrange").textContent).toContain("2 objects");
+    // Align left: both on the left edge of their box (shape-1 at x 0).
+    fireEvent.click(document.querySelector('[data-align="left"]')!);
+    expect(document.querySelector('[data-object="picture-1"]')!.getAttribute("x")).toBe("0");
+    // Distribute needs three.
+    expect(document.querySelector('[data-distribute="x"]')!.getAttribute("aria-disabled")).toBe("true");
+    // Group; a plain click on one member selects the whole group.
+    fireEvent.click(screen.getByTestId("studio-group"));
+    fireEvent.click(document.querySelector('[data-layer="text-1"]')!);
+    fireEvent.click(document.querySelector('[data-layer="shape-1"]')!);
+    expect(document.querySelectorAll("[data-layer][aria-current]")).toHaveLength(2);
+    // Arrow keys move the whole selection; Ctrl+A selects everything; Delete removes the selection.
+    const stage = screen.getByTestId("studio-stage");
+    fireEvent.keyDown(stage, { key: "ArrowDown" });
+    expect(document.querySelector('[data-object="shape-1"]')!.getAttribute("y")).toBe("1");
+    expect(document.querySelector('[data-object="picture-1"]')!.getAttribute("y")).toBe("51");
+    fireEvent.keyDown(stage, { key: "a", ctrlKey: true });
+    expect(screen.getByTestId("studio-arrange").textContent).toContain("3 objects");
+    fireEvent.keyDown(stage, { key: "Delete" });
+    expect(document.querySelectorAll("[data-object]")).toHaveLength(0);
+    fireEvent.keyDown(stage, { key: "z", ctrlKey: true });
+    expect(document.querySelectorAll("[data-object]")).toHaveLength(3);
+  });
+
+  it("rotates from the field and by 90°, drawn turned around the centre", async () => {
+    setup({ kind: "open", path: "/d/f.pwdesign" });
+    await flush();
+    fireEvent.click(document.querySelector('[data-layer="shape-1"]')!);
+    fireEvent.click(screen.getByLabelText("Rotate 90° clockwise"));
+    expect(document.querySelector('[data-object="shape-1"]')!.getAttribute("transform")).toBe("rotate(90 100 20)");
+    fireEvent.change(screen.getByTestId("studio-rotation"), { target: { value: "-30" } });
+    expect(document.querySelector('[data-object="shape-1"]')!.getAttribute("transform")).toBe("rotate(-30 100 20)");
+    // A turned object has no corner handles (it is sized in its fields).
+    expect(document.querySelector("[data-corner]")).toBeNull();
+  });
+
   it("the start screen offers Open in Design Studio (studio.open)", () => {
     const onStudio = vi.fn();
     render(

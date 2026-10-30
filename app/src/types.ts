@@ -645,6 +645,10 @@ export interface DesignObject {
   fill?: string;
   /** PNG, base64. */
   png?: string;
+  /** Objects with the same group id are selected and moved together. */
+  group?: string | null;
+  /** Clockwise turn in degrees around the box's centre. */
+  rotation?: number;
 }
 
 export interface Design {

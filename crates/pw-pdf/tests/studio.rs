@@ -286,3 +286,63 @@ fn bad_requests_are_refused() {
         "design.extension"
     );
 }
+
+#[test]
+fn rotation_and_groups_survive_export() {
+    let dir = tempfile::tempdir().expect("test value");
+    let bar = pw_pdf::studio::DesignObject {
+        id: "bar".into(),
+        name: "Bar".into(),
+        kind: ObjectKind::Shape,
+        x: 50.0,
+        y: 90.0,
+        w: 100.0,
+        h: 20.0,
+        visible: true,
+        locked: false,
+        confidence: 1.0,
+        note: None,
+        text: None,
+        color: None,
+        font_size: None,
+        bold: false,
+        baseline: None,
+        fill: Some("#000000".into()),
+        png: None,
+        group: Some("g1".into()),
+        rotation: 90.0,
+    };
+    let d = Design {
+        version: 1,
+        width: 200,
+        height: 200,
+        pt_per_px: 1.0,
+        background: "#ffffff".into(),
+        source_png: String::new(),
+        source_name: "t".into(),
+        objects: vec![bar],
+    };
+    let project = dir.path().join("r.pwdesign");
+    save_design(&d, &project, CollisionPolicy::Fail, &[]).expect("test value");
+    assert_eq!(read_design(&project).expect("test value").objects[0].group.as_deref(), Some("g1"));
+    let svg = dir.path().join("r.svg");
+    export_design(&project, DesignFormat::Svg, &svg, CollisionPolicy::Fail).expect("test value");
+    assert!(std::fs::read_to_string(&svg).expect("test value").contains("transform=\"rotate(90 100 100)\""));
+    let pdf = dir.path().join("r.pdf");
+    export_design(&project, DesignFormat::Pdf, &pdf, CollisionPolicy::Fail).expect("test value");
+    // The 100 × 20 bar turned a quarter around its centre (100, 100) is 20 wide and 100 tall.
+    let (png, _, _) = render_page_png(&pdf, &OpenOptions::default(), 0, 1.0).expect("test value");
+    let img = image::load_from_memory(&png).expect("test value").to_luma8();
+    let dark: Vec<(u32, u32)> = img.enumerate_pixels().filter(|p| p.2[0] < 100).map(|p| (p.0, p.1)).collect();
+    let (x0, x1) = (dark.iter().map(|p| p.0).min().expect("ink"), dark.iter().map(|p| p.0).max().expect("ink"));
+    let (y0, y1) = (dark.iter().map(|p| p.1).min().expect("ink"), dark.iter().map(|p| p.1).max().expect("ink"));
+    assert!((x1 - x0 + 1).abs_diff(20) <= 2 && (y1 - y0 + 1).abs_diff(100) <= 2, "box {x0}..{x1} × {y0}..{y1}");
+    assert!((x0 + x1) / 2 >= 98 && (x0 + x1) / 2 <= 102 && (y0 + y1) / 2 >= 98 && (y0 + y1) / 2 <= 102, "centred");
+    // Out-of-range turns and empty group ids are refused.
+    let mut bad = d.clone();
+    bad.objects[0].rotation = 1000.0;
+    assert_eq!(code(save_design(&bad, &dir.path().join("b.pwdesign"), CollisionPolicy::Fail, &[])), "design.invalid");
+    bad.objects[0].rotation = 0.0;
+    bad.objects[0].group = Some(String::new());
+    assert_eq!(code(save_design(&bad, &dir.path().join("c.pwdesign"), CollisionPolicy::Fail, &[])), "design.invalid");
+}

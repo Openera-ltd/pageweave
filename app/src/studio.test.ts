@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addObject, commit, duplicate, hit, isStudioSource, snap, studioSourceFor, moveBy, redo, remove, reorder, resize, start, uncertain, undo, update } from "./studio";
+import { addObject, align, bounds, commit, distribute, duplicate, group, hit, isStudioSource, moveMany, removeMany, rotate, snap, studioSourceFor, ungroup, withGroup, moveBy, redo, remove, reorder, resize, start, uncertain, undo, update } from "./studio";
 import type { Design, DesignObject } from "./types";
 
 const obj = (id: string, extra: Partial<DesignObject> = {}): DesignObject => ({
@@ -136,5 +136,63 @@ describe("design studio: adding and snapping", () => {
     expect(snap(d, "m", { x: 70, y: 70, w: 5, h: 5 }, 2)).toEqual({ x: 70, y: 70, guides: [] });
     const hidden = design(obj("a", { x: 33, y: 33, w: 1, h: 1, visible: false }), obj("m"));
     expect(snap(hidden, "m", { x: 32, y: 80, w: 4, h: 4 }, 2).guides).toEqual([]);
+  });
+});
+
+describe("design studio: several objects", () => {
+  const three = () =>
+    design(
+      obj("a", { x: 10, y: 10, w: 10, h: 10 }),
+      obj("b", { x: 40, y: 30, w: 20, h: 10 }),
+      obj("c", { x: 80, y: 50, w: 10, h: 20 }),
+    );
+
+  it("aligns on the selection's box, or a single object on the canvas; locked ones stay", () => {
+    const d = three();
+    expect(align(d, ["a", "b", "c"], "left").objects.map((o) => o.x)).toEqual([10, 10, 10]);
+    expect(align(d, ["a", "b", "c"], "right").objects.map((o) => o.x + o.w)).toEqual([90, 90, 90]);
+    expect(align(d, ["a", "b", "c"], "center").objects.map((o) => o.x + o.w / 2)).toEqual([50, 50, 50]);
+    expect(align(d, ["a", "b", "c"], "bottom").objects.map((o) => o.y + o.h)).toEqual([70, 70, 70]);
+    expect(align(d, ["a"], "middle").objects[0]).toMatchObject({ y: 45 });
+    const locked = design(obj("a", { x: 10, locked: true }), obj("b", { x: 40 }));
+    expect(align(locked, ["a", "b"], "left").objects.map((o) => o.x)).toEqual([10, 10]);
+    expect(align(align(d, ["a", "b", "c"], "left"), ["a", "b", "c"], "left")).toEqual(align(d, ["a", "b", "c"], "left"));
+  });
+
+  it("distributes equal gaps between three or more, the outermost staying", () => {
+    const d = three();
+    const r = distribute(d, ["c", "a", "b"], "x").objects;
+    // Span 10..90 holds 40 px of objects: two gaps of 20.
+    expect(r.map((o) => [o.x, o.x + o.w])).toEqual([[10, 20], [40, 60], [80, 90]]);
+    expect(distribute(d, ["a", "b"], "x")).toBe(d);
+  });
+
+  it("groups select, move and delete together; ungroup separates", () => {
+    let d = group(three(), ["a", "c"]);
+    expect(withGroup(d, "a").sort()).toEqual(["a", "c"]);
+    expect(withGroup(d, "b")).toEqual(["b"]);
+    const g2 = group(d, ["b", "c"]);
+    expect(g2.objects.find((o) => o.id === "b")!.group).not.toBe(d.objects.find((o) => o.id === "a")!.group);
+    d = moveMany(d, withGroup(d, "c"), 5, -5);
+    expect(d.objects.map((o) => [o.x, o.y])).toEqual([[15, 5], [40, 30], [85, 45]]);
+    expect(bounds(d, ["a", "c"])).toEqual({ x: 15, y: 5, w: 80, h: 60 });
+    expect(withGroup(ungroup(d, ["a"]), "c")).toEqual(["c"]);
+    expect(removeMany(d, ["a", "c"]).objects.map((o) => o.id)).toEqual(["b"]);
+    expect(group(d, ["a"])).toBe(d);
+  });
+
+  it("rotates within −180…180; a locked object does not turn", () => {
+    const d = three();
+    expect(rotate(d, "a", 90).objects[0]!.rotation).toBe(90);
+    expect(rotate(d, "a", 270).objects[0]!.rotation).toBe(-90);
+    expect(rotate(d, "a", -450).objects[0]!.rotation).toBe(-90);
+    const l = design(obj("a", { locked: true }));
+    expect(rotate(l, "a", 45)).toBe(l);
+  });
+
+  it("snaps a moving selection, ignoring its own members", () => {
+    const d = three();
+    // Moving a+b: their own edges are no targets; c's left (80) is.
+    expect(snap(d, ["a", "b"], { x: 28, y: 90, w: 50, h: 10 }, 3).x).toBe(30);
   });
 });

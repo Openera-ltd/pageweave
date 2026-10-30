@@ -2781,6 +2781,22 @@ kbd,
   height: 1px;
 }
 
+.studio-rotate {
+  align-items: flex-end;
+}
+
+.studio-rotate .studio-num {
+  width: calc(96px * var(--ui-scale));
+}
+
+.studio-form > .label {
+  display: block;
+  margin: var(--space-2) 0 var(--space-1);
+  font-size: var(--font-size-1);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
 .studio-replace {
   width: 100%;
   margin-bottom: var(--space-3);

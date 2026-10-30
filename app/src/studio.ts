@@ -141,8 +141,9 @@ export interface Guide {
 /** Snap a moving box to the canvas edges and centre and to the other visible objects' edges and
  * centres, when within `threshold` design pixels; returns the snapped position and the guides to
  * draw. Each axis snaps to its nearest match only. */
-export function snap(d: Design, id: string, box: { x: number; y: number; w: number; h: number }, threshold: number): { x: number; y: number; guides: Guide[] } {
-  const others = d.objects.filter((o) => o.id !== id && o.visible);
+export function snap(d: Design, moving: string | string[], box: { x: number; y: number; w: number; h: number }, threshold: number): { x: number; y: number; guides: Guide[] } {
+  const skip = new Set(Array.isArray(moving) ? moving : [moving]);
+  const others = d.objects.filter((o) => !skip.has(o.id) && o.visible);
   const targets = (axis: "x" | "y") => {
     const size = axis === "x" ? d.width : d.height;
     const t = [0, size / 2, size];
@@ -168,4 +169,108 @@ export function snap(d: Design, id: string, box: { x: number; y: number; w: numb
   if (fx) guides.push({ axis: "x", at: fx.at });
   if (fy) guides.push({ axis: "y", at: fy.at });
   return { x: round(box.x + (fx?.delta ?? 0)), y: round(box.y + (fy?.delta ?? 0)), guides };
+}
+
+/* ---------- Several objects ---------- */
+
+export interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** The objects a click on `id` selects: its whole group when it has one. */
+export function withGroup(d: Design, id: string): string[] {
+  const g = d.objects.find((o) => o.id === id)?.group;
+  return g ? d.objects.filter((o) => o.group === g).map((o) => o.id) : [id];
+}
+
+/** The box around several objects (null when none). */
+export function bounds(d: Design, ids: string[]): Box | null {
+  const os = d.objects.filter((o) => ids.includes(o.id));
+  if (!os.length) return null;
+  const x = Math.min(...os.map((o) => o.x));
+  const y = Math.min(...os.map((o) => o.y));
+  return { x, y, w: Math.max(...os.map((o) => o.x + o.w)) - x, h: Math.max(...os.map((o) => o.y + o.h)) - y };
+}
+
+/** Move several objects together (locked ones stay). */
+export function moveMany(d: Design, ids: string[], dx: number, dy: number): Design {
+  if (!dx && !dy) return d;
+  let changed = false;
+  const objects = d.objects.map((o) => {
+    if (!ids.includes(o.id) || o.locked) return o;
+    changed = true;
+    return { ...o, x: round(o.x + dx), y: round(o.y + dy) };
+  });
+  return changed ? { ...d, objects } : d;
+}
+
+export function removeMany(d: Design, ids: string[]): Design {
+  const objects = d.objects.filter((o) => !ids.includes(o.id));
+  return objects.length === d.objects.length ? d : { ...d, objects };
+}
+
+export type Align = "left" | "center" | "right" | "top" | "middle" | "bottom";
+
+/** Line several objects up on the selection's box (one object: on the canvas). Locked ones stay. */
+export function align(d: Design, ids: string[], how: Align): Design {
+  const box = ids.length > 1 ? bounds(d, ids) : { x: 0, y: 0, w: d.width, h: d.height };
+  if (!box) return d;
+  let changed = false;
+  const objects = d.objects.map((o) => {
+    if (!ids.includes(o.id) || o.locked) return o;
+    const x = how === "left" ? box.x : how === "center" ? box.x + (box.w - o.w) / 2 : how === "right" ? box.x + box.w - o.w : o.x;
+    const y = how === "top" ? box.y : how === "middle" ? box.y + (box.h - o.h) / 2 : how === "bottom" ? box.y + box.h - o.h : o.y;
+    if (round(x) === o.x && round(y) === o.y) return o;
+    changed = true;
+    return { ...o, x: round(x), y: round(y) };
+  });
+  return changed ? { ...d, objects } : d;
+}
+
+/** Equal gaps between three or more objects along an axis; the outermost ones stay put. */
+export function distribute(d: Design, ids: string[], axis: "x" | "y"): Design {
+  const os = d.objects.filter((o) => ids.includes(o.id)).sort((a, b) => (axis === "x" ? a.x - b.x : a.y - b.y));
+  if (os.length < 3) return d;
+  const pos = (o: DesignObject) => (axis === "x" ? o.x : o.y);
+  const len = (o: DesignObject) => (axis === "x" ? o.w : o.h);
+  const first = os[0]!;
+  const last = os[os.length - 1]!;
+  const total = pos(last) + len(last) - pos(first);
+  const gap = (total - os.reduce((n, o) => n + len(o), 0)) / (os.length - 1);
+  const place = new Map<string, number>();
+  let at = pos(first);
+  for (const o of os) {
+    place.set(o.id, round(at));
+    at += len(o) + gap;
+  }
+  let changed = false;
+  const objects = d.objects.map((o) => {
+    const p = place.get(o.id);
+    if (p === undefined || o.locked || p === pos(o)) return o;
+    changed = true;
+    return axis === "x" ? { ...o, x: p } : { ...o, y: p };
+  });
+  return changed ? { ...d, objects } : d;
+}
+
+/** Group two or more objects (a new group id); `ungroup` removes their groups. */
+export function group(d: Design, ids: string[]): Design {
+  if (ids.length < 2) return d;
+  let n = 1;
+  while (d.objects.some((o) => o.group === `group-${n}`)) n++;
+  return { ...d, objects: d.objects.map((o) => (ids.includes(o.id) ? { ...o, group: `group-${n}` } : o)) };
+}
+
+export function ungroup(d: Design, ids: string[]): Design {
+  if (!d.objects.some((o) => ids.includes(o.id) && o.group)) return d;
+  return { ...d, objects: d.objects.map((o) => (ids.includes(o.id) && o.group ? { ...o, group: null } : o)) };
+}
+
+/** Turn an object to `degrees` clockwise, kept within −180…180. Locked objects stay. */
+export function rotate(d: Design, id: string, degrees: number): Design {
+  const r = round(((((degrees + 180) % 360) + 360) % 360) - 180);
+  return mapObject(d, id, (o) => (o.locked || (o.rotation ?? 0) === r ? o : { ...o, rotation: r }));
 }

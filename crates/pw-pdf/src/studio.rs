@@ -85,6 +85,16 @@ pub struct DesignObject {
     /// Picture: PNG, base64.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub png: Option<String>,
+    /// Objects with the same group id are selected and moved together.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// Clockwise turn in degrees around the box's centre.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rotation: f32,
+}
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
 }
 
 fn yes() -> bool {
@@ -301,6 +311,8 @@ pub fn reconstruct(img: &Rgb, lines: &[Line]) -> (Vec<DesignObject>, [i32; 3], R
             baseline: Some(((above * size) * 10.0).round() / 10.0),
             fill: None,
             png: None,
+            group: None,
+            rotation: 0.0,
         });
     }
 
@@ -400,6 +412,8 @@ fn regions(img: &Rgb, mask: &[bool], bg: [i32; 3]) -> Vec<DesignObject> {
                 baseline: None,
                 fill: None,
                 png: None,
+                group: None,
+                rotation: 0.0,
             };
             if share > 0.92 && filled > 0.92 {
                 DesignObject { fill: Some(hex(fill)), ..base }
@@ -632,6 +646,8 @@ impl Design {
                 || o.id.len() > 64
                 || !ids.insert(o.id.as_str())
                 || o.name.chars().count() > 200
+                || o.group.as_ref().is_some_and(|g| g.is_empty() || g.len() > 64)
+                || !(o.rotation.is_finite() && o.rotation.abs() <= 360.0)
             {
                 return bad(format!("The object “{}” is not valid.", o.name.chars().take(40).collect::<String>()));
             }
@@ -734,7 +750,18 @@ pub fn to_svg(d: &Design) -> String {
         bg = d.background
     );
     for o in d.objects.iter().filter(|o| o.visible) {
-        let id = format!("id=\"{}\"", xml(&o.id));
+        // Clockwise turn around the box's centre (SVG's y axis points down, so positive is clockwise).
+        let id = if o.rotation != 0.0 {
+            format!(
+                "id=\"{}\" transform=\"rotate({} {} {})\"",
+                xml(&o.id),
+                o.rotation,
+                o.x + o.w / 2.0,
+                o.y + o.h / 2.0
+            )
+        } else {
+            format!("id=\"{}\"", xml(&o.id))
+        };
         match o.kind {
             ObjectKind::Shape => s += &format!(
                 "<rect {id} x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\"/>\n",
@@ -882,10 +909,21 @@ fn to_pdf(d: &Design) -> PwResult<(Vec<u8>, Vec<String>)> {
     .map_err(err)?;
     page.objects_mut().add_path_object(bg).map_err(err)?;
     let mut dropped = 0usize;
+    // Turn an object clockwise around its box's centre (page space, y up).
+    macro_rules! turn {
+        ($obj:expr, $o:expr) => {
+            if $o.rotation != 0.0 {
+                let (cx, cy) = (($o.x + $o.w / 2.0) * k, ph - ($o.y + $o.h / 2.0) * k);
+                $obj.translate(PdfPoints::new(-cx), PdfPoints::new(-cy)).map_err(err)?;
+                $obj.rotate_clockwise_degrees($o.rotation).map_err(err)?;
+                $obj.translate(PdfPoints::new(cx), PdfPoints::new(cy)).map_err(err)?;
+            }
+        };
+    }
     for o in d.objects.iter().filter(|o| o.visible && o.w > 0.0 && o.h > 0.0) {
         match o.kind {
             ObjectKind::Shape => {
-                let p = PdfPagePathObject::new_rect(
+                let mut p = PdfPagePathObject::new_rect(
                     &doc,
                     rect(o.x, o.y, o.w, o.h),
                     None,
@@ -893,6 +931,7 @@ fn to_pdf(d: &Design) -> PwResult<(Vec<u8>, Vec<String>)> {
                     Some(pdf_color(o.fill.as_deref().unwrap_or(""), 255)),
                 )
                 .map_err(err)?;
+                turn!(p, o);
                 page.objects_mut().add_path_object(p).map_err(err)?;
             }
             ObjectKind::Image => {
@@ -900,6 +939,7 @@ fn to_pdf(d: &Design) -> PwResult<(Vec<u8>, Vec<String>)> {
                 let mut obj = PdfPageImageObject::new(&doc, &img).map_err(err)?;
                 obj.apply_matrix(PdfMatrix::new(o.w * k, 0.0, 0.0, o.h * k, o.x * k, ph - (o.y + o.h) * k))
                     .map_err(err)?;
+                turn!(obj, o);
                 page.objects_mut().add_image_object(obj).map_err(err)?;
             }
             ObjectKind::Text => {
@@ -918,6 +958,7 @@ fn to_pdf(d: &Design) -> PwResult<(Vec<u8>, Vec<String>)> {
                 let sx = (o.w * k / natural).clamp(0.2, 5.0);
                 let base = ph - (o.y + o.baseline.unwrap_or(o.font_size.unwrap_or(o.h) * 0.72)) * k;
                 t.apply_matrix(PdfMatrix::new(sx, 0.0, 0.0, 1.0, o.x * k, base)).map_err(err)?;
+                turn!(t, o);
                 page.objects_mut().add_text_object(t).map_err(err)?;
             }
         }
@@ -1094,6 +1135,8 @@ mod tests {
                 baseline: Some(9.0),
                 fill: None,
                 png: None,
+                group: None,
+                rotation: 0.0,
             }],
         };
         let svg = to_svg(&d);
@@ -1154,6 +1197,8 @@ mod tests {
             baseline: None,
             fill: Some("#000000".into()),
             png: None,
+            group: None,
+            rotation: 0.0,
         };
         assert!(Design { objects: vec![shape.clone()], ..ok.clone() }.validate().is_ok());
         assert!(
