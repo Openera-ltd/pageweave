@@ -5,6 +5,8 @@ import {
   displaySizePt,
   fitWidthZoom,
   mostVisiblePage,
+  MIN_PAGE_PX,
+  displaySizePx,
   nextZoom,
   wheelZoom,
   pdfRectToScreen,
@@ -89,6 +91,13 @@ describe("pdf → screen mapping", () => {
   });
 });
 
+describe("tiny pages", () => {
+  it("never collapse below the minimum on-screen size", () => {
+    expect(displaySizePx({ width_pt: 3, height_pt: 3, rotation: 0 }, 0.01)).toEqual({ w: MIN_PAGE_PX, h: MIN_PAGE_PX });
+    expect(displaySizePx({ width_pt: 600, height_pt: 3, rotation: 0 }, 1)).toEqual({ w: 800, h: MIN_PAGE_PX });
+  });
+});
+
 describe("visible page", () => {
   it("picks the page with most visible area", () => {
     const tops = [0, 1000, 2000];
@@ -96,6 +105,16 @@ describe("visible page", () => {
     expect(mostVisiblePage(tops, heights, 0, 800)).toBe(0);
     expect(mostVisiblePage(tops, heights, 700, 800)).toBe(1);
     expect(mostVisiblePage(tops, heights, 2500, 800)).toBe(2);
+  });
+
+  it("at the very end, a short last page fully in view is current, not the bigger page above", () => {
+    // A tall page, then a 40 px one: at the bottom the tall page still shows more area.
+    const tops = [0, 2010];
+    const heights = [2000, 40];
+    expect(mostVisiblePage(tops, heights, 1250, 800)).toBe(0);
+    expect(mostVisiblePage(tops, heights, 1250, 800, 2050)).toBe(1);
+    // Not at the end yet: the most visible page as before.
+    expect(mostVisiblePage(tops, heights, 1200, 800, 2050)).toBe(0);
   });
 });
 

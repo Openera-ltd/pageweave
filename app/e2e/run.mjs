@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { inflateRawSync } from "node:zlib";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Session } from "./webdriver.mjs";
 
@@ -202,6 +202,35 @@ await test("thumbnail click and Ctrl+End / Ctrl+Home navigate pages", async () =
     await s.keys(["Control", "Home"]);
     await s.waitUntil(async () => (await currentPage(s)) === "1", "first page");
   });
+});
+
+await test("real-world documents (test corpus): each opens, first and last pages render, search answers, no error", async () => {
+  // Built by tools/corpus/build.py (public-domain downloads and PDFs from LibreOffice, Chromium,
+  // reportlab, cairo and ImageMagick); not committed, so skipped when it has not been built.
+  const corpus = resolve(fileURLToPath(new URL("../../target/corpus", import.meta.url)));
+  const files = ["real", "made"].flatMap((d) => (existsSync(join(corpus, d)) ? readdirSync(join(corpus, d)).filter((f) => f.endsWith(".pdf")).map((f) => join(corpus, d, f)) : []));
+  if (!files.length || !CLI) throw new Skip("test corpus not built (python3 tools/corpus/build.py) or no CLI");
+  for (const f of files) {
+    const pages = pdfPages(f);
+    await withApp([f], async (s) => {
+      await s.waitUntil(() => s.exec("return !!document.querySelector('[data-page=\"0\"] img') || !!document.querySelector('.banner.error, [role=alert]')"), `${basename(f)}: first page or an error`, 60000);
+      const error = await s.exec("return document.querySelector('.banner.error, [role=alert]')?.innerText ?? null");
+      assert(error === null, `${basename(f)}: error shown: ${error}`);
+      await pageLoaded(s, 0);
+      if (pages > 1) {
+        await s.keys(["Control", "g"]);
+        await s.type(".statusbar .page-input", String(pages));
+        await s.keys(["Enter"]);
+        await s.waitUntil(async () => (await currentPage(s)) === String(pages), `${basename(f)}: page ${pages}`, 30000);
+        await pageLoaded(s, pages - 1);
+      }
+      await s.keys(["Control", "f"]);
+      await s.type('input[aria-label="Find in document"]', "the");
+      await s.keys(["Enter"]);
+      await s.waitUntil(async () => /of \d+|No matches/.test(await s.exec("return document.querySelector('.searchbar .count')?.textContent ?? ''")), `${basename(f)}: search answered`, 60000);
+      assert(!(await s.exec("return !!document.querySelector('.banner.error')")), `${basename(f)}: no error after viewing`);
+    });
+  }
 });
 
 await test("go to page via status bar input", async () => {

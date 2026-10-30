@@ -1,0 +1,47 @@
+{
+  "purpose": "Robustness testing only (tools/corpus/sweep.py). Not training data, not redistributed in this repository.",
+  "files": [
+    {
+      "name": "irs-f1040.pdf",
+      "url": "https://www.irs.gov/pub/irs-pdf/f1040.pdf",
+      "sha256": "3d31c226df0d189ced80e039d01cf0f8820c1019681a0f0ca6264de277b7e982",
+      "bytes": 220237,
+      "rights": "US Internal Revenue Service form (US government work, public domain); AcroForm with many fields"
+    },
+    {
+      "name": "irs-fw4.pdf",
+      "url": "https://www.irs.gov/pub/irs-pdf/fw4.pdf",
+      "sha256": "92444d8856ce55d9e25dca8b6d1420634fc68b11e1ab1f760916ea29ddd312b2",
+      "bytes": 208845,
+      "rights": "US IRS form W-4 (public domain)"
+    },
+    {
+      "name": "irs-f1040sc.pdf",
+      "url": "https://www.irs.gov/pub/irs-pdf/f1040sc.pdf",
+      "sha256": "cc44e7d1150e54d991835814c1191f60a32617730ca9e50e6f532b51293a86b4",
+      "bytes": 119172,
+      "rights": "US IRS Schedule C (public domain)"
+    },
+    {
+      "name": "irs-p15.pdf",
+      "url": "https://www.irs.gov/pub/irs-pdf/p15.pdf",
+      "sha256": "b46c3622439d8521e3a0faca4cd5b5ece3451b526f65f06a5e38d5c9f804c88b",
+      "bytes": 1713916,
+      "rights": "US IRS Publication 15, long tagged document with tables (public domain)"
+    },
+    {
+      "name": "nist-sp800-63-3.pdf",
+      "url": "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-63-3.pdf",
+      "sha256": "915bb812cb705918461e642e84141c6ca2adc2ca0106e1d88f3884c61f07110a",
+      "bytes": 1599268,
+      "rights": "NIST Special Publication (US government work, public domain)"
+    },
+    {
+      "name": "w3c-pdf-table.pdf",
+      "url": "https://www.w3.org/WAI/WCAG21/working-examples/pdf-table/table.pdf",
+      "sha256": "a693998ff2a475d128c11644fbf02374249f08ac134d526a4d9b913d8b5834a5",
+      "bytes": 66887,
+      "rights": "W3C WCAG working example, tagged table (W3C Document License)"
+    }
+  ]
+}

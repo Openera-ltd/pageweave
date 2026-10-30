@@ -44,9 +44,13 @@ export function displaySizePt(p: Pick<PageInfo, "width_pt" | "height_pt" | "rota
   return swap ? { w: p.height_pt, h: p.width_pt } : { w: p.width_pt, h: p.height_pt };
 }
 
+/** Smallest on-screen page side: a tiny page next to a huge one (fit to the huge one) must stay
+ *  visible, clickable and lazily rendered rather than collapse to 0 px. */
+export const MIN_PAGE_PX = 8;
+
 export function displaySizePx(p: Pick<PageInfo, "width_pt" | "height_pt" | "rotation">, zoom: number): { w: number; h: number } {
   const s = displaySizePt(p);
-  return { w: Math.round(s.w * zoom * CSS_PX_PER_PT), h: Math.round(s.h * zoom * CSS_PX_PER_PT) };
+  return { w: Math.max(MIN_PAGE_PX, Math.round(s.w * zoom * CSS_PX_PER_PT)), h: Math.max(MIN_PAGE_PX, Math.round(s.h * zoom * CSS_PX_PER_PT)) };
 }
 
 /**
@@ -119,7 +123,12 @@ export function pdfRectToScreen(
 }
 
 /** Index of the page whose box contains the most visible area for the given scroll window. */
-export function mostVisiblePage(tops: number[], heights: number[], viewTop: number, viewHeight: number): number {
+export function mostVisiblePage(tops: number[], heights: number[], viewTop: number, viewHeight: number, contentHeight?: number): number {
+  const viewBottom0 = viewTop + viewHeight;
+  // Scrolled to the very end: a short last page (fully in view) is the current one, even when a
+  // larger page above it shows more area — otherwise the last page could never become current.
+  const last = tops.length - 1;
+  if (contentHeight !== undefined && last > 0 && viewBottom0 >= contentHeight - 1 && tops[last]! >= viewTop && tops[last]! + heights[last]! <= viewBottom0 + 1) return last;
   let best = 0;
   let bestArea = -1;
   const viewBottom = viewTop + viewHeight;

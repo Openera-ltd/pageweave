@@ -112,13 +112,21 @@ export function Viewer({ doc, zoom, onZoomStep, onZoomTo, onCurrentPage, scrollR
     }
   }, [zoom]);
 
+  const pinned = useRef<{ page: number; scrollTop: number } | null>(null);
   const reportVisible = useCallback(() => {
     const el = ref.current;
     if (!el) return;
     const nodes = Array.from(el.querySelectorAll<HTMLElement>("[data-page]"));
     const tops = nodes.map((n) => n.offsetTop);
     const heights = nodes.map((n) => n.offsetHeight);
-    const p = mostVisiblePage(tops, heights, el.scrollTop, el.clientHeight);
+    let p = mostVisiblePage(tops, heights, el.scrollTop, el.clientHeight, el.scrollHeight);
+    // After "go to page", the requested page stays current while the view has not moved since
+    // (a small page can be in view without being the most visible one).
+    const pin = pinned.current;
+    if (pin && Math.abs(el.scrollTop - pin.scrollTop) <= 1 && pin.page < tops.length) {
+      const t = tops[pin.page]!;
+      if (t + heights[pin.page]! > el.scrollTop && t < el.scrollTop + el.clientHeight) p = pin.page;
+    } else pinned.current = null;
     if (p !== lastReported.current) {
       lastReported.current = p;
       onCurrentPage(p);
@@ -192,6 +200,16 @@ export function Viewer({ doc, zoom, onZoomStep, onZoomTo, onCurrentPage, scrollR
       if (el.scrollWidth > el.clientWidth) el.scrollLeft = Math.max(0, left);
     }
     el.scrollTop = Math.max(0, top);
+    // Pages narrower than the widest are centred under it: bring the requested page into view
+    // sideways too when it is not (a small page beside a wide one can be entirely off to the side).
+    if (!hit && el.scrollWidth > el.clientWidth) {
+      const left = node.offsetLeft;
+      const right = left + node.offsetWidth;
+      if (left < el.scrollLeft || right > el.scrollLeft + el.clientWidth) {
+        el.scrollLeft = Math.max(0, node.offsetWidth > el.clientWidth ? left : left + node.offsetWidth / 2 - el.clientWidth / 2);
+      }
+    }
+    pinned.current = { page: scrollRequest.page, scrollTop: el.scrollTop };
     reportVisible();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scrollRequest]);
