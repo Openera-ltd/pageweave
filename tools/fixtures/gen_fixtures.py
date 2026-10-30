@@ -852,6 +852,37 @@ def build_fonts_document(lines=None) -> bytes:
     return w.render(catalog, info)
 
 
+def build_shaded_table_document() -> bytes:
+    """A ruled 3 × 3 table as Word draws it: the header cells shaded, and the paragraph inside each
+    header cell shaded again within the cell padding. The inner shading must not become table lines
+    (it made phantom rows and columns)."""
+    w = PdfWriter()
+    catalog, pages_obj = w.reserve(), w.reserve()
+    font = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    xs, ys = [72, 200, 330, 460], [700, 670, 645, 620]
+    ops = ""
+    for i in range(3):  # header cell shading, then the paragraph's shading inside the padding
+        ops += f"0.55 0.70 0.88 rg {xs[i]} {ys[1]} {xs[i + 1] - xs[i]} {ys[0] - ys[1]} re f\n"
+        # Inset within the padding, down to the cell's bottom border (as in Word's output).
+        ops += f"0.55 0.70 0.88 rg {xs[i] + 5.5} {ys[1]} {xs[i + 1] - xs[i] - 11} 22 re f\n"
+    ops += "0 0 0 RG 0.5 w\n"
+    for y in ys:
+        ops += f"{xs[0]} {y} m {xs[-1]} {y} l S\n"
+    for x in xs:
+        ops += f"{x} {ys[0]} m {x} {ys[-1]} l S\n"
+    cells = [["Name", "Count", "Share"], ["Apples", "12", "40%"], ["Pears", "18", "60%"]]
+    for r, row in enumerate(cells):
+        for c, v in enumerate(row):
+            ops += f"0 g BT /F1 11 Tf {xs[c] + 6} {ys[r + 1] + 8} Td ({esc(v)}) Tj ET\n"
+    content = w.stream(ops.encode("latin-1"))
+    page = w.add(f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] "
+                 f"/Resources << /Font << /F1 {font} 0 R >> >> /Contents {content} 0 R >>")
+    w.set(pages_obj, f"<< /Type /Pages /Kids [{page} 0 R] /Count 1 >>")
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R >>")
+    info = w.add("<< /Title (Shaded table fixture) /Producer (gen_fixtures.py) >>")
+    return w.render(catalog, info)
+
+
 def build_frames_document() -> bytes:
     """Outlined shapes the Design Studio rebuilds as vector frames (D-036): a 3 pt dark blue border
     inset 10 pt, a 2 pt red elliptical ring with "SEAL" inside it, and a heading, on a tinted page.
@@ -966,6 +997,7 @@ def main() -> int:
     files["badges.pdf"] = build_badges_document()
     files["caption.pdf"] = build_caption_document()
     files["fonts.pdf"] = build_fonts_document()
+    files["shaded-table.pdf"] = build_shaded_table_document()
     files["frames.pdf"] = build_frames_document()
     # A word hyphenated across lines (the engine joins it and marks the hyphen), large enough to be
     # recognised again by OCR with --all-pages.

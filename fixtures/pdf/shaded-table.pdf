@@ -1,0 +1,61 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Length 782 >>
+stream
+0.55 0.70 0.88 rg 72 670 128 30 re f
+0.55 0.70 0.88 rg 77.5 670 117 22 re f
+0.55 0.70 0.88 rg 200 670 130 30 re f
+0.55 0.70 0.88 rg 205.5 670 119 22 re f
+0.55 0.70 0.88 rg 330 670 130 30 re f
+0.55 0.70 0.88 rg 335.5 670 119 22 re f
+0 0 0 RG 0.5 w
+72 700 m 460 700 l S
+72 670 m 460 670 l S
+72 645 m 460 645 l S
+72 620 m 460 620 l S
+72 700 m 72 620 l S
+200 700 m 200 620 l S
+330 700 m 330 620 l S
+460 700 m 460 620 l S
+0 g BT /F1 11 Tf 78 678 Td (Name) Tj ET
+0 g BT /F1 11 Tf 206 678 Td (Count) Tj ET
+0 g BT /F1 11 Tf 336 678 Td (Share) Tj ET
+0 g BT /F1 11 Tf 78 653 Td (Apples) Tj ET
+0 g BT /F1 11 Tf 206 653 Td (12) Tj ET
+0 g BT /F1 11 Tf 336 653 Td (40%) Tj ET
+0 g BT /F1 11 Tf 78 628 Td (Pears) Tj ET
+0 g BT /F1 11 Tf 206 628 Td (18) Tj ET
+0 g BT /F1 11 Tf 336 628 Td (60%) Tj ET
+
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Title (Shaded table fixture) /Producer (gen_fixtures.py) >>
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000121 00000 n 
+0000000218 00000 n 
+0000001051 00000 n 
+0000001177 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R /Info 6 0 R /ID [<70616765776561766566697874757265> <70616765776561766566697874757265>] >>
+startxref
+1256
+%%EOF
