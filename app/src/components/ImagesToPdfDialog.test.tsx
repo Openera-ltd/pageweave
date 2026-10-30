@@ -48,6 +48,19 @@ describe("Create PDF from images", () => {
     }
   });
 
+  it("adds pictures that arrive while it is open, without repeating any", () => {
+    const api = { startOperation: vi.fn(), cancelJob: vi.fn(), pickImageFiles: vi.fn(), pickSavePath: vi.fn() } as unknown as Api;
+    const ui = (files: string[]) => (
+      <ApiContext.Provider value={api}>
+        <ImagesToPdfDialog initialFiles={files} jobs={{}} onClose={() => undefined} onFinished={() => undefined} />
+      </ApiContext.Provider>
+    );
+    const view = render(ui(["/pics/a.jpg"]));
+    view.rerender(ui(["/pics/a.jpg", "/pics/b.png"]));
+    const names = [...document.querySelectorAll(".file-list .name")].map((n) => n.textContent);
+    expect(names).toEqual(["1. a.jpg", "2. b.png"]);
+  });
+
   it("explains an impossible margin", () => {
     setup(["/pics/a.jpg"]);
     fireEvent.change(screen.getByLabelText("Margin (mm)"), { target: { value: "80" } });

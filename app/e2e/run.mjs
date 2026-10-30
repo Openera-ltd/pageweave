@@ -115,9 +115,9 @@ async function withApp(args, fn) {
   launchFailuresInARow = 0;
   phase.create += Date.now() - t0;
   try {
-    // PDFs open as tabs; Office files open the convert dialog and design projects the Design
+    // PDFs open as tabs; Office files open the convert dialog, pictures Create PDF from images and design projects the Design
     // Studio, over the start screen.
-    const pdfArgs = args.filter((a) => !/\.(docx|doc|odt|rtf|txt|xlsx|xls|ods|csv|pptx|ppt|odp|html?|pwdesign)$/i.test(a));
+    const pdfArgs = args.filter((a) => !/\.(docx|doc|odt|rtf|txt|xlsx|xls|ods|csv|pptx|ppt|odp|html?|pwdesign|png|jpe?g)$/i.test(a));
     await s.waitFor(pdfArgs.length ? ".tab-label" : ".home", { timeout: 20000 });
     return await fn(s);
   } catch (e) {
@@ -2718,6 +2718,27 @@ await test("images to PDF: opens from the start screen; explains what is missing
     execFileSync(CLI, ["images-to-pdf", join(FIX, "../images/photo-exif-rotate.jpg"), join(FIX, "../images/alpha.png"), "-o", out]);
     const v = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data;
     assert(v.page_count === 2 && v.pages[0].rotation === 90, `converted: ${JSON.stringify(v.pages.map((p) => p.rotation))}`);
+  }
+});
+
+await test("images given at launch go to Create PDF from images (both listed); the PDF is made", async () => {
+  const dir = mkdtempSync(join(work, "launch-images-"));
+  const a = join(dir, "first.jpg");
+  const b = join(dir, "second.png");
+  copyFileSync(join(FIX, "../images/photo-exif-rotate.jpg"), a);
+  copyFileSync(join(FIX, "../images/alpha.png"), b);
+  const out = join(dir, "together.pdf");
+  await withApp([a, b], async (s) => {
+    await s.waitFor('[data-testid="images-start"]', { timeout: 20000 });
+    await s.waitUntil(async () => (await s.exec("return [...document.querySelectorAll('.file-list .name')].map(n => n.textContent).join('|')")) === "1. first.jpg|2. second.png", "both pictures listed in order");
+    assert(!(await s.exec("return !!document.querySelector('.notice')?.innerText.includes('not a PDF')")), "no 'not a PDF' error");
+    await s.type("#images-output", out);
+    await s.click('[data-testid="images-start"]');
+    await s.waitUntil(() => existsSync(out), "PDF written", 60000);
+  });
+  if (CLI) {
+    const v = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data;
+    assert(v.page_count === 2, `two pages (${v.page_count})`);
   }
 });
 

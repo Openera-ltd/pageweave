@@ -91,11 +91,16 @@ pub(crate) fn preflight(path: &Path) -> PwResult<u64> {
     let mut head = vec![0u8; 1024.min(len as usize)];
     fs::File::open(path).and_then(|mut f| f.read_exact(&mut head)).map_err(|e| PwError::from_io(&e, "file"))?;
     if !head.windows(5).any(|w| w == b"%PDF-") {
-        return Err(PwError::new(
-            ErrorCategory::UnsupportedFormat,
-            "pdf.not_pdf",
-            "This file is not a PDF, even if its name ends in .pdf.",
-        ));
+        let named_pdf = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf"));
+        let picture = image::guess_format(&head).is_ok();
+        let message = if named_pdf {
+            "This file is not a PDF, even if its name ends in .pdf."
+        } else if picture {
+            "This is a picture, not a PDF. Make a PDF from it with Create PDF from images, or rebuild it in the Design Studio."
+        } else {
+            "This file is not a PDF."
+        };
+        return Err(PwError::new(ErrorCategory::UnsupportedFormat, "pdf.not_pdf", message));
     }
     Ok(len)
 }

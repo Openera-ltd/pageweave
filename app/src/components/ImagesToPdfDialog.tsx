@@ -30,6 +30,8 @@ const MM = 72 / 25.4;
 export function ImagesToPdfDialog({ initialFiles, jobs, onClose, onFinished }: Props) {
   const api = useApi();
   const [files, setFiles] = useState<string[]>(initialFiles);
+  // More pictures can arrive while the dialog is open (several given at launch): add the new ones.
+  useEffect(() => setFiles((f) => [...f, ...initialFiles.filter((x) => !f.includes(x))]), [initialFiles]);
   const [size, setSize] = useState<ImagePageSize>("a4");
   const [marginMm, setMarginMm] = useState("0");
   const [output, setOutput] = useState(defaultImagesOutput(initialFiles));

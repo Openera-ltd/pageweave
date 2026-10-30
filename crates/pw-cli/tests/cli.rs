@@ -36,6 +36,12 @@ fn human_output_and_exit_codes() {
     let out = bin().arg("inspect").arg(fixture("not-a-pdf.pdf")).output().expect("run");
     assert_eq!(out.status.code(), Some(3), "unsupported format exit code");
     assert!(String::from_utf8_lossy(&out.stderr).contains("not a PDF"));
+    // A picture says what it is and what to do with it, not "even if its name ends in .pdf".
+    let png = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/images/alpha.png");
+    let out = bin().arg("inspect").arg(&png).output().expect("run");
+    assert_eq!(out.status.code(), Some(3));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("This is a picture") && !err.contains("ends in .pdf"), "{err}");
 
     let out = bin().args(["--json", "inspect"]).arg(fixture("missing.pdf")).output().expect("run");
     assert_eq!(out.status.code(), Some(7));

@@ -390,6 +390,12 @@ export function App() {
         setDialog((d) => (d ? d : { kind: "office", file: path }));
         return;
       }
+      // Pictures (given at launch, e.g. "Open with") go to Create PDF from images, as when dropped;
+      // several arrive one by one and are collected in the same dialog.
+      if (isImagePath(path)) {
+        setDialog((d) => (d?.kind === "images" ? { ...d, files: d.files.includes(path) ? d.files : [...d.files, path] } : d ?? { kind: "images", files: [path] }));
+        return;
+      }
       // Design projects (dropped, or given at launch) open in the Design Studio.
       if (isDesignPath(path)) {
         setDialog((d) => (d ? d : { kind: "studio", source: { kind: "open", path } }));
