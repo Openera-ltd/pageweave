@@ -644,24 +644,52 @@ fn fill_bytes(input: &Path, password: Option<&str>, values: &[FieldValue]) -> Pw
     }
     let bytes = fd.save()?;
     drop(fd);
-    if hybrid {
-        drop_xfa(&bytes)
-    } else {
-        Ok(bytes)
-    }
+    finish_filled(&bytes, hybrid)
 }
 
-/// A filled hybrid form without its XFA layer (D-038): the XFA data still holds the old values,
-/// and XFA-aware viewers would show those instead of the standard fields that were filled.
-fn drop_xfa(bytes: &[u8]) -> PwResult<Vec<u8>> {
+/// What a filled copy must not keep (D-038):
+/// - a hybrid form's XFA layer: its data still holds the old values, and XFA-aware viewers would
+///   show those instead of the standard fields that were filled;
+/// - Adobe's usage-rights signature (/Perms /UR3): it covers the original file, so after filling
+///   Acrobat Reader warns that the document was changed and its extended features are gone.
+fn finish_filled(bytes: &[u8], hybrid: bool) -> PwResult<Vec<u8>> {
     let broken = || fail("form.save", "The filled form could not be saved.");
     let mut doc = lopdf::Document::load_mem(bytes).map_err(|_| broken())?;
     let root = doc.trailer.get(b"Root").and_then(|o| o.as_reference()).map_err(|_| broken())?;
-    let acro = {
-        let catalog = doc.get_object_mut(root).and_then(|o| o.as_dict_mut()).map_err(|_| broken())?;
-        catalog.remove(b"NeedsRendering");
-        catalog.get(b"AcroForm").ok().cloned()
+    let (perms, acro) = {
+        let catalog = doc.get_object(root).and_then(|o| o.as_dict()).map_err(|_| broken())?;
+        (catalog.get(b"Perms").ok().cloned(), catalog.get(b"AcroForm").ok().cloned())
     };
+    let ur3 = match &perms {
+        Some(lopdf::Object::Reference(id)) => doc.get_dictionary(*id).is_ok_and(|d| d.has(b"UR3")),
+        Some(lopdf::Object::Dictionary(d)) => d.has(b"UR3"),
+        _ => false,
+    };
+    if !hybrid && !ur3 {
+        return Ok(bytes.to_vec());
+    }
+    if ur3 {
+        match perms {
+            Some(lopdf::Object::Reference(id)) => {
+                if let Ok(d) = doc.get_object_mut(id).and_then(|o| o.as_dict_mut()) {
+                    d.remove(b"UR3");
+                }
+            }
+            Some(lopdf::Object::Dictionary(mut d)) => {
+                d.remove(b"UR3");
+                let catalog = doc.get_object_mut(root).and_then(|o| o.as_dict_mut()).map_err(|_| broken())?;
+                catalog.set("Perms", lopdf::Object::Dictionary(d));
+            }
+            _ => {}
+        }
+    }
+    if !hybrid {
+        doc.prune_objects();
+        let mut out = Vec::new();
+        doc.save_to(&mut out).map_err(|_| broken())?;
+        return Ok(out);
+    }
+    doc.get_object_mut(root).and_then(|o| o.as_dict_mut()).map_err(|_| broken())?.remove(b"NeedsRendering");
     match acro {
         Some(lopdf::Object::Reference(id)) => {
             if let Ok(d) = doc.get_object_mut(id).and_then(|o| o.as_dict_mut()) {

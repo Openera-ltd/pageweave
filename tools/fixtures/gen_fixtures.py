@@ -177,6 +177,11 @@ def build_form_document(defaults: bool = False, xfa: str | None = None) -> bytes
                   b'</form1></xfa:data></xfa:datasets></xdp:xdp>')
         xfa_entry = f" /XFA {w.stream(packet)} 0 R"
         needs = " /NeedsRendering true" if xfa == "dynamic" else ""
+        # Usage rights as on government forms (/Perms /UR3): its /EF is a permission list, not files.
+        ur3 = w.add("<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> "
+                    "/Reference [<< /Type /SigRef /TransformMethod /UR3 /TransformParams << /Type /TransformParams /V /2.2 "
+                    "/Document [/FullSave] /Form [/FillIn /Import /Export] /EF [/Create /Delete /Import /Modify] >> >>] >>")
+        needs += f" /Perms << /UR3 {ur3} 0 R >>"
     acro = f"<< /Fields [{' '.join(f'{f} 0 R' for f in fields)}] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv {font} 0 R >> >>{xfa_entry} >>"
     w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R /AcroForm {acro}{needs} >>")
     info = w.add("<< /Title (Form fixture) /Author (PageWeave fixtures) /Producer (gen_fixtures.py) >>")

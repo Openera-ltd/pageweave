@@ -400,6 +400,13 @@ fn a_hybrid_xfa_form_is_filled_through_its_standard_form_and_loses_the_stale_xfa
     };
     assert!(!acro.has(b"XFA") && acro.has(b"Fields"), "standard form kept, XFA removed");
     assert!(!String::from_utf8_lossy(&std::fs::read(&out).expect("read")).contains("Old XFA value"), "XFA data pruned");
+    // Adobe's usage-rights signature covers the original; a filled copy must not keep it.
+    let perms = match catalog.get(b"Perms") {
+        Ok(lopdf::Object::Reference(id)) => doc.get_dictionary(*id).ok().cloned(),
+        Ok(o) => o.as_dict().ok().cloned(),
+        Err(_) => None,
+    };
+    assert!(perms.is_none_or(|p| !p.has(b"UR3")), "usage rights signature removed");
 }
 
 #[test]

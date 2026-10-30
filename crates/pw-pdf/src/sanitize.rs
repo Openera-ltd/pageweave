@@ -171,6 +171,12 @@ pub(crate) fn dict_of<'a>(doc: &'a Document, o: &'a Object) -> Option<&'a Dictio
     }
 }
 
+/// A file specification with embedded files: its /EF is a dictionary of streams. (Usage-rights
+/// parameters, /Perms /UR3, also have an /EF key — an array of permissions, not files.)
+fn holds_files(d: &Dictionary) -> bool {
+    matches!(d.get(b"EF"), Ok(Object::Dictionary(_) | Object::Reference(_)))
+}
+
 fn dict_ref(o: &Object) -> Option<&Dictionary> {
     match o {
         Object::Dictionary(d) => Some(d),
@@ -720,7 +726,7 @@ fn survey(doc: &Document, raw: &[u8]) -> SanitizeFindings {
             Some(Act::Web) => f.web_links += 1,
             _ => {}
         }
-        if d.has(b"EF") {
+        if holds_files(d) {
             f.attachments += 1;
             let n = d.get(b"UF").or_else(|_| d.get(b"F")).map(text).unwrap_or_default();
             if names.len() < MAX_NAMES {
@@ -863,7 +869,7 @@ fn doomed(doc: &Document, opts: &SanitizeOptions) -> HashSet<ObjectId> {
         let gone = action_class(d).is_some_and(|a| action_removed(a, opts))
             || annot_subtype(d).is_some_and(|st| annot_removed(st, opts))
             || (opts.metadata && ty == Some(b"Metadata"))
-            || (opts.attachments && (ty == Some(b"EmbeddedFile") || d.has(b"EF")))
+            || (opts.attachments && (ty == Some(b"EmbeddedFile") || holds_files(d)))
             || (opts.form_fields && d.has(b"FT"));
         if gone {
             dead.insert(*id);
@@ -968,7 +974,11 @@ fn check_file(bytes: &[u8], opts: &SanitizeOptions) -> PwResult<()> {
         } else if act.is_some_and(|a| action_removed(a, opts)) {
             Some("an action remains")
         } else if opts.attachments
-            && (has(b"EF") || has(b"EmbeddedFiles") || has(b"AF") || has(b"Collection") || ty == Some(b"EmbeddedFile"))
+            && (holds_files(d)
+                || has(b"EmbeddedFiles")
+                || has(b"AF")
+                || has(b"Collection")
+                || ty == Some(b"EmbeddedFile"))
         {
             Some("an attachment remains")
         } else if st.is_some_and(|s| annot_removed(s, opts)) {

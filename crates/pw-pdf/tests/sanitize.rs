@@ -258,3 +258,17 @@ fn protected_corrupt_and_conflicting_requests_write_nothing() {
     let entries: Vec<_> = std::fs::read_dir(dir.path()).expect("dir").collect();
     assert_eq!(entries.len(), 1, "no partial files left");
 }
+
+#[test]
+fn usage_rights_permissions_are_not_taken_for_attachments() {
+    // Government forms carry /Perms /UR3 whose parameters have an /EF permission list. It is not
+    // an embedded file: inspection must not count it, and cleaning must not fail on it.
+    let dir = tempfile::tempdir().expect("tmp");
+    let src = fixture("form-xfa-hybrid.pdf");
+    let found =
+        execute(&OperationRequest::new(Operation::SanitizeInspect { input: src.clone() }), None).expect("inspect");
+    assert_eq!(found.data["attachments"], 0, "{}", found.data);
+    let out = dir.path().join("clean.pdf");
+    sanitize(&src, &out, SanitizeOptions::default()).expect("cleaned and verified");
+    assert!(out.exists());
+}
