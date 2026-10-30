@@ -154,6 +154,11 @@ impl Ctx<'_> {
             VertAlign::Subscript => x.push_str("<w:vertAlign w:val=\"subscript\"/>"),
             VertAlign::Baseline => {}
         }
+        // Right-to-left letters: Word orders and joins them right to left (D-039). Schema order:
+        // after vertAlign.
+        if r.text.chars().any(super::layout::is_rtl) {
+            x.push_str("<w:rtl/>");
+        }
         x.push_str("</w:rPr>");
         for (i, part) in r.text.split('\t').enumerate() {
             if i > 0 {
@@ -233,6 +238,12 @@ impl Ctx<'_> {
             }
             self.body.push_str("</w:tabs>");
         }
+        // A right-to-left paragraph (schema order: bidi before spacing).
+        let text: String = p.runs.iter().map(|r| r.text.as_str()).collect();
+        let rtl = super::layout::mostly_rtl(&text);
+        if rtl {
+            self.body.push_str("<w:bidi/>");
+        }
         let _ = write!(
             self.body,
             "<w:spacing w:before=\"{}\" w:after=\"0\" w:line=\"{}\" w:lineRule=\"exact\"/>",
@@ -241,7 +252,13 @@ impl Ctx<'_> {
         );
         let left = twips(p.indent).clamp(0, 31_680);
         let first = twips(p.first_line).clamp(-left, 31_680);
-        if left != 0 || first != 0 {
+        if rtl {
+            // In a right-to-left paragraph "left" is the start (the right side): the visual left
+            // indent is its end ("right"). Its lines start on the right, so no first-line indent.
+            if left != 0 {
+                let _ = write!(self.body, "<w:ind w:right=\"{left}\"/>");
+            }
+        } else if left != 0 || first != 0 {
             let _ = write!(self.body, "<w:ind w:left=\"{left}\"");
             if first >= 0 {
                 let _ = write!(self.body, " w:firstLine=\"{first}\"/>");
@@ -249,11 +266,13 @@ impl Ctx<'_> {
                 let _ = write!(self.body, " w:hanging=\"{}\"/>", -first);
             }
         }
-        let jc = match p.align {
-            Align::Left => "left",
-            Align::Center => "center",
-            Align::Right => "right",
-            Align::Justify => "both",
+        // A right-to-left paragraph reads from the right; in it Word takes "left" and "right" as the
+        // paragraph's start and end, so the visual alignment is written the other way round.
+        let jc = match (p.align, rtl) {
+            (Align::Left, false) | (Align::Right, true) => "left",
+            (Align::Right, false) | (Align::Left, true) => "right",
+            (Align::Center, _) => "center",
+            (Align::Justify, _) => "both",
         };
         let _ = write!(self.body, "<w:jc w:val=\"{jc}\"/>");
         if let Some(s) = sect {

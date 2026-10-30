@@ -202,3 +202,17 @@ fn libreoffice_lays_out_the_slides_like_the_pages() {
     }
     eprintln!("{}", report.join("\n"));
 }
+
+#[test]
+fn right_to_left_paragraphs_are_marked_on_slides() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("rtl.pptx");
+    convert(&fixture("rtl-hebrew.pdf"), None, &out).expect("convert");
+    let xml = slides(&out).join("");
+    let i = xml.find("שלום עולם").expect("Hebrew in reading order");
+    let p_start = xml[..i].rfind("<a:p>").expect("paragraph");
+    assert!(xml[p_start..i].contains(" rtl=\"1\""), "paragraph marked right-to-left");
+    let e = xml.find("An English line").expect("English");
+    let e_start = xml[..e].rfind("<a:p>").expect("paragraph");
+    assert!(!xml[e_start..e].contains("rtl=\"1\""));
+}

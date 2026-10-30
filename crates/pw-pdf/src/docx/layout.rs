@@ -278,6 +278,18 @@ impl Line {
     }
 }
 
+/// A strong right-to-left letter (Hebrew, Arabic and their presentation forms).
+pub fn is_rtl(c: char) -> bool {
+    matches!(c as u32, 0x0590..=0x08FF | 0xFB1D..=0xFDFF | 0xFE70..=0xFEFF)
+}
+
+/// Mostly right-to-left: more strong right-to-left letters than strong left-to-right ones.
+pub fn mostly_rtl(text: &str) -> bool {
+    let rtl = text.chars().filter(|&c| is_rtl(c)).count();
+    let ltr = text.chars().filter(|&c| c.is_alphabetic() && !is_rtl(c)).count();
+    rtl > ltr
+}
+
 fn rect_of(g: &Glyph) -> Rect {
     Rect { left: g.left, bottom: g.bottom, right: g.right, top: g.top }
 }
@@ -303,9 +315,13 @@ fn build_lines(glyphs: &[Glyph]) -> Vec<Line> {
             }
         }
     };
+    // A line break from the text engine ends the line only when the next glyph does not carry on
+    // along it: some producers (Chromium) write every glyph as its own text object, and the engine
+    // puts a break between objects even when they sit side by side on one baseline.
+    let mut pending_break = false;
     for g in glyphs {
         if g.ch == '\r' || g.ch == '\n' {
-            finish(&mut cur, &mut lines);
+            pending_break = true;
             continue;
         }
         if g.generated {
@@ -321,12 +337,27 @@ fn build_lines(glyphs: &[Glyph]) -> Vec<Line> {
         if g.size <= 0.0 || !g.left.is_finite() || !g.baseline.is_finite() {
             continue;
         }
-        let breaks = cur.as_ref().is_none_or(|l| {
-            let tol = 0.5 * g.size.max(l.size);
-            (g.baseline - l.baseline).abs() > tol
-                || g.left < l.rect.right - 0.6 * g.size.max(1.0)
-                || g.left - l.rect.right > 1.5 * g.size.max(l.size)
+        // Right-to-left writing: in reading order each letter sits just left of the one before.
+        let leftward = cur.as_ref().and_then(|l| {
+            let last = l.glyphs.iter().rev().find(|x| !x.generated)?;
+            // The line's direction is its last strong letter's (spaces and punctuation have none).
+            let rtl_line = l.glyphs.iter().rev().find(|x| x.ch.is_alphabetic()).is_some_and(|x| is_rtl(x.ch));
+            let rtl = is_rtl(g.ch) || (rtl_line && !g.ch.is_alphanumeric());
+            let gap = last.left - g.right;
+            let em = g.size.max(l.size);
+            let same_line = (g.baseline - l.baseline).abs() <= if pending_break { 0.1 } else { 0.5 } * em;
+            (rtl && same_line && gap >= -0.6 * g.size.max(1.0) && gap <= if pending_break { 0.5 } else { 1.5 } * em)
+                .then_some(gap)
         });
+        let breaks = leftward.is_none()
+            && cur.as_ref().is_none_or(|l| {
+                let tol = 0.5 * g.size.max(l.size);
+                let gap = g.left - l.rect.right;
+                (g.baseline - l.baseline).abs() > if pending_break { 0.1 * g.size.max(l.size) } else { tol }
+                    || g.left < l.rect.right - 0.6 * g.size.max(1.0)
+                    || gap > if pending_break { 0.5 } else { 1.5 } * g.size.max(l.size)
+            });
+        pending_break = false;
         if breaks {
             finish(&mut cur, &mut lines);
             cur = Some(Line::new(g.clone()));
@@ -334,7 +365,8 @@ fn build_lines(glyphs: &[Glyph]) -> Vec<Line> {
         }
         let l = cur.as_mut().expect("current line");
         let last = l.glyphs.last().cloned().expect("line has glyphs");
-        if g.left - l.rect.right > 0.2 * g.size && !last.ch.is_whitespace() && !g.ch.is_whitespace() {
+        let gap = leftward.unwrap_or(g.left - l.rect.right);
+        if gap > 0.2 * g.size && !last.ch.is_whitespace() && !g.ch.is_whitespace() {
             l.glyphs.push(space(&last));
         }
         if g.ch.is_whitespace() && last.ch.is_whitespace() {
@@ -542,7 +574,10 @@ fn runs_of(lines: &[Line]) -> (Vec<Run>, Vec<Rect>) {
                 continue;
             }
             let shift = g.baseline - line.baseline;
-            let vert = if g.generated {
+            // A space takes the style of the text before it: its own size is meaningless (some
+            // producers draw spaces at 1 pt), and a separate run for it would shrink the gap.
+            let styleless = g.generated || (g.ch == ' ' && last_style.is_some());
+            let vert = if styleless {
                 last_style.as_ref().map(|s| s.1).unwrap_or(VertAlign::Baseline)
             } else if shift > 0.25 * line.size && g.size < 0.85 * line.size {
                 VertAlign::Superscript
@@ -552,7 +587,7 @@ fn runs_of(lines: &[Line]) -> (Vec<Run>, Vec<Rect>) {
                 VertAlign::Baseline
             };
             let style =
-                if g.generated { last_style.as_ref().map(|s| s.0.clone()).unwrap_or(g.clone()) } else { g.clone() };
+                if styleless { last_style.as_ref().map(|s| s.0.clone()).unwrap_or(g.clone()) } else { g.clone() };
             let joins = runs.last().is_some_and(|r: &Run| {
                 last_style.as_ref().is_some_and(|(s, v)| same_style(s, &style) && *v == vert) && !r.text.is_empty()
             });
@@ -662,7 +697,15 @@ fn make_paragraph(
         .flatten();
     let tabs: Vec<f32> = p[0].tabs.iter().map(|x| (x - col_left).max(0.0)).collect();
     let align = if tabs.is_empty() { alignment(p, col_left, col_right) } else { Align::Left };
+    let rtl = mostly_rtl(&p.iter().map(|l| l.text()).collect::<String>());
     let (indent, first_line) = match align {
+        // A right-to-left paragraph starts on the right: the gap left of its longest line keeps
+        // Word's line breaks where they were (written as its end indent; half an em of slack for
+        // differing font metrics).
+        Align::Right if rtl => {
+            let longest = p.iter().map(|l| l.rect.left).fold(f32::MAX, f32::min);
+            ((longest - col_left - 0.5 * size).max(0.0), 0.0)
+        }
         Align::Center | Align::Right => (0.0, 0.0),
         _ => ((left - col_left).max(0.0), p[0].rect.left - left),
     };
@@ -1199,6 +1242,40 @@ mod tests {
                     .collect()
             })
             .collect()
+    }
+
+    /// Generated line break between text objects, as the text engine reports it.
+    fn brk() -> Glyph {
+        Glyph { ch: '\n', generated: true, ..line("x", 0.0, 0.0, 10.0).remove(0) }
+    }
+
+    #[test]
+    fn glyphs_split_into_objects_stay_one_line_and_real_line_breaks_still_break() {
+        // "Row 9" written glyph by glyph with a break between each, then the next line.
+        let mut gs = Vec::new();
+        for g in line("Row", 100.0, 700.0, 10.0) {
+            gs.push(g);
+            gs.push(brk());
+        }
+        gs.extend(line("Next", 100.0, 686.0, 10.0));
+        let lines = build_lines(&gs);
+        assert_eq!(lines.iter().map(|l| l.text()).collect::<Vec<_>>(), ["Row", "Next"]);
+        // A break before a glyph far along the same baseline (another cell) still breaks.
+        let mut gs = line("A", 100.0, 700.0, 10.0);
+        gs.push(brk());
+        gs.extend(line("B", 120.0, 700.0, 10.0));
+        assert_eq!(build_lines(&gs).len(), 2);
+    }
+
+    #[test]
+    fn right_to_left_letters_continue_leftwards_with_word_spaces() {
+        // "אב גד" in reading order: each letter left of the one before; a word gap before "ג".
+        let at = |ch: char, x: f32| Glyph { ch, left: x, right: x + 5.0, ..line("x", 0.0, 700.0, 10.0).remove(0) };
+        let gs = vec![at('א', 200.0), brk(), at('ב', 195.0), brk(), at('ג', 186.0), brk(), at('ד', 181.0)];
+        let lines = build_lines(&gs);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].text(), "אב גד");
+        assert!(mostly_rtl(&lines[0].text()) && !mostly_rtl("abc אב"));
     }
 
     #[test]
