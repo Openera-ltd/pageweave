@@ -213,6 +213,12 @@ async fn load_design(path: String) -> CmdResult<pw_pdf::studio::Design> {
     blocking(move || pw_pdf::studio::read_design(&PathBuf::from(path))).await
 }
 
+/// A picture file for "Replace picture" in the Studio, decoded and re-encoded as PNG (base64).
+#[tauri::command]
+async fn load_picture(path: String) -> CmdResult<String> {
+    blocking(move || pw_pdf::studio::picture_png(&PathBuf::from(path))).await
+}
+
 /// Save the Studio's edits over the design project it opened: only an existing, valid .pwdesign
 /// file is replaced (never another kind of file), atomically and read back. Returns its size.
 #[tauri::command]
@@ -753,6 +759,7 @@ pub fn run() {
             app_info,
             load_design,
             save_design,
+            load_picture,
             update_info,
             check_for_update,
             install_update,

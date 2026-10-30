@@ -2377,6 +2377,41 @@ await test("design studio: rebuild a page, edit text with undo, nudge, drag, loc
     assert((await s.exec("return getComputedStyle(document.querySelector('.studio-source')).mixBlendMode")) === "difference", "differences");
     await s.click('[data-compare="design"]');
 
+    // Add text and a rectangle from the Studio toolbar; drop the rectangle 3 screen px off the canvas
+    // centre: it snaps (nearest target wins), so one of its edges or its centre lands exactly on a
+    // canvas or object edge/centre, read back from the drawn SVG. No guide is left after the drag.
+    await s.click('[data-testid="studio-add-text"]');
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-layer][aria-current]')?.textContent ?? ''")).includes("New text"), "text added and selected");
+    await s.click('[data-testid="studio-add-rect"]');
+    const rectId = await s.exec("return document.querySelector('[data-layer][aria-current]').dataset.layer");
+    assert(rectId.startsWith("shape-new"), `rectangle added and selected (${rectId})`);
+    const at = (id) => s.exec(`const r=document.querySelector('[data-object="${id}"]').getBoundingClientRect(); return [r.left, r.top, r.width, r.height]`);
+    const [rl, rt, rw, rh] = await at(rectId);
+    const [sl, st, sw, sh] = await s.exec("const r=document.querySelector('[data-testid=studio-stage]').getBoundingClientRect(); return [r.left, r.top, r.width, r.height]");
+    await s.dragAt(rl + rw / 2, rt + rh / 2, sl + sw / 2 + 3, st + sh * 0.85, 12);
+    const aligned = await s.exec(`
+      const svg = document.querySelector('.studio-svg'); const W = svg.viewBox.baseVal.width;
+      const span = (e) => { const x = +e.getAttribute('x'); const w = +(e.getAttribute('width') ?? e.getAttribute('textLength')); return [x, x + w / 2, x + w]; };
+      const me = span(document.querySelector('[data-object="${rectId}"]'));
+      const targets = [0, W / 2, W, ...[...svg.querySelectorAll('[data-object]')].filter(e => e.dataset.object !== '${rectId}').flatMap(span)];
+      return me.some(v => targets.some(t => Math.abs(v - t) < 0.06));`);
+    assert(aligned, "the dropped rectangle lines up exactly with a canvas or object edge/centre");
+    assert(!(await s.exec("return !!document.querySelector('[data-testid=studio-guide]')")), "guides gone after the drag");
+    // Alt places freely: a drop 3 px off is kept as dropped (not pulled onto a guide).
+    const [al, at2, aw, ah] = await at(rectId);
+    await s.cmd("POST", "/actions", { actions: [
+      { type: "key", id: "kb", actions: [{ type: "keyDown", value: "\uE00A" }, { type: "pause", duration: 0 }, { type: "pause", duration: 0 }, { type: "pause", duration: 0 }, { type: "keyUp", value: "\uE00A" }] },
+      { type: "pointer", id: "mouse", parameters: { pointerType: "mouse" }, actions: [
+        { type: "pointerMove", origin: "viewport", x: Math.round(al + aw / 2), y: Math.round(at2 + ah / 2) },
+        { type: "pointerDown", button: 0 },
+        { type: "pointerMove", origin: "viewport", duration: 100, x: Math.round(al + aw / 2 + 40), y: Math.round(at2 + ah / 2) },
+        { type: "pointerUp", button: 0 },
+      ] },
+    ] });
+    await s.cmd("DELETE", "/actions");
+    const [al2] = await at(rectId);
+    assert(Math.abs(al2 - (al + 40)) < 0.75, `with Alt the rectangle moved exactly as dragged (${al2 - al} px)`);
+
     // Save; the project on disk holds the edits.
     await s.keys(["Control", "s"]);
     await s.waitUntil(async () => (await s.text('[data-testid="studio-status"]')).startsWith("Saved"), "saved");

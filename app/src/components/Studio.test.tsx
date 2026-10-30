@@ -25,7 +25,9 @@ function setup(source: StudioSource, jobs: Record<string, JobSnapshot> = {}) {
   const loadDesign = vi.fn(async () => design());
   const saveDesign = vi.fn(async () => 1234);
   const pickDesignExport = vi.fn(async () => "/d/flyer.svg");
-  const api = { startOperation, cancelJob: vi.fn(), loadDesign, saveDesign, pickDesignExport, revealInFolder: vi.fn(async () => undefined) } as unknown as Api;
+  const pickImageFiles = vi.fn(async () => ["/pics/logo.png"]);
+  const loadPicture = vi.fn(async () => "iVBORw0KGgoNEW");
+  const api = { startOperation, cancelJob: vi.fn(), loadDesign, saveDesign, pickDesignExport, pickImageFiles, loadPicture, revealInFolder: vi.fn(async () => undefined) } as unknown as Api;
   const onClose = vi.fn();
   const view = render(
     <ApiContext.Provider value={api}>
@@ -38,7 +40,7 @@ function setup(source: StudioSource, jobs: Record<string, JobSnapshot> = {}) {
         <Studio source={source} jobs={j} onClose={onClose} />
       </ApiContext.Provider>,
     );
-  return { startOperation, loadDesign, saveDesign, pickDesignExport, onClose, rerender };
+  return { startOperation, loadDesign, saveDesign, pickDesignExport, pickImageFiles, loadPicture, onClose, rerender };
 }
 
 const job = (state: JobSnapshot["state"], out?: string): JobSnapshot => ({
@@ -145,6 +147,35 @@ describe("Design Studio", () => {
     s.rerender({ "job-1": job("succeeded", "/d/flyer.svg") });
     await flush();
     expect(screen.getByTestId("studio-status").textContent).toContain("Exported flyer.svg");
+  });
+
+  it("adds text and rectangles in front, selected, as undoable steps", async () => {
+    setup({ kind: "open", path: "/d/f.pwdesign" });
+    await flush();
+    fireEvent.click(screen.getByTestId("studio-add-text"));
+    expect(document.querySelectorAll("[data-layer]")[0]!.textContent).toContain("New text");
+    expect((screen.getByLabelText("Text") as HTMLTextAreaElement).value).toBe("New text");
+    fireEvent.click(screen.getByTestId("studio-add-rect"));
+    expect(document.querySelectorAll("[data-layer]")).toHaveLength(5);
+    fireEvent.keyDown(screen.getByTestId("studio-stage"), { key: "z", ctrlKey: true });
+    fireEvent.keyDown(screen.getByTestId("studio-stage"), { key: "z", ctrlKey: true });
+    expect(document.querySelectorAll("[data-layer]")).toHaveLength(3);
+  });
+
+  it("replaces a picture with a chosen file, keeping its place; undo brings the old one back", async () => {
+    const s = setup({ kind: "open", path: "/d/f.pwdesign" });
+    await flush();
+    fireEvent.click(document.querySelector('[data-layer="picture-1"]')!);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("studio-replace"));
+    });
+    expect(s.loadPicture).toHaveBeenCalledWith("/pics/logo.png");
+    const img = document.querySelector('[data-object="picture-1"]')!;
+    expect(img.getAttribute("href")).toBe("data:image/png;base64,iVBORw0KGgoNEW");
+    expect(img.getAttribute("x")).toBe("120");
+    expect(document.querySelector('[data-layer="picture-1"]')!.textContent).toContain("logo.png");
+    fireEvent.keyDown(screen.getByTestId("studio-stage"), { key: "z", ctrlKey: true });
+    expect(document.querySelector('[data-object="picture-1"]')!.getAttribute("href")).toBe("data:image/png;base64,");
   });
 
   it("the start screen offers Open in Design Studio (studio.open)", () => {

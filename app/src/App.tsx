@@ -200,8 +200,9 @@ export function App() {
   const [notices, setNotices] = useState<Notice[]>([]);
   const [jobs, setJobs] = useState<Record<string, JobSnapshot>>({});
   const [dropActive, setDropActive] = useState(false);
-  // The installed LibreOffice for opening Office files (null: not installed; checked once).
-  const [officeEngine, setOfficeEngine] = useState<string | null>(null);
+  // The installed LibreOffice for opening Office files (undefined: still checking; null: not
+  // installed; checked once at start — an Office file given at launch can open its dialog first).
+  const [officeEngine, setOfficeEngine] = useState<string | null | undefined>(undefined);
   useEffect(() => {
     api.officeEngine().then(setOfficeEngine).catch(() => setOfficeEngine(null));
   }, [api]);

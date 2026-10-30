@@ -65,6 +65,8 @@ export interface Api {
   /** A picture, PDF or design project to open in the Studio. */
   pickDesignSource(): Promise<string | null>;
   loadDesign(path: string): Promise<Design>;
+  /** A PNG/JPEG file decoded and re-encoded as PNG (base64), for replacing a picture. */
+  loadPicture(path: string): Promise<string>;
   /** Save edits over the design project at `path` (an existing .pwdesign only); returns its size. */
   saveDesign(path: string, design: Design): Promise<number>;
   pickFolder(defaultPath?: string): Promise<string | null>;
@@ -182,6 +184,7 @@ export const tauriApi: Api = {
     return typeof r === "string" ? r : null;
   },
   loadDesign: (path) => invoke("load_design", { path }),
+  loadPicture: (path) => invoke("load_picture", { path }),
   saveDesign: (path, design) => invoke("save_design", { path, design }),
   pickFolder: async (defaultPath) => {
     const r = await openDialog({ directory: true, multiple: false, defaultPath });

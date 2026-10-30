@@ -91,18 +91,19 @@ fn candidates() -> Vec<PathBuf> {
 
 /// The installed LibreOffice, if any (its version is read from the program itself).
 pub fn find_office() -> Option<OfficeEngine> {
-    for p in candidates() {
-        if !p.is_file() {
-            continue;
-        }
-        let out = Command::new(&p).arg("--version").stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
-        let text = String::from_utf8_lossy(&out.stdout);
-        if out.status.success() && text.contains("LibreOffice") {
-            let version = text.split_whitespace().take(2).collect::<Vec<_>>().join(" ");
-            return Some(OfficeEngine { program: p, version });
-        }
-    }
-    None
+    candidates()
+        .into_iter()
+        .filter(|p| p.is_file())
+        .find_map(|p| version_of(&p).map(|version| OfficeEngine { program: p, version }))
+}
+
+/// "LibreOffice 24.2.7.2" from `program --version`, or None when it is not a working LibreOffice.
+/// A candidate that does not start is skipped (it used to end the whole search).
+fn version_of(program: &Path) -> Option<String> {
+    let out = Command::new(program).arg("--version").stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    (out.status.success() && text.contains("LibreOffice"))
+        .then(|| text.split_whitespace().take(2).collect::<Vec<_>>().join(" "))
 }
 
 fn not_installed() -> PwError {
@@ -223,8 +224,7 @@ pub fn install_office(cancelled: &dyn Fn() -> bool, progress: &dyn Fn(u64, u64))
     let found = program_in(&staging).into_iter().find(|p| p.is_file()).ok_or_else(|| {
         PwError::new(ErrorCategory::CorruptResource, "office.unpack", "The unpacked LibreOffice has no program.")
     })?;
-    let out = Command::new(&found).arg("--version").stdin(Stdio::null()).stderr(Stdio::null()).output();
-    if !out.as_ref().is_ok_and(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains("LibreOffice")) {
+    if version_of(&found).is_none() {
         let _ = std::fs::remove_dir_all(&staging);
         return Err(PwError::new(
             ErrorCategory::CorruptResource,

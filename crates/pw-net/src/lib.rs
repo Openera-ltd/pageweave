@@ -59,6 +59,38 @@ pub fn agent(user_agent: &str) -> ureq::Agent {
         .new_agent()
 }
 
+/// GET `url`, following up to five redirects ourselves: ureq's own redirect handling failed on
+/// GitHub's chunked redirect answers through an HTTP proxy ("chunk length cannot be read as a
+/// number", every time), while each answer on its own is fine. A redirect's body is never read; a
+/// redirect from HTTPS to plain HTTP is refused; `Range` is kept across hops so downloads resume.
+fn get_following(agent: &ureq::Agent, url: &str, from_byte: u64) -> Result<ureq::http::Response<ureq::Body>, String> {
+    let secure = url.starts_with("https://");
+    let mut url = url.to_string();
+    for _ in 0..=5 {
+        let mut req = agent.get(&url).config().max_redirects(0).build();
+        if from_byte > 0 {
+            req = req.header("Range", format!("bytes={from_byte}-"));
+        }
+        let resp = req.call().map_err(|e| e.to_string())?;
+        if !resp.status().is_redirection() {
+            return Ok(resp);
+        }
+        let loc =
+            resp.headers().get("location").and_then(|v| v.to_str().ok()).ok_or("a redirect without a destination")?;
+        url = if loc.starts_with('/') {
+            // Same host: keep scheme and authority.
+            let origin_end = url.match_indices('/').nth(2).map(|(i, _)| i).unwrap_or(url.len());
+            format!("{}{loc}", &url[..origin_end])
+        } else {
+            loc.to_string()
+        };
+        if secure && !url.starts_with("https://") {
+            return Err("a redirect to an address that is not HTTPS".into());
+        }
+    }
+    Err("too many redirects".into())
+}
+
 /// Lowercase hex SHA-256 of a file.
 pub fn sha256_file(p: &Path, label: &str) -> PwResult<String> {
     use sha2::{Digest, Sha256};
@@ -76,10 +108,10 @@ pub fn get_small(w: &What, url: &str, max_bytes: u64) -> PwResult<Option<Vec<u8>
         if attempt > 1 {
             std::thread::sleep(Duration::from_secs(2u64.pow(attempt - 1)));
         }
-        let resp = match agent(w.user_agent).get(url).call() {
+        let resp = match get_following(&agent(w.user_agent), url, 0) {
             Ok(r) => r,
             Err(e) => {
-                last = e.to_string();
+                last = e;
                 continue;
             }
         };
@@ -122,15 +154,10 @@ pub fn fetch(
             continue;
         }
         if have < size {
-            let mut req = agent(w.user_agent).get(url);
-            if have > 0 {
-                req = req.header("Range", format!("bytes={have}-"));
-            }
-            let resp = match req.call() {
+            let resp = match get_following(&agent(w.user_agent), url, have) {
                 Ok(r) => r,
-                Err(e) if attempt < 4 => {
+                Err(_) if attempt < 4 => {
                     std::thread::sleep(Duration::from_secs(2u64.pow(attempt)));
-                    let _ = e;
                     continue;
                 }
                 Err(e) => return Err(net_err(w, e)),
@@ -323,5 +350,59 @@ mod tests {
             }
         });
         assert_eq!(get_small(&W, &url, 100).expect("404"), None);
+    }
+
+    /// Answers every request with a redirect (chunked, empty body, as GitHub sends them) to `to`.
+    fn redirect(to: String) -> String {
+        let l = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let url = format!("http://{}/latest/x", l.local_addr().expect("addr"));
+        std::thread::spawn(move || {
+            for mut s in l.incoming().flatten() {
+                let mut line = String::new();
+                let mut r = std::io::BufReader::new(s.try_clone().expect("clone"));
+                while r.read_line(&mut line).unwrap_or(0) > 2 {
+                    line.clear();
+                }
+                let head = format!("HTTP/1.1 302 Found\r\nLocation: {to}\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n0\r\n\r\n");
+                let _ = s.write_all(head.as_bytes());
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn redirects_are_followed_with_range_kept_and_loops_stop() {
+        let body: Vec<u8> = (0..50_000u32).map(|i| (i % 241) as u8).collect();
+        // Two hops (absolute, then same-host relative) to the file; a resumed download keeps Range.
+        let (file, count) = serve(body.clone(), Some(20_000), 0);
+        let path = file.splitn(4, '/').nth(3).map(|p| format!("/{p}")).expect("path");
+        let host = file.trim_end_matches(&path).to_string();
+        let hop2 = redirect(format!("{host}{path}"));
+        let hop1 = redirect(hop2.clone());
+        let dir = tempfile::tempdir().expect("tmp");
+        let target = dir.path().join("r.bin");
+        fetch(&W, &hop1, &target, body.len() as u64, &sha(&body), &|| false, &|_| {}).expect("fetch through redirects");
+        assert_eq!(std::fs::read(&target).expect("read"), body);
+        assert!(count.load(Ordering::SeqCst) >= 2, "cut answer, then resumed through the redirects");
+        assert_eq!(get_small(&W, &redirect(file.clone()), 100_000).expect("small").map(|b| b.len()), Some(body.len()));
+        // Endless redirects stop. (The HTTPS-to-HTTP refusal needs a TLS server; not tested here.)
+        let agent = agent("test");
+        let l = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let looped = format!("http://{}/loop", l.local_addr().expect("addr"));
+        let again = looped.clone();
+        std::thread::spawn(move || {
+            for mut s in l.incoming().flatten() {
+                let mut line = String::new();
+                let mut r = std::io::BufReader::new(s.try_clone().expect("clone"));
+                while r.read_line(&mut line).unwrap_or(0) > 2 {
+                    line.clear();
+                }
+                let head = format!(
+                    "HTTP/1.1 302 Found\r\nLocation: {again}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                );
+                let _ = s.write_all(head.as_bytes());
+            }
+        });
+        assert_eq!(get_following(&agent, &looped, 0).expect_err("loop"), "too many redirects");
     }
 }

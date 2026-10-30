@@ -2761,6 +2761,31 @@ kbd,
   transition: opacity var(--dur-fast) var(--ease);
 }
 
+/* Alignment guides while dragging (snapped to the canvas or another object). */
+.studio-guide {
+  position: absolute;
+  background: var(--danger);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.studio-guide.x {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.studio-guide.y {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
+.studio-replace {
+  width: 100%;
+  margin-bottom: var(--space-3);
+}
+
 .studio-selection {
   position: absolute;
   outline: 1.5px solid var(--accent);

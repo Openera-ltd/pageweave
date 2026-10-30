@@ -114,3 +114,58 @@ export function studioSourceFor(path: string): { kind: "open"; path: string } | 
   if (isDesignPath(path)) return { kind: "open", path };
   return isStudioSource(path) ? { kind: "rebuild", input: path, page: 0 } : null;
 }
+
+/** A new object in the middle of the canvas, placed in front: "New text" (black, 6 % of the
+ * height) or a rectangle in the accent blue. Returns the design and the new object's id. */
+export function addObject(d: Design, kind: "text" | "shape"): { design: Design; id: string } {
+  let n = d.objects.length + 1;
+  while (d.objects.some((o) => o.id === `${kind === "text" ? "text" : "shape"}-new${n}`)) n++;
+  const id = `${kind === "text" ? "text" : "shape"}-new${n}`;
+  const size = round(Math.max(8, d.height * 0.06));
+  const base = { id, visible: true, locked: false, confidence: 1, bold: false, note: null };
+  const o: DesignObject =
+    kind === "text"
+      ? { ...base, name: "New text", kind: "text", text: "New text", color: "#000000", font_size: size, baseline: round(size * 0.72), w: round(size * 4.2), h: round(size * 0.93), x: 0, y: 0 }
+      : { ...base, name: "Rectangle", kind: "shape", fill: "#2f6fde", w: round(d.width * 0.25), h: round(d.height * 0.12), x: 0, y: 0 };
+  o.x = round((d.width - o.w) / 2);
+  o.y = round((d.height - o.h) / 2);
+  return { design: { ...d, objects: [...d.objects, o] }, id };
+}
+
+export interface Guide {
+  /** "x": a vertical line at `at`; "y": a horizontal line. */
+  axis: "x" | "y";
+  at: number;
+}
+
+/** Snap a moving box to the canvas edges and centre and to the other visible objects' edges and
+ * centres, when within `threshold` design pixels; returns the snapped position and the guides to
+ * draw. Each axis snaps to its nearest match only. */
+export function snap(d: Design, id: string, box: { x: number; y: number; w: number; h: number }, threshold: number): { x: number; y: number; guides: Guide[] } {
+  const others = d.objects.filter((o) => o.id !== id && o.visible);
+  const targets = (axis: "x" | "y") => {
+    const size = axis === "x" ? d.width : d.height;
+    const t = [0, size / 2, size];
+    for (const o of others) {
+      const [p, s] = axis === "x" ? [o.x, o.w] : [o.y, o.h];
+      t.push(p, p + s / 2, p + s);
+    }
+    return t;
+  };
+  const fit = (axis: "x" | "y", pos: number, len: number) => {
+    let best: { delta: number; at: number } | null = null;
+    for (const t of targets(axis)) {
+      for (const edge of [pos, pos + len / 2, pos + len]) {
+        const delta = t - edge;
+        if (Math.abs(delta) <= threshold && (!best || Math.abs(delta) < Math.abs(best.delta))) best = { delta, at: t };
+      }
+    }
+    return best;
+  };
+  const fx = fit("x", box.x, box.w);
+  const fy = fit("y", box.y, box.h);
+  const guides: Guide[] = [];
+  if (fx) guides.push({ axis: "x", at: fx.at });
+  if (fy) guides.push({ axis: "y", at: fy.at });
+  return { x: round(box.x + (fx?.delta ?? 0)), y: round(box.y + (fy?.delta ?? 0)), guides };
+}

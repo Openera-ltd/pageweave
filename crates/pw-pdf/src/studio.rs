@@ -518,6 +518,41 @@ pub fn load_source(input: &Path, opts: &OpenOptions, page: u32) -> PwResult<(Rgb
     Ok((rgb, 0.75 * scale.max(1.0)))
 }
 
+/// A picture file (PNG or JPEG) for replacing a picture in a design: decoded with limits, at most
+/// 4096 px on the long side, re-encoded as PNG (base64). Untrusted bytes are never passed through.
+pub fn picture_png(path: &Path) -> PwResult<String> {
+    let head = {
+        use std::io::Read;
+        let mut f = std::fs::File::open(path).map_err(|e| PwError::from_io(&e, "picture"))?;
+        let mut b = [0u8; 8];
+        let n = f.read(&mut b).map_err(|e| PwError::from_io(&e, "picture"))?;
+        b[..n].to_vec()
+    };
+    let fmt = image::guess_format(&head)
+        .ok()
+        .filter(|f| matches!(f, image::ImageFormat::Png | image::ImageFormat::Jpeg))
+        .ok_or_else(|| {
+            PwError::new(ErrorCategory::UnsupportedFormat, "design.picture_format", "Choose a PNG or JPEG picture.")
+        })?;
+    if std::fs::metadata(path).map_err(|e| PwError::from_io(&e, "picture"))?.len() > MAX_IMAGE_FILE {
+        return Err(PwError::invalid("design.too_large", "The picture is larger than 100 MB."));
+    }
+    let bytes = std::fs::read(path).map_err(|e| PwError::from_io(&e, "picture"))?;
+    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), fmt);
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(20_000);
+    limits.max_image_height = Some(20_000);
+    limits.max_alloc = Some(1024 * 1024 * 1024);
+    reader.limits(limits);
+    let img = reader.decode().map_err(|_| PwError::invalid("design.unreadable", "The picture could not be read."))?;
+    let img = if img.width().max(img.height()) > 4096 {
+        img.resize(4096, 4096, image::imageops::FilterType::Lanczos3)
+    } else {
+        img
+    };
+    Ok(png_base64(&image::DynamicImage::ImageRgba8(img.to_rgba8())))
+}
+
 /// Rebuild `input` (page `page` of a PDF, or a picture) and save it as a design project.
 pub fn reconstruct_design(
     input: &Path,
@@ -1069,6 +1104,19 @@ mod tests {
         assert!(check_svg(bad.as_bytes(), &d).is_err());
         let ext = svg.replace("<rect id=\"background\"", "<image href=\"http://x/y.png\"/><rect id=\"background\"");
         assert!(check_svg(ext.as_bytes(), &d).is_err());
+    }
+
+    #[test]
+    fn replacement_pictures_are_decoded_and_re_encoded() {
+        let dir = tempfile::tempdir().expect("test value");
+        let png = dir.path().join("p.png");
+        image::RgbImage::from_pixel(30, 20, image::Rgb([200, 10, 10])).save(&png).expect("test value");
+        let b64 = picture_png(&png).expect("test value");
+        let back = decode_png(&b64, "p").expect("test value");
+        assert_eq!((back.width(), back.height()), (30, 20));
+        let txt = dir.path().join("x.png");
+        std::fs::write(&txt, b"not a picture").expect("test value");
+        assert_eq!(picture_png(&txt).expect_err("test value").code, "design.picture_format");
     }
 
     #[test]

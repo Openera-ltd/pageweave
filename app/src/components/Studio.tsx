@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { useApi } from "../api";
 import { basename, dirname, join, stem } from "../paths";
-import { commit, duplicate, hit, moveBy, redo, remove, reorder, resize, start, uncertain, undo, update, type History } from "../studio";
+import { addObject, commit, duplicate, hit, moveBy, redo, remove, reorder, resize, snap, start, uncertain, undo, update, type Guide, type History } from "../studio";
 import { toPwError, type Design, type DesignObject, type JobSnapshot, type PwError } from "../types";
 
 export type StudioSource = { kind: "rebuild"; input: string; page: number; docId?: number } | { kind: "open"; path: string };
@@ -58,6 +58,7 @@ export function Studio({ source, jobs, onClose }: Props) {
   const [saved, setSaved] = useState<Design | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [preview, setPreview] = useState<Design | null>(null);
+  const [guides, setGuides] = useState<Guide[]>([]);
   const [compare, setCompare] = useState<Compare>("design");
   const [opacity, setOpacity] = useState(50);
   const [zoom, setZoom] = useState(1);
@@ -209,7 +210,13 @@ export function Studio({ source, jobs, onClose }: Props) {
     const dx = p.x - d.x0;
     const dy = p.y - d.y0;
     if (d.corner === "move") {
-      setPreview(moveBy(hist.present, d.id, Math.round(dx), Math.round(dy)));
+      // Snap to the canvas and other objects within about 6 screen pixels; Alt places freely.
+      const box = { x: d.box.x + dx, y: d.box.y + dy, w: d.box.w, h: d.box.h };
+      const s = e.altKey ? { x: box.x, y: box.y, guides: [] } : snap(hist.present, d.id, box, 6 / scale);
+      setGuides(s.guides);
+      // Exact delta: rounding it to whole pixels pulled snapped objects that sit at fractional
+      // positions up to half a pixel off the guide (moveBy keeps tenths).
+      setPreview(moveBy(hist.present, d.id, s.x - d.box.x, s.y - d.box.y));
       return;
     }
     const b = d.box;
@@ -226,6 +233,27 @@ export function Studio({ source, jobs, onClose }: Props) {
     if (drag.current && preview) change(preview);
     drag.current = null;
     setPreview(null);
+    setGuides([]);
+  };
+
+  const add = (kind: "text" | "shape") => {
+    if (!hist) return;
+    const r = addObject(hist.present, kind);
+    change(r.design);
+    setSelected(r.id);
+  };
+
+  const replacePicture = async () => {
+    if (!sel || sel.kind !== "image") return;
+    const id = sel.id;
+    const [file] = await api.pickImageFiles();
+    if (!file) return;
+    try {
+      const png = await api.loadPicture(file);
+      setHist((h) => (h ? commit(h, update(h.present, id, { png, note: null, name: basename(file) })) : h));
+    } catch (e) {
+      setError(toPwError(e));
+    }
   };
 
   /* ---------- Keyboard ---------- */
@@ -279,6 +307,14 @@ export function Studio({ source, jobs, onClose }: Props) {
           </button>
           <button type="button" className="btn icon" aria-label="Redo" title="Redo (Ctrl+Y)" aria-disabled={!hist?.future.length || undefined} onClick={() => setHist((h) => (h ? redo(h) : h))}>
             <Redo2 />
+          </button>
+        </div>
+        <div className="group">
+          <button type="button" className="btn icon" aria-label="Add text" title="Add text" data-testid="studio-add-text" aria-disabled={!hist || undefined} onClick={() => add("text")}>
+            <TypeIcon />
+          </button>
+          <button type="button" className="btn icon" aria-label="Add rectangle" title="Add rectangle" data-testid="studio-add-rect" aria-disabled={!hist || undefined} onClick={() => add("shape")}>
+            <Square />
           </button>
         </div>
         <div className="segmented" role="radiogroup" aria-label="Compare with the original">
@@ -408,6 +444,14 @@ export function Studio({ source, jobs, onClose }: Props) {
                   style={{ opacity: compare === "overlay" ? opacity / 100 : 1, mixBlendMode: compare === "difference" ? "difference" : "normal" }}
                 />
               )}
+              {guides.map((g, i) => (
+                <span
+                  key={i}
+                  className={`studio-guide ${g.axis}`}
+                  data-testid="studio-guide"
+                  style={g.axis === "x" ? { left: g.at * scale } : { top: g.at * scale }}
+                />
+              ))}
               {sel && sel.visible && (
                 <div className={`studio-selection ${sel.locked ? "locked" : ""}`} style={{ left: sel.x * scale, top: sel.y * scale, width: sel.w * scale, height: sel.h * scale }}>
                   {!sel.locked && (["nw", "ne", "sw", "se"] as const).map((c) => <span key={c} className={`handle ${c}`} data-corner={c} />)}
@@ -418,7 +462,7 @@ export function Studio({ source, jobs, onClose }: Props) {
 
           <aside className="studio-props" aria-label="Properties">
             {sel ? (
-              <Properties o={sel} edit={edit} design={design} onOrder={(step) => change(reorder(design, sel.id, step))} onDuplicate={() => {
+              <Properties o={sel} edit={edit} design={design} onReplace={replacePicture} onOrder={(step) => change(reorder(design, sel.id, step))} onDuplicate={() => {
                 const r = duplicate(design, sel.id);
                 change(r.design);
                 setSelected(r.id);
@@ -509,9 +553,11 @@ function Properties({
   onOrder,
   onDuplicate,
   onDelete,
+  onReplace,
 }: {
   o: DesignObject;
   design: Design;
+  onReplace: () => void;
   edit: (patch: Partial<DesignObject>, key?: string) => void;
   onOrder: (step: 1 | -1) => void;
   onDuplicate: () => void;
@@ -564,6 +610,11 @@ function Properties({
           </div>
           <p className="hint">Font: Helvetica-style sans serif (the original font is not identified).</p>
         </>
+      )}
+      {o.kind === "image" && (
+        <button type="button" className="btn outline studio-replace" data-testid="studio-replace" disabled={o.locked} title={o.locked ? "Unlock the picture first" : "Replace with a PNG or JPEG picture; keeps its place and size"} onClick={onReplace}>
+          <ImageIcon /> Replace picture…
+        </button>
       )}
       {o.kind === "shape" && (
         <label className="studio-num">
