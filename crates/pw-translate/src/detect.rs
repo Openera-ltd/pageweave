@@ -60,15 +60,19 @@ pub fn detect(text: &str) -> Option<(&'static str, f32)> {
     if words.len() < 4 {
         return None;
     }
-    let mut scores: Vec<(&'static str, f32)> = WORDS
-        .iter()
-        .map(|(lang, list)| {
-            (*lang, words.iter().filter(|w| list.contains(&w.as_str())).count() as f32 / words.len() as f32)
-        })
-        .collect();
-    scores.sort_by(|a, b| b.1.total_cmp(&a.1));
-    let (best, second) = (scores[0], scores[1]);
-    (best.1 >= 0.12 && best.1 >= 1.5 * second.1).then_some(best)
+    let mut hits: Vec<(&'static str, usize)> =
+        WORDS.iter().map(|(lang, list)| (*lang, words.iter().filter(|w| list.contains(&w.as_str())).count())).collect();
+    hits.sort_by(|a, b| b.1.cmp(&a.1));
+    let (best, second) = (hits[0], hits[1]);
+    let n = words.len() as f32;
+    let share = |h: usize| h as f32 / n;
+    // Prose: function words are a large share, and clearly more of one language's (related
+    // languages share some, e.g. French and Spanish "de", "la", "que").
+    let prose = share(best.1) >= 0.12 && share(best.1) >= 1.5 * share(second.1);
+    // Sparse text (headings, tables, a repeated phrase): few function words, but all or nearly all
+    // of one language — at least three, and twice the runner-up's count plus one.
+    let sparse = best.1 >= 3 && best.1 >= 2 * (second.1 + 1);
+    (prose || sparse).then_some((best.0, share(best.1)))
 }
 
 #[cfg(test)]
@@ -88,6 +92,11 @@ mod tests {
         for (lang, text) in cases {
             assert_eq!(detect(text).map(|d| d.0), Some(lang), "{text}");
         }
+        // Few function words among many other words (headings, tables, a repeated phrase).
+        let report = format!("Quarterly report. This document was written in Markdown and converted by LibreOffice. Figures Region Q1 Q2 Change North South East. Notes: numbers are in thousands. {}", "More body text. ".repeat(400));
+        assert_eq!(detect(&report).map(|d| d.0), Some("en"));
+        // Too little evidence either way stays undecided.
+        assert_eq!(detect("Name: Alice Example. Account SECRET-4711 is closed. Fully hidden line"), None);
         assert_eq!(detect("PWMARK 12345"), None);
         assert_eq!(detect("Invoice 2026-10-21 total 1,234.50 EUR ref ABC-77"), None);
         assert_eq!(detect(""), None);
