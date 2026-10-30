@@ -445,7 +445,8 @@ fn design_tools_rebuild_and_export_inside_the_approved_folder() {
     assert!(std::fs::read_to_string(root.path().join("poster.svg")).expect("svg").contains("SPRING FAIR"));
     c.ok("export_design", json!({ "path": "poster.pwdesign", "output": "poster-design.pdf" }));
     assert_eq!(page_count(&root.path().join("poster-design.pdf")), 1);
-    assert_eq!(c.err("export_design", json!({ "path": "poster.pwdesign", "output": "x.png" })), "mcp.output_extension");
+    assert_eq!(c.err("export_design", json!({ "path": "poster.pwdesign", "output": "x.jpg" })), "mcp.output_extension");
+    c.ok("export_design", json!({ "path": "poster.pwdesign", "output": "x.png" }));
     assert_eq!(
         c.err("reconstruct_design", json!({ "path": "poster.pdf", "output": "x.json" })),
         "mcp.output_extension"
