@@ -682,6 +682,44 @@ def build_tables_document() -> bytes:
     return w.render(catalog, info)
 
 
+def build_poster_document() -> bytes:
+    """A flat flyer for the Design Reconstruction Studio: tinted background, a dark banner with
+    white bold title, a heading, body lines, a red rule, an orange button with white wording, a
+    gradient picture and a small footer. Rendered to pixels by the tests, then rebuilt; the expected
+    wording, boxes and colours are listed in crates/pw-pdf/tests/studio.rs."""
+    w = PdfWriter()
+    catalog, pages_obj = w.reserve(), w.reserve()
+    font = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    bold = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>")
+    side = 64
+    pixels = bytes(v for y in range(side) for x in range(side) for v in (x * 4, y * 4, 160))
+    picture = w.stream(pixels, f"/Type /XObject /Subtype /Image /Width {side} /Height {side} "
+                               "/ColorSpace /DeviceRGB /BitsPerComponent 8 ")
+
+    def text(f: str, size: float, x: float, y: float, s: str) -> str:
+        return f"BT /{f} {size} Tf {x} {y} Td ({esc(s)}) Tj ET\n"
+
+    ops = "0.98 0.96 0.90 rg 0 0 400 500 re f\n"
+    ops += "0.12 0.23 0.48 rg 0 400 400 100 re f\n"
+    ops += "1 g " + text("F2", 32, 40, 440, "SPRING FAIR")
+    ops += "0 g " + text("F2", 18, 40, 360, "Saturday 14 May")
+    ops += "0.25 g " + text("F1", 12, 40, 330, "Music, food and crafts")
+    ops += text("F1", 12, 40, 312, "Riverside Park, 10:00 to 18:00")
+    ops += "0.8 0.1 0.1 rg 40 292 320 3 re f\n"
+    ops += "0.95 0.55 0.1 rg 40 230 150 40 re f\n"
+    ops += "1 g " + text("F2", 16, 62, 244, "Free entry")
+    ops += "q 110 0 0 110 250 170 cm /Im1 Do Q\n"
+    ops += "0.25 g " + text("F1", 9, 40, 40, "Bring a friend")
+    content = w.stream(ops.encode("latin-1"))
+    page = w.add(f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 400 500] "
+                 f"/Resources << /Font << /F1 {font} 0 R /F2 {bold} 0 R >> /XObject << /Im1 {picture} 0 R >> >> "
+                 f"/Contents {content} 0 R >>")
+    w.set(pages_obj, f"<< /Type /Pages /Kids [{page} 0 R] /Count 1 >>")
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R >>")
+    info = w.add("<< /Title (Poster fixture) /Producer (gen_fixtures.py) >>")
+    return w.render(catalog, info)
+
+
 def build_borderless_tables_document() -> bytes:
     """Tables without drawn grids for table export (D-020): page 1 has a table of aligned columns
     with no lines at all and a table with only horizontal rules above and below its header and at
@@ -764,6 +802,7 @@ def main() -> int:
     files["form-defaults.pdf"] = build_form_document(defaults=True)
     files["tables.pdf"] = build_tables_document()
     files["borderless-tables.pdf"] = build_borderless_tables_document()
+    files["poster.pdf"] = build_poster_document()
     files["form-nested.pdf"] = build_nested_form_document()
     files["redaction.pdf"] = build_redaction_document()
     files["redaction-hard.pdf"] = build_redaction_hard_document()

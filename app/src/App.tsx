@@ -1,20 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Command as CommandIcon,
-  FolderOpen,
-  Layers,
-  PanelLeft,
-  Search,
-  Menu as MenuIcon,
-  LayoutPanelLeft,
-  X,
-  ZoomIn,
-  ZoomOut,
-  MoveHorizontal,
-  PencilLine,
-  Volume2,
-  Type as TypeIcon,
-} from "lucide-react";
+import { FileText, X, ZoomIn, ZoomOut, MoveHorizontal } from "lucide-react";
 import { useApi } from "./api";
 import {
   addAnnotations,
@@ -48,9 +33,10 @@ import { EMPTY_HISTORY as NO_OBJ_EDITS, push as pushObjEdit, redoLast, toPageEdi
 import { eventToShortcut, isTextEntry } from "./shortcuts";
 import { applyAppearance } from "./theme";
 import { toPwError, type AppInfo, type AttachmentInfo, type AvailableUpdate, type CollisionPolicy, type FormField, type FormInfo, type FormValue, type JobSnapshot, type OpenedDoc, type Operation, type PwError, type RecoveredJob, type RedactArea, type SearchHit, type SearchRect, type Settings, type SignatureReport } from "./types";
-import { CommandButton, Menu, type MenuItemOrSeparator } from "./components/ui";
+import { CommandButton, Menu, type MenuEntry, type MenuItemOrSeparator } from "./components/ui";
 import { Viewer, type ScrollRequest } from "./components/Viewer";
 import { ToolsPanel } from "./components/ToolsPanel";
+import { MENU_ICONS, TopBar, barGroups } from "./components/TopBar";
 import { ReadAloudBar, type ReadStart } from "./components/ReadAloudBar";
 import { Sidebar, type SidebarView } from "./components/Sidebar";
 import { PageToolsDialog, type PageTool } from "./components/PageToolsDialog";
@@ -77,6 +63,8 @@ import { SaveAttachmentDialog } from "./components/SaveAttachmentDialog";
 import { EditBookmarksDialog } from "./components/EditBookmarksDialog";
 import { ImagesToPdfDialog, isImagePath } from "./components/ImagesToPdfDialog";
 import { OfficeDialog, isOfficePath } from "./components/OfficeDialog";
+import { Studio, type StudioSource } from "./components/Studio";
+import { isDesignPath, studioSourceFor } from "./studio";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { NoteDialog, UnsavedDialog } from "./components/AnnotationDialogs";
 import { CommandPalette, Home, Notices, PasswordDialog, PropertiesDialog, SearchBar, StatusBar, type Notice, type NoticeAction, type SearchState } from "./components/Panels";
@@ -118,6 +106,7 @@ type DialogState =
   | { kind: "bookmarks"; addOnOpen: boolean; page: number }
   | { kind: "images"; files: string[] }
   | { kind: "office"; file: string | null }
+  | { kind: "studio"; source: StudioSource }
   | { kind: "unsaved"; reason: "tab"; docId: number }
   | { kind: "unsaved"; reason: "quit" }
   | null;
@@ -398,6 +387,11 @@ export function App() {
       // Office files are converted to PDF first (Open an Office file).
       if (isOfficePath(path)) {
         setDialog((d) => (d ? d : { kind: "office", file: path }));
+        return;
+      }
+      // Design projects (dropped, or given at launch) open in the Design Studio.
+      if (isDesignPath(path)) {
+        setDialog((d) => (d ? d : { kind: "studio", source: { kind: "open", path } }));
         return;
       }
       try {
@@ -860,6 +854,15 @@ export function App() {
     });
   };
 
+  // Re-render when a page text selection starts or ends, so selection tools enable without a click.
+  const [, setHasSelection] = useState(false);
+  useEffect(() => {
+    const onSel = () => setHasSelection(!!pageSelection());
+    document.addEventListener("selectionchange", onSel);
+    return () => document.removeEventListener("selectionchange", onSel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const selectionAvail = (): true | string => (pageSelection() ? true : "Select text on a page first.");
   const roomAvail = (): true | string => (activePending.length < MAX_PENDING ? true : "Save a copy first; too many unsaved annotations.");
 
@@ -1017,6 +1020,11 @@ export function App() {
     "file.toWord": { run: () => openTool("word"), available: all(needDoc, noDialog) },
     "file.toPowerPoint": { run: () => openTool("slides"), available: all(needDoc, noDialog) },
     "file.translate": { run: () => openTool("translate"), available: all(needDoc, noDialog) },
+    "studio.rebuildPage": {
+      run: () => active && setDialog({ kind: "studio", source: { kind: "rebuild", input: active.path, page: view.page, docId: active.doc_id } }),
+      available: all(needDoc, noDialog),
+    },
+    "studio.open": { run: () => void openStudio(), available: noDialog },
     "read.aloud": { run: () => startReading(), available: all(needDoc, () => speechReady) },
     "read.stop": { run: () => setReader(null), available: () => (reader ? true : "Nothing is being read aloud.") },
     "read.saveAudio": { run: () => openTool("audio"), available: all(needDoc, noDialog, () => speechReady) },
@@ -1175,6 +1183,7 @@ export function App() {
         item("pages.rotate", `Rotate page ${n}…`, () => openTool("rotate", String(n))),
         item("pages.delete", `Delete page ${n}…`, () => openTool("delete", String(n)), multi ? true : "A one-page document has no pages to delete."),
         item("pages.organize"),
+        item("studio.rebuildPage", `Rebuild page ${n} as editable design…`, () => active && setDialog({ kind: "studio", source: { kind: "rebuild", input: active.path, page, docId: active.doc_id } }), dialog ? "Close the open dialog first." : true),
         item("file.editBookmarks", `Add bookmark for page ${n}…`, () => setDialog({ kind: "bookmarks", addOnOpen: true, page }), dialog ? "Close the open dialog first." : true),
         ...(selected ? [] : [item("read.aloud", `Read page ${n} aloud`, () => startReading(page), speechReady)]),
         "separator",
@@ -1253,8 +1262,7 @@ export function App() {
       ],
     });
 
-  const appMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
-    const r = e.currentTarget.getBoundingClientRect();
+  const appMenu = (r: DOMRect) => {
     setMenu({
       label: "Menu",
       x: r.left,
@@ -1279,9 +1287,13 @@ export function App() {
     });
   };
 
-  const pagesMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
-    const r = e.currentTarget.getBoundingClientRect();
-    setMenu({ label: "Page tools", x: r.left, y: r.bottom + 2, items: [item("pages.organize"), "separator", item("pages.extract"), item("pages.delete"), item("pages.rotate"), item("pages.split"), item("pages.stamp"), item("pages.watermark"), item("pages.crop"), item("pages.exportImages"), item("pages.extractImages"), item("pages.exportText"), item("file.toWord"), item("file.toPowerPoint"), item("file.exportTables"), item("file.translate"), item("read.saveAudio"), item("pages.labels"), item("pages.ocr"), item("pages.deskew"), item("pages.orient"), item("pages.removeBlank"), "separator", item("pages.merge")] });
+  /** Pick a picture, PDF (its first page) or design project and open it in the Design Studio. */
+  const openStudio = async () => {
+    const p = await api.pickDesignSource();
+    if (!p) return;
+    const source = studioSourceFor(p);
+    if (!source) return notify({ kind: "warning", title: "Choose a PNG or JPEG picture, a PDF or a .pwdesign file", persistent: false });
+    setDialog({ kind: "studio", source });
   };
 
   /* ---------- Job results ---------- */
@@ -1413,46 +1425,26 @@ export function App() {
   return (
     <div className="app">
       <header className="toolbar-host">
-      <div className="toolbar" role="toolbar" aria-label="Main toolbar">
-        <div className="group">
-          <button
-            type="button"
-            className="btn"
-            aria-haspopup="menu"
-            aria-expanded={menu?.label === "Menu"}
-            title="Menu: files, preferences and help"
-            data-testid="app-menu"
-            onClick={(e) => appMenu(e)}
-          >
-            <MenuIcon /> Menu
-          </button>
-          <CommandButton command="file.open" handlers={handlers} bindings={bindings} icon={<FolderOpen />} showLabel label="Open" />
-        </div>
-        <div className="divider" aria-hidden="true" />
-        <div className="group">
-          <CommandButton command="view.toggleThumbnails" handlers={handlers} bindings={bindings} icon={<PanelLeft />} pressed={!!active && showThumbs} />
-          <button
-            type="button"
-            className="btn"
-            aria-haspopup="menu"
-            aria-expanded={menu?.label === "Page tools"}
-            aria-disabled={!active || undefined}
-            title={active ? "Page tools" : `Page tools — ${NO_DOC}`}
-            onClick={(e) => active && pagesMenu(e)}
-          >
-            <Layers /> Pages
-          </button>
-          <CommandButton command="search.open" handlers={handlers} bindings={bindings} icon={<Search />} pressed={searchOpen} />
-          <CommandButton command={reader ? "read.stop" : "read.aloud"} handlers={handlers} bindings={bindings} icon={<Volume2 />} pressed={!!reader} />
-          <CommandButton command="edit.toggleEditMode" handlers={handlers} bindings={bindings} icon={<PencilLine />} pressed={editMode} />
-          {editMode && <CommandButton command="edit.addText" handlers={handlers} bindings={bindings} icon={<TypeIcon />} pressed={addTextArmed} />}
-        </div>
-        <span className="spacer" />
-        <div className="group">
-          <CommandButton command="app.commandPalette" handlers={handlers} bindings={bindings} icon={<CommandIcon />} />
-          <CommandButton command="view.toggleTools" handlers={handlers} bindings={bindings} icon={<LayoutPanelLeft />} showLabel label="All tools" pressed={!!active && showTools} />
-        </div>
-      </div>
+        <TopBar
+          handlers={handlers}
+          bindings={bindings}
+          groups={barGroups({ reading: !!reader, editMode })}
+          openMenu={menu?.label ?? null}
+          onAppMenu={appMenu}
+          onMenu={(label, r, ids) => setMenu({ label, x: r.left, y: r.bottom + 2, items: ids.map((id) => (id === "separator" ? id : { ...(item(id) as MenuEntry), icon: MENU_ICONS[id] })) })}
+          pressed={{
+            "view.toggleThumbnails": !!active && showThumbs,
+            "search.open": searchOpen,
+            "read.stop": !!reader,
+            "edit.toggleEditMode": editMode,
+            "edit.addText": addTextArmed,
+            "redact.markArea": markMode,
+            "view.toggleTools": !!active && showTools,
+          }}
+          scaleKey={`${effective?.density}-${effective?.ui_scale}`}
+          hasDoc={!!active}
+          noDocReason={NO_DOC}
+        />
       </header>
 
       {tabs.length > 0 ? (
@@ -1492,7 +1484,13 @@ export function App() {
                   tabMenu(t, e.clientX, e.clientY);
                 }}
               >
+                <FileText className="tab-icon" aria-hidden="true" />
                 <span className="name">{t.name}</span>
+                {changesOf(t.doc_id) > 0 && (
+                  <span className="dirty" title="Unsaved changes">
+                    <span className="sr-only">, unsaved changes</span>
+                  </span>
+                )}
               </button>
               <button
                 type="button"
@@ -1642,6 +1640,7 @@ export function App() {
             onOpen={openDialog}
             onImagesToPdf={() => setDialog({ kind: "images", files: [] })}
             onOpenOffice={() => setDialog({ kind: "office", file: null })}
+            onStudio={() => runCommand("studio.open")}
             onBatch={() => setDialog({ kind: "batch" })}
             onOpenRecent={(p) => openPath(p)}
             onRemoveRecent={removeRecent}
@@ -1780,6 +1779,7 @@ export function App() {
       {dialog?.kind === "removeBlank" && active && <RemoveBlankDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "print" && active && <PrintDialog doc={active} currentPage={view.page} onClose={() => setDialog(null)} />}
       {dialog?.kind === "compare" && active && <CompareView doc={active} others={tabs.filter((t) => t.doc_id !== active.doc_id)} jobs={jobs} onClose={() => setDialog(null)} />}
+      {dialog?.kind === "studio" && <Studio source={dialog.source} jobs={jobs} onClose={() => setDialog(null)} />}
       {dialog?.kind === "organize" && active && <OrganizeDialog doc={active} jobs={jobs} onClose={() => setDialog(null)} onFinished={onJobFinished} />}
       {dialog?.kind === "note" && active && (
         <NoteDialog

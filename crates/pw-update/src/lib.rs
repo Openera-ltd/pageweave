@@ -21,9 +21,14 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// Where the newest release's manifest is.
-pub const MANIFEST_URL: &str = "https://github.com/kuyamcliff/pageweave/releases/latest/download/latest.json";
-/// Installers are only ever downloaded from this repository's releases.
-pub const RELEASE_PREFIX: &str = "https://github.com/kuyamcliff/pageweave/releases/download/";
+pub const MANIFEST_URL: &str = "https://github.com/Openera-ltd/pageweave/releases/latest/download/latest.json";
+/// Installers are only ever downloaded from this repository's releases. The repository moved from
+/// kuyamcliff to Openera-ltd (GitHub redirects the old address); manifests list the old address so
+/// that copies installed before the move, which accept only it, can still update.
+pub const RELEASE_PREFIXES: [&str; 2] = [
+    "https://github.com/Openera-ltd/pageweave/releases/download/",
+    "https://github.com/kuyamcliff/pageweave/releases/download/",
+];
 /// The platform key in `latest.json` for this build.
 pub const PLATFORM: &str = "windows-x86_64";
 /// Development builds only: read the manifest from here instead (tests).
@@ -114,7 +119,8 @@ fn version(v: &str) -> PwResult<semver::Version> {
 
 /// The installer file name, taken from a release URL of this repository.
 fn installer_name(url: &str) -> PwResult<String> {
-    let allowed = url.starts_with(RELEASE_PREFIX) || (cfg!(debug_assertions) && url.starts_with("http://127.0.0.1:"));
+    let allowed = RELEASE_PREFIXES.iter().any(|p| url.starts_with(p))
+        || (cfg!(debug_assertions) && url.starts_with("http://127.0.0.1:"));
     if !allowed {
         return Err(bad_manifest("the installer is not on this project's releases page"));
     }
@@ -370,11 +376,16 @@ mod tests {
         let (m2, a) = parse(m.as_bytes(), "0.1.0").expect("parse").expect("newer");
         let u = update_from(&m2, &a, "0.1.0", None).expect("update");
         assert_eq!((u.version.as_str(), u.bytes, u.downloaded), ("0.2.0", BODY.len() as u64, false));
+        // The repository's new address is accepted as well as the old one (moved; GitHub redirects).
+        let moved = "https://github.com/Openera-ltd/pageweave/releases/download/v0.2.0/PageWeave_0.2.0_x64-setup.exe";
+        assert!(parse(manifest("0.2.0", moved, SIG_020).as_bytes(), "0.1.0").expect("moved").is_some());
         for url in [
             "https://example.com/PageWeave_0.2.0_x64-setup.exe",
             "https://github.com/someone/else/releases/download/v1/PageWeave_0.2.0_x64-setup.exe",
             "https://github.com/kuyamcliff/pageweave/releases/download/v0.2.0/evil.bat",
             "https://github.com/kuyamcliff/pageweave/releases/download/v0.2.0/..%2Fx-setup.exe",
+            "https://github.com/Openera-ltd/pageweave/releases/download/v0.2.0/evil.bat",
+            "https://github.com/Openera-ltd/pageweave.evil/releases/download/v0.2.0/PageWeave_0.2.0_x64-setup.exe",
         ] {
             let e = parse(manifest("0.2.0", url, SIG_020).as_bytes(), "0.1.0").expect_err(url);
             assert_eq!(e.code, "update.manifest", "{url}");

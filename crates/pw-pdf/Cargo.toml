@@ -40,6 +40,8 @@ p12-keystore.workspace = true
 ring.workspace = true
 # Word export: package writing and verification.
 zip.workspace = true
+# Design Reconstruction Studio: pictures inside design projects and SVG exports.
+base64 = "0.22"
 quick-xml.workspace = true
 # Private temporary folders for Office conversions.
 tempfile.workspace = true

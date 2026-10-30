@@ -1167,3 +1167,45 @@ fn to_pptx_writes_one_slide_per_page() {
         .expect("run");
     assert_eq!(bad.status.code(), Some(2));
 }
+
+#[test]
+fn design_rebuilds_a_page_and_exports_svg_and_pdf() {
+    if pw_ocr::default_resource_dir().is_none() {
+        assert!(std::env::var_os("CI").is_none(), "OCR resources missing in CI");
+        eprintln!("OCR resources not installed; skipping");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tmp");
+    let project = dir.path().join("poster.pwdesign");
+    let r = bin().args(["--json", "design"]).arg(fixture("poster.pdf")).arg("-o").arg(&project).output().expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stdout));
+    let v = json(&r);
+    assert_eq!(v["result"]["operation"], "reconstruct_design");
+    assert_eq!(v["result"]["data"]["images"], 1, "{v}");
+    for ext in ["svg", "pdf"] {
+        let out = dir.path().join(format!("poster.{ext}"));
+        let e = bin().args(["--json", "design-export"]).arg(&project).arg("-o").arg(&out).output().expect("run");
+        assert!(e.status.success(), "{}", String::from_utf8_lossy(&e.stdout));
+        assert_eq!(json(&e)["result"]["data"]["format"], ext);
+    }
+    // Page 0, an unknown export format, a page the PDF does not have: refused (exit 2).
+    let zero = bin()
+        .args(["design", "--page", "0"])
+        .arg(fixture("poster.pdf"))
+        .arg("-o")
+        .arg(dir.path().join("z.pwdesign"))
+        .output()
+        .expect("run");
+    assert_eq!(zero.status.code(), Some(2));
+    let png =
+        bin().args(["design-export"]).arg(&project).arg("-o").arg(dir.path().join("x.png")).output().expect("run");
+    assert_eq!(png.status.code(), Some(2));
+    let far = bin()
+        .args(["--json", "design", "--page", "9"])
+        .arg(fixture("poster.pdf"))
+        .arg("-o")
+        .arg(dir.path().join("f.pwdesign"))
+        .output()
+        .expect("run");
+    assert_eq!(json(&far)["error"]["code"], "design.page");
+}

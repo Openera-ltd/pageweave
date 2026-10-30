@@ -338,6 +338,15 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             warnings.extend(w);
             (vec![out(&c, Some(n))], serde_json::to_value(&summary).unwrap_or_default())
         }
+        Operation::ReconstructDesign { input, page, output } => {
+            let (c, summary) = crate::studio::reconstruct_design(input, &opts, *page, output, policy, &cancelled)?;
+            (vec![out(&c, None)], serde_json::to_value(&summary).unwrap_or_default())
+        }
+        Operation::ExportDesign { input, format, output } => {
+            let (c, w) = crate::studio::export_design(input, *format, output, policy)?;
+            warnings.extend(w);
+            (vec![out(&c, None)], json!({ "format": format }))
+        }
         Operation::SanitizeInspect { input } => {
             let found = crate::sanitize::sanitize_inspect(input, &opts)?;
             (vec![], serde_json::to_value(&found).unwrap_or_default())

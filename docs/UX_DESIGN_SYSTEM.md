@@ -22,6 +22,13 @@ Before a major UI design/rework:
 - Do not put explanatory paragraphs below each toolbar item. Use clear names, familiar symbols, discoverable tooltips, accessible descriptions, and searchable documentation.
 - Make hierarchy clear: document canvas first, contextual tools second, secondary panels optional/collapsible. Avoid letting AI/assistant surfaces crowd core document work.
 
+## Toolbar and icon conventions (2026-10-30)
+
+- One row, `--toolbar-h` tall: frequent tools are icon-only buttons (Lucide, 16 px at 100 % text size, muted until hovered); only Open, the two dropdowns and All tools carry text. Groups are separated by short hairlines, not boxes.
+- An "on" tool uses an accent tint and accent icon (`aria-pressed`); an open dropdown uses the pressed grey and turns its chevron. Disabled controls are 45 % opacity and keep their tooltip reason.
+- Buttons respond within one frame: colour transitions of `--dur-fast` and a 0.96 press scale; menus drop in (4 px, `--dur-fast`), the All tools pane and sidebar slide in by 12 px (`--dur-med`). All durations are tokens and fall to 0 with reduced motion.
+- Document tabs show a file icon (accent when active) and an accent dot while the document has unsaved changes.
+
 ## Themes and density
 
 Support light, dark, and system modes; configurable accent color; compact and comfortable density; accessible contrast; scalable interface text; high-contrast considerations; and reduced motion. Ensure custom themes apply across every screen, popup, selected text, disabled control, validation message, canvas tool, and installer state. Preferences must survive restart and upgrade. Theme previews should not create a separate inconsistent UI implementation.
@@ -58,9 +65,13 @@ Capture screenshots of key screens/states at representative resolutions and disp
 
 ## Brand identity
 
-- Official logo: `docs/assets/pageweave-logo.png` (master, 1254 × 1254) and `docs/assets/pageweave-logo-512.png`
-  (README). A white page with text lines wrapped in blue-to-violet layers on a near-black background.
-- App and installer icons (`app/src-tauri/icons/`) are generated from the logo cut to a rounded square:
-  `npx tauri icon <rounded-square.png> -o src-tauri/icons` (run in `app/`; delete the android/ios folders,
-  which PageWeave does not ship).
+- Official logo: `docs/assets/pageweave-logo.png` (master, 807 × 807, transparent background) and
+  `docs/assets/pageweave-logo-512.png` (README). A white page with text lines wrapped in blue-to-violet layers; no
+  backdrop, so it sits on light and dark surfaces alike. The original artwork on its near-black square is kept as
+  `docs/assets/pageweave-logo-on-dark.png` (1254 × 1254, for social previews).
+- The transparent master is cut from that artwork with `tools/brand/cutout_logo.py` (interior kept opaque; each
+  edge pixel takes its local colour and its blend fraction as alpha, so there is no dark fringe). From it:
+  `pageweave-logo-512.png` and `app/assets/icon-source.png` (1024 × 1024) are resized, and the app and installer
+  icons are generated with `npx tauri icon assets/icon-source.png -o src-tauri/icons` (run in `app/`; delete the
+  android/ios folders, which PageWeave does not ship). Check 16–48 px on light and dark backgrounds after any change.
 - The interface accent (`#2f6fde`) stays the default; the logo's blues and violet are its brand range.

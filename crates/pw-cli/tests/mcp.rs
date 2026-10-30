@@ -283,7 +283,7 @@ fn write_tools_create_verified_new_files_and_leave_sources_alone() {
     let before = std::fs::read(root.path().join("five-pages.pdf")).expect("read");
     let mut c = Client::start(&[root.path()], true);
     let names = tool_names(&mut c);
-    assert_eq!(names.len(), 24, "{names:?}");
+    assert_eq!(names.len(), 26, "{names:?}");
 
     let r = c.ok("extract_pages", json!({ "path": "five-pages.pdf", "pages": "4, 2", "output": "ex.pdf" }));
     assert_eq!(r["outputs"][0]["pages"], 2);
@@ -426,4 +426,36 @@ fn many_quick_calls_in_flight_all_get_their_results() {
             assert_eq!(r["result"]["isError"], false, "{r}");
         }
     }
+}
+
+#[test]
+fn design_tools_rebuild_and_export_inside_the_approved_folder() {
+    if pw_ocr::default_resource_dir().is_none() {
+        assert!(std::env::var_os("CI").is_none(), "OCR resources missing in CI");
+        eprintln!("OCR resources not installed; skipping");
+        return;
+    }
+    let root = tempfile::tempdir().expect("tmp");
+    copy_fixtures(root.path(), &["poster.pdf"]);
+    let mut c = Client::start(&[root.path()], true);
+    let r = c.ok("reconstruct_design", json!({ "path": "poster.pdf", "output": "poster.pwdesign" }));
+    assert!(r["data"]["text"].as_u64() >= Some(6), "{r}");
+    assert!(r["data"]["editable_ratio"].as_f64() >= Some(0.85), "{r}");
+    c.ok("export_design", json!({ "path": "poster.pwdesign", "output": "poster.svg" }));
+    assert!(std::fs::read_to_string(root.path().join("poster.svg")).expect("svg").contains("SPRING FAIR"));
+    c.ok("export_design", json!({ "path": "poster.pwdesign", "output": "poster-design.pdf" }));
+    assert_eq!(page_count(&root.path().join("poster-design.pdf")), 1);
+    assert_eq!(c.err("export_design", json!({ "path": "poster.pwdesign", "output": "x.png" })), "mcp.output_extension");
+    assert_eq!(
+        c.err("reconstruct_design", json!({ "path": "poster.pdf", "output": "x.json" })),
+        "mcp.output_extension"
+    );
+    assert_eq!(
+        c.err("reconstruct_design", json!({ "path": "poster.pdf", "page": 0, "output": "y.pwdesign" })),
+        "mcp.arguments"
+    );
+    assert_eq!(
+        c.err("reconstruct_design", json!({ "path": "/etc/hostname", "output": "z.pwdesign" })),
+        "mcp.path_denied"
+    );
 }

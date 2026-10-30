@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatBytes } from "../format";
-import { CaseSensitive, ChevronDown, ChevronUp, FileText, FolderOpen, Images, Layers, Trash2, WholeWord, X } from "lucide-react";
+import { CaseSensitive, ChevronDown, ChevronUp, FileText, FileUp, FolderOpen, Shapes, Images, Layers, Trash2, WholeWord, X } from "lucide-react";
 import { COMMANDS, type CommandHandlers, type CommandId } from "../commands";
 import { basename, dirname } from "../paths";
 import type { JobSnapshot, OpenedDoc, PwError } from "../types";
 import { Dialog } from "./ui";
+import logo from "../../src-tauri/icons/64x64.png";
 
 /* ---------------- Home ---------------- */
 
@@ -15,6 +16,7 @@ export function Home({
   onImagesToPdf,
   onBatch,
   onOpenOffice,
+  onStudio,
   onOpenRecent,
   onRemoveRecent,
   openShortcut,
@@ -25,6 +27,7 @@ export function Home({
   onImagesToPdf: () => void;
   onBatch: () => void;
   onOpenOffice: () => void;
+  onStudio: () => void;
   onOpenRecent: (path: string) => void;
   onRemoveRecent: (path: string) => void;
   openShortcut?: string;
@@ -32,26 +35,38 @@ export function Home({
   return (
     <main className="home" aria-label="Start">
       <div className="panel">
-        <h1>PageWeave</h1>
-        <p>Open a PDF to view, search and reorganize its pages. Your files stay on this computer.</p>
-        <div className={`drop ${dropActive ? "active" : ""}`} aria-hidden="true">
-          {dropActive ? "Release to open" : "Drop PDF, Office files or images here"}
+        <div className="home-head">
+          <img className="logo" src={logo} alt="" width={36} height={36} />
+          <div>
+            <h1>PageWeave</h1>
+            <p>Open a PDF to view, search and reorganize its pages. Your files stay on this computer.</p>
+          </div>
         </div>
-        <button type="button" className="btn primary" data-command="file.open" onClick={onOpen} title={openShortcut ? `Open PDF (${openShortcut})` : "Open PDF"}>
+        <div className={`drop ${dropActive ? "active" : ""}`} aria-hidden="true">
+          <FileUp />
+          <span>{dropActive ? "Release to open" : "Drop PDF, Office files or images here"}</span>
+        </div>
+        <button type="button" className="btn primary home-open" data-command="file.open" onClick={onOpen} title={openShortcut ? `Open PDF (${openShortcut})` : "Open PDF"}>
           <FolderOpen /> Open PDF…
-        </button>{" "}
-        <button type="button" className="btn outline" data-command="file.imagesToPdf" onClick={onImagesToPdf}>
-          <Images /> Create PDF from images…
-        </button>{" "}
-        <button type="button" className="btn outline" data-command="file.openOffice" onClick={onOpenOffice}>
-          <FileText /> Open an Office file…
-        </button>{" "}
-        <button type="button" className="btn outline" data-command="file.batch" onClick={onBatch}>
-          <Layers /> Process several files…
+          {openShortcut && <span className="kbd-hint">{openShortcut}</span>}
         </button>
+        <div className="home-actions">
+          <button type="button" className="btn outline" data-command="file.imagesToPdf" onClick={onImagesToPdf}>
+            <Images /> <span>Create PDF from images…</span>
+          </button>
+          <button type="button" className="btn outline" data-command="file.openOffice" onClick={onOpenOffice}>
+            <FileText /> <span>Open an Office file…</span>
+          </button>
+          <button type="button" className="btn outline" data-command="file.batch" onClick={onBatch}>
+            <Layers /> <span>Process several files…</span>
+          </button>
+          <button type="button" className="btn outline" data-command="studio.open" onClick={onStudio}>
+            <Shapes /> <span>Rebuild a flat design…</span>
+          </button>
+        </div>
         {recent.length > 0 && (
           <>
-            <h2 style={{ fontSize: "var(--font-size-2)", margin: "24px 0 8px" }}>Recent</h2>
+            <h2 className="home-section">Recent</h2>
             <ul className="recent" aria-label="Recent files">
               {recent.map((p) => (
                 <li key={p}>

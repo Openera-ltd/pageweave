@@ -3,45 +3,30 @@
 // with its reason when it cannot run.
 
 import { useMemo, useState } from "react";
-import {
-  ArrowRightLeft,
-  ClipboardList,
-  FileOutput,
-  FilePlus2,
-  FileSearch,
-  Highlighter,
-  Languages,
-  LayoutGrid,
-  Lock,
-  PenLine,
-  PenTool,
-  ScanText,
-  Stamp,
-  X,
-} from "lucide-react";
-import type { ReactNode } from "react";
+import { ArrowRightLeft, X } from "lucide-react";
 import { COMMAND_BY_ID, type CommandHandlers, type CommandId } from "../commands";
+import { COMMAND_ICONS } from "../commandIcons";
 
 export interface ToolGroup {
   id: string;
   title: string;
-  icon: ReactNode;
   commands: CommandId[];
 }
 
 export const TOOL_GROUPS: ToolGroup[] = [
-  { id: "convert", title: "Convert and export", icon: <FileOutput />, commands: ["file.toWord", "file.toPowerPoint", "file.exportTables", "pages.exportText", "pages.exportImages", "pages.extractImages"] },
-  { id: "translate", title: "Translate and read aloud", icon: <Languages />, commands: ["file.translate", "read.aloud", "read.saveAudio"] },
-  { id: "edit", title: "Edit", icon: <PenLine />, commands: ["edit.toggleEditMode", "edit.addText", "file.editProperties", "file.editBookmarks", "file.attachFiles"] },
-  { id: "comment", title: "Comment", icon: <Highlighter />, commands: ["annotate.highlight", "annotate.underline", "annotate.strikeOut", "annotate.note"] },
-  { id: "organize", title: "Organize pages", icon: <LayoutGrid />, commands: ["pages.organize", "pages.rotate", "pages.delete", "pages.extract", "pages.split", "pages.merge", "pages.crop", "pages.labels", "pages.removeBlank"] },
-  { id: "scan", title: "Scan and OCR", icon: <ScanText />, commands: ["pages.ocr", "pages.deskew", "pages.orient"] },
-  { id: "stamp", title: "Numbers and watermarks", icon: <Stamp />, commands: ["pages.stamp", "pages.watermark"] },
-  { id: "forms", title: "Forms", icon: <ClipboardList />, commands: ["file.exportFormData", "file.importFormData", "edit.clearForm", "edit.resetForm"] },
-  { id: "protect", title: "Protect and redact", icon: <Lock />, commands: ["file.protect", "file.unprotect", "redact.markArea", "redact.markPatterns", "redact.markPage", "redact.apply", "file.sanitize"] },
-  { id: "sign", title: "Sign", icon: <PenTool />, commands: ["file.sign", "file.signatureMark", "view.showSignatures", "file.trustedCertificates"] },
-  { id: "check", title: "Compare and check", icon: <FileSearch />, commands: ["file.compare", "file.accessibility", "file.reduceSize"] },
-  { id: "create", title: "Create and combine", icon: <FilePlus2 />, commands: ["file.imagesToPdf", "file.openOffice", "file.batch"] },
+  { id: "convert", title: "Convert and export", commands: ["file.toWord", "file.toPowerPoint", "file.exportTables", "pages.exportText", "pages.exportImages", "pages.extractImages"] },
+  { id: "translate", title: "Translate and read aloud", commands: ["file.translate", "read.aloud", "read.saveAudio"] },
+  { id: "edit", title: "Edit", commands: ["edit.toggleEditMode", "edit.addText", "file.editProperties", "file.editBookmarks", "file.attachFiles"] },
+  { id: "comment", title: "Comment", commands: ["annotate.highlight", "annotate.underline", "annotate.strikeOut", "annotate.note"] },
+  { id: "organize", title: "Organize pages", commands: ["pages.organize", "pages.rotate", "pages.delete", "pages.extract", "pages.split", "pages.merge", "pages.crop", "pages.labels", "pages.removeBlank"] },
+  { id: "scan", title: "Scan and OCR", commands: ["pages.ocr", "pages.deskew", "pages.orient"] },
+  { id: "stamp", title: "Numbers and watermarks", commands: ["pages.stamp", "pages.watermark"] },
+  { id: "forms", title: "Forms", commands: ["file.exportFormData", "file.importFormData", "edit.clearForm", "edit.resetForm"] },
+  { id: "protect", title: "Protect and redact", commands: ["file.protect", "file.unprotect", "redact.markArea", "redact.markPatterns", "redact.markPage", "redact.apply", "file.sanitize"] },
+  { id: "sign", title: "Sign", commands: ["file.sign", "file.signatureMark", "view.showSignatures", "file.trustedCertificates"] },
+  { id: "check", title: "Compare and check", commands: ["file.compare", "file.accessibility", "file.reduceSize"] },
+  { id: "design", title: "Design Studio", commands: ["studio.rebuildPage", "studio.open"] },
+  { id: "create", title: "Create and combine", commands: ["file.imagesToPdf", "file.openOffice", "file.batch"] },
 ];
 
 const label = (id: CommandId) => COMMAND_BY_ID.get(id)!.label.replace(/…$/, "");
@@ -81,10 +66,7 @@ export function ToolsPanel({ handlers, bindings, onClose }: Props) {
       <div className="tools-list">
         {groups.map((g) => (
           <section key={g.id} className="tools-group" aria-labelledby={`tools-${g.id}`}>
-            <h3 id={`tools-${g.id}`}>
-              {g.icon}
-              {g.title}
-            </h3>
+            <h3 id={`tools-${g.id}`}>{g.title}</h3>
             <ul>
               {g.commands.map((c) => {
                 const avail = handlers[c].available();
@@ -101,7 +83,8 @@ export function ToolsPanel({ handlers, bindings, onClose }: Props) {
                         if (handlers[c].available() === true) handlers[c].run();
                       }}
                     >
-                      {label(c)}
+                      {COMMAND_ICONS[c]}
+                      <span>{label(c)}</span>
                     </button>
                   </li>
                 );

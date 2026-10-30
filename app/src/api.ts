@@ -10,6 +10,7 @@ import { createContext, useContext } from "react";
 import { OFFICE_EXTENSIONS } from "./office";
 import type {
   AppInfo,
+  Design,
   AttachmentInfo,
   ExistingAnnotation,
   ResourceReport,
@@ -59,6 +60,13 @@ export interface Api {
   pageUrl(docId: number, page: number, scalePermille: number): string;
   pickPdfFiles(multiple: boolean): Promise<string[]>;
   pickSavePath(defaultPath: string): Promise<string | null>;
+  /** Save dialog for a design export (SVG or PDF). */
+  pickDesignExport(defaultPath: string, format: "svg" | "pdf"): Promise<string | null>;
+  /** A picture, PDF or design project to open in the Studio. */
+  pickDesignSource(): Promise<string | null>;
+  loadDesign(path: string): Promise<Design>;
+  /** Save edits over the design project at `path` (an existing .pwdesign only); returns its size. */
+  saveDesign(path: string, design: Design): Promise<number>;
   pickFolder(defaultPath?: string): Promise<string | null>;
   revealInFolder(path: string): Promise<void>;
   /** Command-line files the UI has not handled yet; `launchFileDone` marks one handled. */
@@ -163,6 +171,18 @@ export const tauriApi: Api = {
     return Array.isArray(r) ? r : [r];
   },
   pickSavePath: (defaultPath) => saveDialog({ defaultPath, filters: [{ name: "PDF document", extensions: ["pdf"] }] }),
+  pickDesignExport: (defaultPath, format) =>
+    saveDialog({ defaultPath, filters: [format === "svg" ? { name: "SVG drawing", extensions: ["svg"] } : { name: "PDF document", extensions: ["pdf"] }] }),
+  pickDesignSource: async () => {
+    const r = await openDialog({
+      multiple: false,
+      directory: false,
+      filters: [{ name: "Pictures, PDFs and designs", extensions: ["png", "jpg", "jpeg", "pdf", "pwdesign"] }],
+    });
+    return typeof r === "string" ? r : null;
+  },
+  loadDesign: (path) => invoke("load_design", { path }),
+  saveDesign: (path, design) => invoke("save_design", { path, design }),
   pickFolder: async (defaultPath) => {
     const r = await openDialog({ directory: true, multiple: false, defaultPath });
     return typeof r === "string" ? r : null;

@@ -533,6 +533,14 @@ pub struct AnnotationSpec {
     pub contents: Option<String>,
 }
 
+/// Export format of a design project (Design Reconstruction Studio).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DesignFormat {
+    Svg,
+    Pdf,
+}
+
 /// Spreadsheet format for exported tables.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -665,6 +673,20 @@ pub enum Operation {
         input: PathBuf,
         #[serde(default)]
         permissions: ProtectPermissions,
+        output: PathBuf,
+    },
+    /// Rebuild a flat picture (a PNG/JPEG file, or page `page` (0-based) of a PDF) as separately
+    /// editable text, shapes and pictures, saved as a design project (.pwdesign).
+    ReconstructDesign {
+        input: PathBuf,
+        #[serde(default)]
+        page: u32,
+        output: PathBuf,
+    },
+    /// Export a design project as editable SVG or as PDF.
+    ExportDesign {
+        input: PathBuf,
+        format: DesignFormat,
         output: PathBuf,
     },
     /// Save the text of pages (all when `pages` is absent) as a UTF-8 text file, one block per page.
@@ -1018,6 +1040,8 @@ pub const OPERATION_IDS: &[&str] = &[
     "set_page_labels",
     "images_to_pdf",
     "export_text",
+    "reconstruct_design",
+    "export_design",
     "convert_to_docx",
     "convert_to_pptx",
     "read_aloud_to_wav",
@@ -1082,6 +1106,8 @@ impl Operation {
             Operation::SetPageLabels { .. } => "set_page_labels",
             Operation::ImagesToPdf { .. } => "images_to_pdf",
             Operation::ExportText { .. } => "export_text",
+            Operation::ReconstructDesign { .. } => "reconstruct_design",
+            Operation::ExportDesign { .. } => "export_design",
             Operation::ConvertToDocx { .. } => "convert_to_docx",
             Operation::ConvertToPptx { .. } => "convert_to_pptx",
             Operation::ReadAloudToWav { .. } => "read_aloud_to_wav",
@@ -1192,6 +1218,8 @@ impl Operation {
             | Operation::SetBookmarks { input, .. }
             | Operation::SetPageLabels { input, .. }
             | Operation::ExportText { input, .. }
+            | Operation::ReconstructDesign { input, .. }
+            | Operation::ExportDesign { input, .. }
             | Operation::ConvertToDocx { input, .. }
             | Operation::ConvertToPptx { input, .. }
             | Operation::ReadAloudToWav { input, .. }
@@ -1264,6 +1292,8 @@ impl Operation {
             | Operation::SetPageLabels { output, .. }
             | Operation::ImagesToPdf { output, .. }
             | Operation::ExportText { output, .. }
+            | Operation::ReconstructDesign { output, .. }
+            | Operation::ExportDesign { output, .. }
             | Operation::ConvertToDocx { output, .. }
             | Operation::ConvertToPptx { output, .. }
             | Operation::ReadAloudToWav { output, .. }
