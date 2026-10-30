@@ -63,9 +63,10 @@ fn tables_to_word_and_text_with_detection_and_pivot() {
     assert_eq!(r.data["detected"], false);
     let via = dir.path().join("via.txt");
     std::fs::write(dir.path().join("de.txt"), "unused").expect("w");
-    let r = translate("five-pages.pdf", Some("1"), Some("de"), "fr", &via).expect("pivot");
-    assert_eq!(r.data["via_english"], true, "{}", r.data);
-    assert!(r.warnings.iter().any(|w| w.contains("(through English)")));
+    // German → French is a direct pair (D-027): no route through English, nothing said about one.
+    let r = translate("five-pages.pdf", Some("1"), Some("de"), "fr", &via).expect("direct");
+    assert_eq!(r.data["via_english"], false, "{}", r.data);
+    assert!(!r.warnings.iter().any(|w| w.contains("(through English)")));
 }
 
 #[test]

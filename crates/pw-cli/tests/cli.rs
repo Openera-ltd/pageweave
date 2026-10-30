@@ -1087,7 +1087,8 @@ fn translate_lists_directions_and_translates_pages() {
     let r = bin().args(["--json", "translate"]).output().expect("run");
     let v = json(&r);
     assert!(r.status.success(), "{v}");
-    assert_eq!(v["result"]["directions"].as_array().expect("dirs").len(), 8);
+    // Six languages, every pair direct (D-027).
+    assert_eq!(v["result"]["directions"].as_array().expect("dirs").len(), 30);
     let out = dir.path().join("p1-it.txt");
     let r = bin()
         .args(["--json", "translate", "--pages", "1", "--to", "it", "-o"])

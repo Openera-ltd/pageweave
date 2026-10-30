@@ -1527,7 +1527,7 @@ await test("convert to PowerPoint: one slide per page with text boxes, table and
   assert(s2.includes("<a:tbl>") && s2.includes("Station"), "slide 2: table");
 });
 
-await test("translate: page to German as Word (layout kept), language detected; pairs through English are said; source unchanged", async () => {
+await test("translate: page to German as Word (layout kept), language detected; six languages, pairs direct; source unchanged", async () => {
   const src = join(FIX, "five-pages.pdf");
   const before = sha(src);
   const out = join(work, "five-pages-de.docx");
@@ -1538,11 +1538,12 @@ await test("translate: page to German as Word (layout kept), language detected; 
     await s.type('[role="dialog"] input', "Translate");
     await s.click('[role="option"][data-command="file.translate"]');
     await s.waitFor("#translate-to");
-    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('#translate-to option').length")) === 5, "five languages offered");
-    // French → German has no direct model: the dialog says it goes through English.
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('#translate-to option').length")) === 6, "six languages offered");
+    // French → German is a direct pair (D-027): no "through English" notice.
     await s.exec("const f = document.querySelector('#translate-from'); f.value = 'fr'; f.dispatchEvent(new Event('change', { bubbles: true }));");
     await s.exec("const t = document.querySelector('#translate-to'); t.value = 'de'; t.dispatchEvent(new Event('change', { bubbles: true }));");
-    await s.waitFor('[data-testid="translate-via"]');
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('#translate-to').value")) === "de", "French to German chosen");
+    assert(!(await s.exec("return !!document.querySelector('[data-testid=translate-via]')")), "direct pair: no route through English");
     // Same language on both sides is refused with a reason.
     await s.exec("const f = document.querySelector('#translate-from'); f.value = 'de'; f.dispatchEvent(new Event('change', { bubbles: true }));");
     await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=tool-start]').title")) === "Choose two different languages.", "same language refused");
