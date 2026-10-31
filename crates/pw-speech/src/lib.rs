@@ -142,6 +142,22 @@ pub fn engine_info() -> PwResult<EngineInfo> {
 pub use pw_core::text::sentences;
 
 /// Speak `text`. Each sentence is synthesized separately (and `cancelled` checked between them),
+/// The voice for text in language `lang` (a primary subtag such as "de"): the chosen voice when the
+/// person picked one; otherwise, when the system's default voice speaks another language and an
+/// installed voice speaks this one, that voice; else `None` (the default voice).
+pub fn voice_for_language(voices: &[Voice], chosen: Option<&str>, lang: Option<&str>) -> Option<String> {
+    if let Some(c) = chosen {
+        return Some(c.to_string());
+    }
+    let lang = lang?;
+    let primary = |v: &Voice| v.language.split(['-', '_']).next().unwrap_or("").to_ascii_lowercase();
+    let default = voices.iter().find(|v| v.default).or(voices.first())?;
+    if primary(default) == lang {
+        return None;
+    }
+    voices.iter().find(|v| primary(v) == lang).map(|v| v.id.clone())
+}
+
 /// so sentence timings are exact; word timings come from the engine where it reports them.
 pub fn speak(text: &str, opts: &SpeakOptions, cancelled: &dyn Fn() -> bool) -> PwResult<Speech> {
     let n = text.chars().count();
@@ -215,5 +231,30 @@ mod tests {
         // Nothing to say is an empty recording, not an error.
         let s = speak(" — • ", &SpeakOptions::default(), &|| false).expect("empty");
         assert!(s.samples.is_empty() && s.sentences.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod voice_tests {
+    use super::*;
+
+    fn v(id: &str, language: &str, default: bool) -> Voice {
+        Voice { id: id.into(), name: id.into(), language: language.into(), default }
+    }
+
+    #[test]
+    fn a_voice_for_the_texts_language_is_used_only_with_the_default_voice() {
+        let voices = [v("david", "en-US", true), v("katja", "de-DE", false), v("hortense", "fr_FR", false)];
+        // Another language with a matching voice: that voice.
+        assert_eq!(voice_for_language(&voices, None, Some("de")).as_deref(), Some("katja"));
+        assert_eq!(voice_for_language(&voices, None, Some("fr")).as_deref(), Some("hortense"));
+        // The default voice's own language, an unknown language, or none detected: the default.
+        assert_eq!(voice_for_language(&voices, None, Some("en")), None);
+        assert_eq!(voice_for_language(&voices, None, Some("it")), None);
+        assert_eq!(voice_for_language(&voices, None, None), None);
+        // A voice the person chose is always kept.
+        assert_eq!(voice_for_language(&voices, Some("david"), Some("de")).as_deref(), Some("david"));
+        // No voices at all.
+        assert_eq!(voice_for_language(&[], None, Some("de")), None);
     }
 }

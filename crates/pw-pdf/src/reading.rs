@@ -115,11 +115,22 @@ pub fn read_aloud_to_wav(
         )
         .with_action("If they are scans, recognize their text first (Make searchable)."));
     }
-    let sopts = pw_speech::SpeakOptions { voice: voice.map(str::to_string), rate };
     let mut rate_hz = 0u32;
+    let mut used: Vec<String> = Vec::new();
     let mut samples: Vec<i16> = Vec::new();
     let mut sentences = 0usize;
     for (k, t) in texts.iter().enumerate() {
+        // With the default voice, a page in another language is read by a voice for it if installed.
+        let lang = pw_translate::detect::detect(t).map(|(l, _)| l);
+        let page_voice = pw_speech::voice_for_language(&info.voices, voice, lang);
+        if let Some(name) =
+            page_voice.as_deref().and_then(|id| info.voices.iter().find(|v| v.id == id)).map(|v| v.name.clone())
+        {
+            if voice.is_none() && !used.contains(&name) {
+                used.push(name);
+            }
+        }
+        let sopts = pw_speech::SpeakOptions { voice: page_voice, rate };
         let s = pw_speech::speak(t, &sopts, cancelled)?;
         if !s.samples.is_empty() {
             if rate_hz == 0 {
@@ -160,7 +171,7 @@ pub fn read_aloud_to_wav(
         sentences,
         sample_rate: rate_hz,
         engine: info.name,
-        voice: voice_name,
+        voice: if used.is_empty() { voice_name } else { format!("{voice_name}, {}", used.join(", ")) },
     };
     Ok((c, report))
 }

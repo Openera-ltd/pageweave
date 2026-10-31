@@ -270,6 +270,15 @@ pub struct Spoken {
 async fn speak_text(text: String, voice: Option<String>, rate: f32) -> CmdResult<Spoken> {
     use base64::Engine as _;
     blocking(move || {
+        // With the default voice, text in another language is read by a voice for that language
+        // when the computer has one.
+        let voice = match voice {
+            Some(v) => Some(v),
+            None => pw_speech::engine_info().ok().and_then(|info| {
+                let lang = pw_translate::detect::detect(&text).map(|(l, _)| l);
+                pw_speech::voice_for_language(&info.voices, None, lang)
+            }),
+        };
         let s = pw_speech::speak(&text, &pw_speech::SpeakOptions { voice, rate }, &|| false)?;
         let wav = pw_speech::wav::encode(s.sample_rate, &s.samples);
         Ok(Spoken {
