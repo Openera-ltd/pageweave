@@ -391,3 +391,42 @@ fn pictures_resize_into_a_new_box_also_after_a_move_and_bad_boxes_are_refused() 
     assert_eq!((t.width_px, t.height_px), (80, 120), "pixels turned");
     assert!((t.rect.right - to.right).abs() < 0.5 && (t.rect.top - to.top).abs() < 0.5, "{:?}", t.rect);
 }
+
+#[test]
+fn turned_text_is_edited_in_place_and_stays_turned() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/pdf/redaction-hard.pdf");
+    let l = list(&src);
+    let tilted = run(&l, "Tilted PWTILT");
+    assert!(tilted.locked.is_none(), "turned text is editable: {:?}", tilted.locked);
+    let (w0, h0) = (tilted.rect.right - tilted.rect.left, tilted.rect.top - tilted.rect.bottom);
+    assert!(h0 > 40.0, "a 30-degree line covers a tall box: {:?}", tilted.rect);
+    let out = dir.path().join("tilted.pdf");
+    edit(&src, vec![text_edit(&tilted.objects, "Tilted PWEDIT words")], &out).expect("edit turned text");
+    let after = list(&out);
+    let t = run(&after, "Tilted PWEDIT");
+    // Still turned: the box keeps its shape (same font and length, so about the same size).
+    let (w1, h1) = (t.rect.right - t.rect.left, t.rect.top - t.rect.bottom);
+    assert!((w1 - w0).abs() < 0.2 * w0 && (h1 - h0).abs() < 0.2 * h0, "{:?} vs {:?}", t.rect, tilted.rect);
+    assert!(!after.texts.iter().any(|x| x.text.contains("PWTILT")));
+}
+
+#[test]
+fn editing_a_page_with_an_inline_image_keeps_the_picture() {
+    // redaction-hard.pdf page 1 draws an inline image (BI…EI) and an image XObject; PDFium's page
+    // rewrite used to drop the inline one, so any edit there failed verification.
+    let dir = tempfile::tempdir().expect("tmp");
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/pdf/redaction-hard.pdf");
+    let before = list(&src);
+    assert_eq!(before.images.len(), 2);
+    let line = run(&before, "Public line");
+    let out = dir.path().join("edited.pdf");
+    edit(&src, vec![text_edit(&line.objects, "Public line edited")], &out).expect("edit");
+    let after = list(&out);
+    assert_eq!(after.images.len(), 2, "both pictures kept");
+    for (a, b) in before.images.iter().zip(&after.images) {
+        assert_eq!((a.width_px, a.height_px), (b.width_px, b.height_px));
+        assert!((a.rect.left - b.rect.left).abs() < 0.5 && (a.rect.top - b.rect.top).abs() < 0.5, "same place");
+    }
+    assert!(after.texts.iter().any(|t| t.text == "Public line edited"));
+}

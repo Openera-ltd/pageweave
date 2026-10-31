@@ -73,6 +73,26 @@ fn upright(t: &PdfPageTextObject) -> bool {
     t.matrix().map(|m| m.b().abs() < 1e-3 && m.c().abs() < 1e-3 && m.a() > 0.0 && m.d() > 0.0).unwrap_or(false)
 }
 
+/// Why a text object's placement keeps it from being edited: slanted (sheared) or mirrored text.
+/// Turned text (a rotation, possibly with horizontal scaling) is edited in place, keeping its turn.
+fn placement_lock(t: &PdfPageTextObject) -> Option<&'static str> {
+    let Ok(m) = t.matrix() else { return Some("This text's placement could not be read.") };
+    let (a, b, c, d) = (m.a(), m.b(), m.c(), m.d());
+    let det = a * d - b * c;
+    let (x, y) = ((a * a + b * b).sqrt(), (c * c + d * d).sqrt());
+    if det.abs() < 1e-6 || x < 1e-6 || y < 1e-6 {
+        return Some("This text has no size on the page.");
+    }
+    if det < 0.0 {
+        return Some("Mirrored text cannot be edited yet.");
+    }
+    // The text's horizontal and vertical directions must stay at right angles (no shear).
+    if ((a * c + b * d) / (x * y)).abs() > 0.02 {
+        return Some("Slanted text cannot be edited yet.");
+    }
+    None
+}
+
 /// Font identity for grouping and glyph coverage.
 fn font_key(t: &PdfPageTextObject) -> String {
     t.font().name()
@@ -94,6 +114,8 @@ fn list_page(doc: &PdfDocument, page_index: u32) -> PwResult<EditableObjects> {
     let mut images = Vec::new();
     // Consecutive upright text objects with the same font, size and baseline join one run.
     let mut current: Option<(EditableText, f32, f32)> = None; // (run, right edge, baseline y)
+                                                              // Whether the current run is upright (turned objects never join one).
+    let mut run_upright = false;
     let flush = |cur: &mut Option<(EditableText, f32, f32)>, texts: &mut Vec<EditableText>| {
         if let Some((t, _, _)) = cur.take() {
             texts.push(t);
@@ -112,8 +134,8 @@ fn list_page(doc: &PdfDocument, page_index: u32) -> PwResult<EditableObjects> {
                 let size = t.scaled_font_size().value;
                 let key = font_key(t);
                 let embedded = font.is_embedded().unwrap_or(false);
-                let locked = if !upright(t) {
-                    Some("Turned or slanted text cannot be edited yet.".to_string())
+                let locked = if let Some(why) = placement_lock(t) {
+                    Some(why.to_string())
                 } else if text.contains('\u{fffd}') || (text.trim().is_empty() && !t.text().is_empty()) {
                     Some("This text's font has no character map, so its letters are unknown.".to_string())
                 } else if t.render_mode() == PdfPageTextRenderMode::Invisible {
@@ -123,9 +145,12 @@ fn list_page(doc: &PdfDocument, page_index: u32) -> PwResult<EditableObjects> {
                 };
                 // The baseline is the text matrix's translation (ink bounds vary with descenders).
                 let baseline = t.matrix().map(|m| m.f()).unwrap_or(r.bottom);
+                // Only upright objects join a run (a turned one is a run of its own).
                 let joins = current.as_ref().is_some_and(|(run, right, base)| {
                     run.locked.is_none()
                         && locked.is_none()
+                        && upright(t)
+                        && run_upright
                         && run.font == key
                         && (run.size - size).abs() < 0.05
                         && (base - baseline).abs() < size * 0.05
@@ -149,6 +174,7 @@ fn list_page(doc: &PdfDocument, page_index: u32) -> PwResult<EditableObjects> {
                     *right = r.right;
                 } else {
                     flush(&mut current, &mut texts);
+                    run_upright = upright(t);
                     let color = t.fill_color().map(hex).unwrap_or_else(|_| "#000000".into());
                     current = Some((
                         EditableText {
@@ -266,6 +292,85 @@ pub fn edit_objects(
     Ok((c, edited.page_count, warnings))
 }
 
+/// The source parsed by lopdf (decrypted with the open password when protected), for reading its
+/// content streams; `None` when it cannot be parsed.
+fn lopdf_source(input: &Path, opts: &OpenOptions) -> Option<lopdf::Document> {
+    let raw = std::fs::read(input).ok()?;
+    match lopdf::Document::load_mem(&raw) {
+        Ok(d) if !d.is_encrypted() => Some(d),
+        _ => opts
+            .password
+            .and_then(|p| lopdf::Document::load_mem_with_options(&raw, lopdf::LoadOptions::with_password(p)).ok()),
+    }
+}
+
+/// For each top-level image a page draws, in drawing order, whether it is an inline image. `None`
+/// when the content cannot be read or an XObject name cannot be resolved (then nothing is changed).
+fn inline_image_slots(doc: &lopdf::Document, page: u32) -> Option<Vec<bool>> {
+    let id = *doc.get_pages().get(&(page + 1))?;
+    let content = lopdf::content::Content::decode(&doc.get_page_content(id)).ok()?;
+    let (resources, ids) = doc.get_page_resources(id).ok()?;
+    let deref = |o: &lopdf::Object| -> Option<lopdf::Dictionary> {
+        match o {
+            lopdf::Object::Reference(r) => doc.get_dictionary(*r).ok().cloned(),
+            lopdf::Object::Dictionary(d) => Some(d.clone()),
+            _ => None,
+        }
+    };
+    let mut xobjects = lopdf::Dictionary::new();
+    for d in resources.cloned().into_iter().chain(ids.into_iter().filter_map(|i| doc.get_dictionary(i).ok().cloned())) {
+        if let Some(x) = d.get(b"XObject").ok().and_then(deref) {
+            for (k, v) in x.iter() {
+                if !xobjects.has(k) {
+                    xobjects.set(k.clone(), v.clone());
+                }
+            }
+        }
+    }
+    let mut slots = Vec::new();
+    for op in &content.operations {
+        match op.operator.as_str() {
+            "BI" => slots.push(true),
+            "Do" => {
+                let name = op.operands.first()?.as_name().ok()?;
+                let stream = match xobjects.get(name).ok()? {
+                    lopdf::Object::Reference(r) => doc.get_object(*r).ok()?.as_stream().ok()?.clone(),
+                    _ => return None,
+                };
+                if stream.dict.get(b"Subtype").and_then(|s| s.as_name()).ok() == Some(b"Image".as_slice()) {
+                    slots.push(false);
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(slots)
+}
+
+/// Replace the page's inline images (`slots`, in drawing order of its image objects) with equal
+/// image objects at the same index and placement, so object numbers stay the same. Skipped when
+/// the page's image objects do not line up with `slots`.
+fn materialize_inline_images<'a>(doc: &PdfDocument<'a>, page: &mut PdfPage<'a>, slots: &[bool]) -> PwResult<()> {
+    let err = |e: PdfiumError| map_pdfium_error(&e, "inline image");
+    let images: Vec<PdfPageObjectIndex> =
+        page.objects().iter().enumerate().filter(|(_, o)| o.as_image_object().is_some()).map(|(i, _)| i).collect();
+    if images.len() != slots.len() {
+        return Ok(());
+    }
+    for (&index, _) in images.iter().zip(slots).filter(|(_, inline)| **inline) {
+        let (bitmap, matrix) = {
+            let o = page.objects().get(index).map_err(err)?;
+            let img = o.as_image_object().ok_or_else(|| PwError::internal("edit.image", "Not an image."))?;
+            (img.get_raw_image().map_err(err)?, img.matrix().map_err(err)?)
+        };
+        let mut copy = PdfPageImageObject::new(doc, &bitmap).map_err(err)?;
+        copy.apply_matrix(matrix).map_err(err)?;
+        page.objects_mut().insert_object_at_index(index, PdfPageObject::Image(copy)).map_err(err)?;
+        page.objects_mut().remove_object_at_index(index + 1).map_err(err)?;
+    }
+    Ok(())
+}
+
 /// A document with object edits applied, saved to bytes and already verified.
 pub(crate) struct EditedBytes {
     pub bytes: Vec<u8>,
@@ -290,6 +395,17 @@ pub(crate) fn apply_object_edits(input: &Path, opts: &OpenOptions, pages: &[Page
     let signatures = doc.signatures().len();
     let mut substituted = 0usize;
     let mut expectations = Vec::new();
+    // Inline images (BI…EI) are dropped when PDFium rewrites a page's content: they become
+    // ordinary image objects first, at the same index and placement.
+    let parsed = lopdf_source(input, opts);
+    for pe in pages {
+        if let Some(slots) = parsed.as_ref().and_then(|d| inline_image_slots(d, pe.page)) {
+            if slots.contains(&true) {
+                let mut page = doc.pages().get(pe.page as PdfPageIndex).map_err(err)?;
+                materialize_inline_images(&doc, &mut page, &slots)?;
+            }
+        }
+    }
     for pe in pages {
         let listing = &listings[&pe.page];
         let text_of = |objs: &[u32]| listing.texts.iter().find(|t| t.objects == objs);
