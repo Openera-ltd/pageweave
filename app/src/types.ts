@@ -282,6 +282,8 @@ export interface AnnotationChange {
   color?: string | null;
   /** Move by [dx, dy] PDF points in unrotated page space (+y up); its pop-up moves with it. */
   offset?: [number, number] | null;
+  /** New bounds for shapes, drawings and stamps (scaled into them); not together with `offset`. */
+  rect?: SearchRect | null;
 }
 
 export type Operation =

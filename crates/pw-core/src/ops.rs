@@ -50,10 +50,18 @@ pub struct AnnotationChange {
     /// Move by `[dx, dy]` PDF points in unrotated page space (+y is up); its pop-up moves with it.
     #[serde(default)]
     pub offset: Option<[f32; 2]>,
+    /// New bounds (PDF points, unrotated page space) for shapes, drawings and stamps: the shape is
+    /// scaled into them. Not together with `offset` (a resize may also move it).
+    #[serde(default)]
+    pub rect: Option<RectPt>,
 }
 
 /// Largest move of one annotation, in points (the largest page side PDF allows).
 pub const MAX_ANNOTATION_MOVE: f32 = 14_400.0;
+
+/// Annotation types that can be resized: shapes and drawings are redrawn from their scaled
+/// geometry, stamps stretch their picture into the new bounds.
+pub const RESIZABLE: &[&str] = &["Square", "Circle", "Ink", "Line", "Polygon", "PolyLine", "Stamp"];
 
 /// Annotation types whose colour can be changed: their look follows the colour (/C) when the stored
 /// appearance is dropped, in PDFium and in other viewers.
@@ -1746,7 +1754,7 @@ impl Operation {
                 }
                 let mut seen = std::collections::HashSet::new();
                 for c in annotation_changes {
-                    if !c.delete && c.text.is_none() && c.color.is_none() && c.offset.is_none() {
+                    if !c.delete && c.text.is_none() && c.color.is_none() && c.offset.is_none() && c.rect.is_none() {
                         return Err(PwError::invalid(
                             "annotation.no_change",
                             "An annotation change has nothing to change.",
@@ -1778,6 +1786,24 @@ impl Operation {
                             return Err(PwError::invalid(
                                 "annotation.offset",
                                 "Give the move as two numbers of points, not both zero and at most 14400 each.",
+                            ));
+                        }
+                    }
+                    if let Some(r) = &c.rect {
+                        if !RESIZABLE.contains(&c.subtype.as_str()) {
+                            return Err(PwError::invalid(
+                                "annotation.resize_kind",
+                                format!("A {} annotation can't be resized here.", c.subtype),
+                            ));
+                        }
+                        let within = |v: f32| v.is_finite() && v.abs() <= 2.0 * MAX_ANNOTATION_MOVE;
+                        let ok = [r.left, r.bottom, r.right, r.top].into_iter().all(within)
+                            && r.right - r.left >= 1.0
+                            && r.top - r.bottom >= 1.0;
+                        if !ok || c.offset.is_some() {
+                            return Err(PwError::invalid(
+                                "annotation.rect",
+                                "Give the new size as a box at least 1 point wide and high (and no separate move).",
                             ));
                         }
                     }

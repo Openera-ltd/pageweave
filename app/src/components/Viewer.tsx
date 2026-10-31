@@ -5,7 +5,7 @@ import type { ObjEntry } from "../objectEdits";
 import { EditLayer } from "./EditLayer";
 import { KIND_LABEL, type PendingAnnotation } from "../annotations";
 import { currentValue, fieldLabel, isFillable, type FormEdits } from "../forms";
-import { CSS_PX_PER_PT, displaySizePt, displaySizePx, mostVisiblePage, pageOrigin, pdfRectToScreen, renderScalePermille, screenMoveToPdf, screenRectToPdf, unrotatedLayer, wheelZoom } from "../geometry";
+import { CSS_PX_PER_PT, type ScreenRect, displaySizePt, displaySizePx, mostVisiblePage, pageOrigin, pdfRectToScreen, renderScalePermille, screenMoveToPdf, screenRectToPdf, unrotatedLayer, wheelZoom } from "../geometry";
 import type { FormField, FormInfo, FormValue, FormWidget, OpenedDoc, PageInfo, PageText, SearchHit, SearchRect } from "../types";
 
 export interface ScrollRequest {
@@ -56,12 +56,16 @@ export interface MoveFrame {
   label: string;
   /** Being moved now (dragged or nudged with the arrow keys). */
   active: boolean;
+  /** Shapes, drawings and stamps can also be resized (corner handles, Ctrl+arrows). */
+  resizable: boolean;
 }
 
 export interface MoveProps {
   frames: MoveFrame[];
   /** Move the active annotation by [dx, dy] more PDF points. */
   onMove: (key: string, dx: number, dy: number) => void;
+  /** Give the active annotation a new box (PDF points). */
+  onResize: (key: string, rect: SearchRect) => void;
   onDone: () => void;
   onCancel: () => void;
 }
@@ -489,11 +493,15 @@ function MarkCapture({ page, onMark }: { page: PageInfo; onMark: (page: number, 
 /**
  * Frames of the file's annotations that are being moved. The page image still shows them where
  * they are in the file until the copy is saved, so the new place is drawn as a dashed frame. The
- * active one takes the pointer (drag) and the keyboard (arrows 1 pt, Shift 10 pt, Enter keeps,
- * Escape cancels); a drag is applied at the release point.
+ * active one takes the pointer (drag; corner handles resize shapes) and the keyboard (arrows move
+ * 1 pt, Shift 10 pt; Ctrl+arrows move the right or bottom edge; Enter keeps, Escape cancels); a
+ * drag is applied at the release point.
  */
+type Corner = "nw" | "ne" | "sw" | "se";
+
 function MoveLayer({ page, zoom, frames, moves }: { page: PageInfo; zoom: number; frames: MoveFrame[]; moves: MoveProps }) {
-  const [drag, setDrag] = useState<{ key: string; x0: number; y0: number; dx: number; dy: number } | null>(null);
+  /** A drag in progress: the frame (`corner` null) or one corner, with its screen offset so far (layout px). */
+  const [drag, setDrag] = useState<{ key: string; corner: Corner | null; x0: number; y0: number; dx: number; dy: number } | null>(null);
   const activeRef = useRef<HTMLDivElement>(null);
   const activeKey = frames.find((f) => f.active)?.key;
   useEffect(() => {
@@ -502,12 +510,30 @@ function MoveLayer({ page, zoom, frames, moves }: { page: PageInfo; zoom: number
   }, [activeKey]);
   // Pointer pixels → PDF points with the page's measured size (UI scaling cannot skew the move).
   const measured = (el: HTMLElement) => (el.parentElement?.getBoundingClientRect().width ?? 0) / (displaySizePt(page).w * CSS_PX_PER_PT) || zoom;
-  const onKeyDown = (e: React.KeyboardEvent, key: string) => {
+  // The frame on screen with a drag applied: the whole frame, or one corner.
+  const dragged = (s: ScreenRect, corner: Corner | null, dx: number, dy: number): ScreenRect => {
+    if (!corner) return { ...s, left: s.left + dx, top: s.top + dy };
+    const min = 4;
+    let [l, t, r, b] = [s.left, s.top, s.left + s.width, s.top + s.height];
+    if (corner.includes("w")) l = Math.min(l + dx, r - min);
+    else r = Math.max(r + dx, l + min);
+    if (corner.includes("n")) t = Math.min(t + dy, b - min);
+    else b = Math.max(b + dy, t + min);
+    return { left: l, top: t, width: r - l, height: b - t };
+  };
+  const resizeTo = (f: MoveFrame, s: ScreenRect, z: number) => {
+    const r = screenRectToPdf(s, page, z);
+    if (r.right - r.left >= 1 && r.top - r.bottom >= 1) moves.onResize(f.key, r);
+  };
+  const onKeyDown = (e: React.KeyboardEvent, f: MoveFrame) => {
     const step = (e.shiftKey ? 10 : 1) * zoom * CSS_PX_PER_PT;
     const arrows: Record<string, [number, number]> = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] };
     const a = arrows[e.key];
-    if (a) {
-      moves.onMove(key, ...screenMoveToPdf(a[0], a[1], page, zoom));
+    if (a && (e.ctrlKey || e.metaKey)) {
+      if (!f.resizable) return;
+      resizeTo(f, dragged(pdfRectToScreen(f.rect, page, zoom), "se", a[0], a[1]), zoom);
+    } else if (a) {
+      moves.onMove(f.key, ...screenMoveToPdf(a[0], a[1], page, zoom));
     } else if (e.key === "Enter") {
       moves.onDone();
     } else if (e.key === "Escape") {
@@ -523,7 +549,8 @@ function MoveLayer({ page, zoom, frames, moves }: { page: PageInfo; zoom: number
       {frames.map((f) => {
         const s = pdfRectToScreen(f.rect, page, zoom);
         const d = drag && drag.key === f.key ? drag : null;
-        const style = { left: s.left + (d?.dx ?? 0), top: s.top + (d?.dy ?? 0), width: Math.max(6, s.width), height: Math.max(6, s.height) };
+        const shown = d ? dragged(s, d.corner, d.dx, d.dy) : s;
+        const style = { left: shown.left, top: shown.top, width: Math.max(6, shown.width), height: Math.max(6, shown.height) };
         if (!f.active) return <div key={f.key} className="annot-frame" data-move-frame={f.key} aria-hidden="true" title={`${f.label} — moved here when you save a copy`} style={style} />;
         return (
           <div
@@ -533,16 +560,17 @@ function MoveLayer({ page, zoom, frames, moves }: { page: PageInfo; zoom: number
             data-move-frame={f.key}
             role="button"
             tabIndex={0}
-            aria-label={`Move ${f.label}: drag it, or use the arrow keys (Shift for bigger steps); Enter to finish, Escape to cancel`}
+            aria-label={`Move ${f.label}: drag it, or use the arrow keys (Shift for bigger steps)${f.resizable ? "; drag a corner or use Ctrl+arrow keys to resize" : ""}; Enter to finish, Escape to cancel`}
             style={style}
-            onKeyDown={(e) => onKeyDown(e, f.key)}
+            onKeyDown={(e) => onKeyDown(e, f)}
             onPointerDown={(e) => {
               if (e.button !== 0) return;
               e.preventDefault();
               e.stopPropagation();
               e.currentTarget.setPointerCapture?.(e.pointerId);
               e.currentTarget.focus();
-              setDrag({ key: f.key, x0: e.clientX, y0: e.clientY, dx: 0, dy: 0 });
+              const corner = ((e.target as HTMLElement).dataset.corner as Corner | undefined) ?? null;
+              setDrag({ key: f.key, corner, x0: e.clientX, y0: e.clientY, dx: 0, dy: 0 });
             }}
             onPointerMove={(e) => {
               if (!drag) return;
@@ -552,11 +580,20 @@ function MoveLayer({ page, zoom, frames, moves }: { page: PageInfo; zoom: number
             onPointerUp={(e) => {
               if (!drag) return;
               setDrag(null);
-              const [dx, dy] = screenMoveToPdf(e.clientX - drag.x0, e.clientY - drag.y0, page, measured(e.currentTarget));
+              // Applied at the release point (the last moves of a quick drag may have been merged).
+              const z = measured(e.currentTarget);
+              const [cx, cy] = [e.clientX - drag.x0, e.clientY - drag.y0];
+              if (drag.corner) {
+                if (cx !== 0 || cy !== 0) resizeTo(f, dragged(pdfRectToScreen(f.rect, page, z), drag.corner, cx, cy), z);
+                return;
+              }
+              const [dx, dy] = screenMoveToPdf(cx, cy, page, z);
               if (dx !== 0 || dy !== 0) moves.onMove(f.key, dx, dy);
             }}
             onPointerCancel={() => setDrag(null)}
-          />
+          >
+            {f.resizable && (["nw", "ne", "sw", "se"] as const).map((c) => <span key={c} className="annot-handle" data-corner={c} aria-hidden="true" />)}
+          </div>
         );
       })}
     </div>

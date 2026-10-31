@@ -172,22 +172,41 @@ struct PageExpect {
 /// stored appearance is drawn into /Rect, so it moves with it.
 const GEOMETRY: &[&[u8]] = &[b"Rect", b"QuadPoints", b"Vertices", b"L", b"CL", b"InkList"];
 
-/// `o` (resolved) with every x, y pair moved by `dx`, `dy`; `None` when it is not numbers.
-fn shifted(doc: &Document, o: &Object, dx: f32, dy: f32) -> Option<Object> {
+/// `o` (resolved) with every x, y pair mapped by `f`; `None` when it is not numbers.
+fn mapped(doc: &Document, o: &Object, f: &dyn Fn(f32, f32) -> (f32, f32)) -> Option<Object> {
     let o = doc.dereference(o).ok()?.1;
     let a = o.as_array().ok()?;
     if a.iter().all(|v| num(v).is_some()) {
-        let moved =
-            a.iter().enumerate().map(|(i, v)| Object::Real(num(v).unwrap_or(0.0) + if i % 2 == 0 { dx } else { dy }));
-        return Some(Object::Array(moved.collect()));
+        let v: Vec<f32> = a.iter().filter_map(num).collect();
+        let pts = v.chunks_exact(2).flat_map(|p| {
+            let (x, y) = f(p[0], p[1]);
+            [Object::Real(x), Object::Real(y)]
+        });
+        return Some(Object::Array(pts.collect()));
     }
-    a.iter().map(|v| shifted(doc, v, dx, dy)).collect::<Option<Vec<_>>>().map(Object::Array)
+    a.iter().map(|v| mapped(doc, v, f)).collect::<Option<Vec<_>>>().map(Object::Array)
+}
+
+/// The geometry entries of `entry` fitted from its /Rect into `to` (each point scaled with the box).
+fn fitted_geometry(doc: &Document, entry: &Object, from: [f32; 4], to: [f32; 4]) -> Vec<(&'static [u8], Object)> {
+    let Some(d) = dict_of(doc, entry) else { return vec![] };
+    let sx = (to[2] - to[0]) / (from[2] - from[0]).max(0.01);
+    let sy = (to[3] - to[1]) / (from[3] - from[1]).max(0.01);
+    let f = move |x: f32, y: f32| (to[0] + (x - from[0]) * sx, to[1] + (y - from[1]) * sy);
+    let mut out: Vec<(&'static [u8], Object)> = GEOMETRY
+        .iter()
+        .filter(|k| **k != b"Rect")
+        .filter_map(|k| d.get(k).ok().and_then(|o| mapped(doc, o, &f)).map(|o| (*k, o)))
+        .collect();
+    out.push((b"Rect", Object::Array(to.iter().map(|&v| Object::Real(v)).collect())));
+    out
 }
 
 /// The moved geometry entries of the annotation `entry` (to set on its dictionary).
 fn moved_geometry(doc: &Document, entry: &Object, dx: f32, dy: f32) -> Vec<(&'static [u8], Object)> {
     let Some(d) = dict_of(doc, entry) else { return vec![] };
-    GEOMETRY.iter().filter_map(|k| d.get(k).ok().and_then(|o| shifted(doc, o, dx, dy)).map(|o| (*k, o))).collect()
+    let f = move |x: f32, y: f32| (x + dx, y + dy);
+    GEOMETRY.iter().filter_map(|k| d.get(k).ok().and_then(|o| mapped(doc, o, &f)).map(|o| (*k, o))).collect()
 }
 
 fn rect_of(doc: &Document, entry: &Object) -> Option<[f32; 4]> {
@@ -307,6 +326,25 @@ pub(crate) fn apply_annotation_changes(
                     }
                 }
             }
+            if let (false, Some(r)) = (c.delete, &c.rect) {
+                let from = rect_of(&doc, &entries[i]).ok_or_else(changed)?;
+                let to = [r.left, r.bottom, r.right, r.top];
+                let geometry = fitted_geometry(&doc, &entries[i], from, to);
+                let stamp = stamp.clone();
+                // Shapes and drawings are redrawn from their scaled geometry (a stored appearance
+                // would keep the old line widths stretched); a stamp's picture is stretched into /Rect.
+                let redraw = c.subtype != "Stamp";
+                edit_entry(&mut doc, &mut entries[i], |d| {
+                    for (k, v) in geometry {
+                        d.set(k, v);
+                    }
+                    if redraw {
+                        d.remove(b"AP");
+                    }
+                    d.set("M", Object::string_literal(stamp));
+                })?;
+                new_rect.insert(i, to);
+            }
             if let (false, Some(t)) = (c.delete, &c.text) {
                 if c.subtype == "FreeText" {
                     return Err(PwError::invalid(
@@ -422,4 +460,32 @@ fn changed() -> PwError {
         "annotation.changed",
         "An annotation is not where it was when the list was made; reopen the document and try again.",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drawing_strokes_scale_with_their_box() {
+        let doc = Document::with_version("1.7");
+        let mut d = Dictionary::new();
+        d.set("Rect", Object::Array(vec![10.into(), 10.into(), 30.into(), 20.into()]));
+        let stroke = |p: &[i64]| Object::Array(p.iter().map(|&v| v.into()).collect());
+        d.set("InkList", Object::Array(vec![stroke(&[10, 10, 30, 20]), stroke(&[20, 15])]));
+        let got = fitted_geometry(&doc, &Object::Dictionary(d), [10.0, 10.0, 30.0, 20.0], [100.0, 0.0, 140.0, 40.0]);
+        let ink = got.iter().find(|(k, _)| *k == b"InkList").map(|(_, o)| o.clone()).expect("ink");
+        let pts: Vec<Vec<f32>> = ink
+            .as_array()
+            .expect("strokes")
+            .iter()
+            .map(|s| s.as_array().expect("stroke").iter().filter_map(num).collect())
+            .collect();
+        assert_eq!(pts, vec![vec![100.0, 0.0, 140.0, 40.0], vec![120.0, 20.0]]);
+        let rect = got.iter().find(|(k, _)| *k == b"Rect").map(|(_, o)| o.clone()).expect("rect");
+        assert_eq!(
+            rect.as_array().expect("rect").iter().filter_map(num).collect::<Vec<_>>(),
+            [100.0, 0.0, 140.0, 40.0]
+        );
+    }
 }

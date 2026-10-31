@@ -22,6 +22,7 @@ fn change(index: u32, subtype: &str, delete: bool, text: Option<&str>) -> Annota
         text: text.map(str::to_string),
         color: None,
         offset: None,
+        rect: None,
     }
 }
 
@@ -237,5 +238,47 @@ fn annotations_move_with_their_appearance_and_bad_moves_are_refused() {
             .expect_err("refused");
         assert_eq!(e.code, "annotation.offset");
     }
+    assert!(!other.exists());
+}
+
+#[test]
+fn shapes_resize_into_a_new_box_and_other_kinds_are_refused() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("resized.pdf");
+    let to = RectPt { left: 300.0, bottom: 500.0, right: 420.0, top: 580.0 };
+    let resize = |index, subtype: &str, rect: RectPt| AnnotationChange {
+        rect: Some(rect),
+        ..change(index, subtype, false, None)
+    };
+    apply(fixture("hidden-info.pdf"), vec![resize(7, "Square", to)], vec![], &out).expect("resize");
+    let l = list_annotations(&out, &OpenOptions::default()).expect("list");
+    let r = l.annotations.iter().find(|a| a.index == 7).map(|a| a.rect).expect("square");
+    assert!((r.right - 420.0).abs() < 0.01 && (r.top - 580.0).abs() < 0.01, "{r:?}");
+    // Redrawn at the new size: the outline is at the new right and top edges, not the old ones.
+    let (png, _, h) = pw_pdf::render_page_png(&out, &OpenOptions::default(), 0, 1.0).expect("render");
+    let img = image::load_from_memory(&png).expect("png").to_rgb8();
+    let red = |x0: u32, x1: u32, y0: u32, y1: u32| {
+        let mut n = 0;
+        for y in (h - y1)..(h - y0) {
+            for x in x0..x1 {
+                let p = img.get_pixel(x, y);
+                n += (p[0] > 150 && p[1] < 100 && p[2] < 100) as u32;
+            }
+        }
+        n
+    };
+    assert!(red(415, 425, 510, 570) > 20, "new right edge drawn: {}", red(415, 425, 510, 570));
+    assert!(red(310, 410, 575, 585) > 20, "new top edge drawn: {}", red(310, 410, 575, 585));
+    assert_eq!(red(355, 365, 510, 530), 0, "old right edge gone");
+    // Refused before anything is written: a kind that is not a shape, a box too small, a move as well.
+    let other = dir.path().join("other.pdf");
+    let e = apply(fixture("hidden-info.pdf"), vec![resize(2, "Highlight", to)], vec![], &other).expect_err("refused");
+    assert_eq!(e.code, "annotation.resize_kind");
+    let tiny = RectPt { left: 300.0, bottom: 500.0, right: 300.5, top: 580.0 };
+    let e = apply(fixture("hidden-info.pdf"), vec![resize(7, "Square", tiny)], vec![], &other).expect_err("refused");
+    assert_eq!(e.code, "annotation.rect");
+    let both = AnnotationChange { offset: Some([5.0, 5.0]), ..resize(7, "Square", to) };
+    let e = apply(fixture("hidden-info.pdf"), vec![both], vec![], &other).expect_err("refused");
+    assert_eq!(e.code, "annotation.rect");
     assert!(!other.exists());
 }

@@ -130,14 +130,14 @@ async function withApp(args, fn) {
   }
 }
 
-// E2E_ONLY=<substring> runs only matching scenarios (local iteration; CI always runs everything).
+// E2E_ONLY=<substring>[|<substring>…] runs only matching scenarios (local iteration; CI always runs everything).
 const ONLY = process.env.E2E_ONLY;
 
 /** Thrown by a scenario that cannot run on this platform; reported as SKIP, never as PASS. */
 class Skip extends Error {}
 
 async function test(name, fn) {
-  if (ONLY && !name.includes(ONLY)) return;
+  if (ONLY && !ONLY.split("|").some((o) => name.includes(o))) return;
   if (launchFailuresInARow >= 3) {
     // Every launch is failing: report the remaining scenarios as not run instead of timing out each.
     results.push({ name, status: "FAIL", error: "not run: the app could not be launched for the previous 3 scenarios" });
@@ -902,7 +902,9 @@ await test("markup colours: chosen in Settings, used by new highlights and notes
     const w = await markSpan(s, 0, "PWMARK001");
     await s.doubleClick('[data-e2e="target"]', w * 0.3, 0);
     await s.waitUntil(async () => (await selection(s)).trim() === "PWMARK001", "word selected");
-    await s.click('.toolbar [data-command="annotate.highlight"]');
+    // The context menu (the toolbar group may sit in More tools at the comfortable density).
+    await s.contextClick('[data-e2e="target"]', w * 0.3, 0);
+    await s.click('[role="menuitem"][data-command="annotate.highlight"]');
     await s.waitUntil(async () => (await annotCount(s, "highlight")) === 1, "highlight drawn");
     const shown = await s.exec("return getComputedStyle(document.querySelector('.annot.highlight')).backgroundColor + '|' + document.querySelector('.annot.highlight').getAttribute('style')");
     assert(/34,\s*204,\s*136|#22cc88/i.test(shown), `pending highlight drawn in the chosen colour (${shown})`);
@@ -3449,6 +3451,50 @@ await test("comments panel: move a highlight with the keyboard and by dragging; 
     const dy = b.Highlight.bottom - a.Highlight.bottom;
     assert(Math.abs(dy + 20) < 0.05 && Math.abs(dx - 60 / k) < 0.6, `highlight moved by (${dx}, ${dy})`);
     assert(JSON.stringify(b.Square) === JSON.stringify(a.Square), "rectangle not moved");
+  }
+});
+
+await test("comments panel: resize a rectangle by its corner and with Ctrl+arrows; highlights offer no handles; saved copy has the new box", async () => {
+  const src = join(FIX, "hidden-info.pdf");
+  const out = join(work, "comments-resized.pdf");
+  const frame = (s) => s.exec("const f=document.querySelector('.annot-frame.active'); if (!f) return null; const r=f.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height, handles: f.querySelectorAll('[data-corner]').length }");
+  let k = 1;
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click("#sb-tab-comments");
+    await s.waitFor('[aria-label="Move Highlight on page 1"]');
+    k = await s.exec("return document.querySelectorAll('.page')[0].getBoundingClientRect().width / 612");
+    // A highlight follows its text: it moves but has no resize handles.
+    await s.click('[aria-label="Move Highlight on page 1"]');
+    await s.waitUntil(async () => (await frame(s))?.handles === 0, "no handles on a highlight");
+    await s.keys(["Control", "ArrowRight"]);
+    assert((await unsavedText(s)) === "", "Ctrl+arrow does not resize a highlight");
+    await s.keys(["Escape"]);
+    await s.click('[aria-label="Move Rectangle on page 1"]');
+    await s.waitUntil(async () => (await frame(s))?.handles === 4, "four corner handles on the rectangle");
+    const f0 = await frame(s);
+    // Bottom-right corner 40 px right and 30 px down.
+    const se = await s.exec("const r=document.querySelector('.annot-frame.active [data-corner=se]').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]");
+    await s.dragAt(se[0], se[1], se[0] + 40, se[1] + 30);
+    await s.waitUntil(async () => { const f = await frame(s); return Math.abs(f.w - (f0.w + 40)) < 1.5 && Math.abs(f.h - (f0.h + 30)) < 1.5 && Math.abs(f.x - f0.x) < 1; }, "corner drag resized the frame, top-left kept");
+    // Ctrl+Shift+Right: 10 pt wider.
+    await s.keys(["Control", "Shift", "ArrowRight"]);
+    await s.waitUntil(async () => Math.abs((await frame(s)).w - (f0.w + 40 + 10 * k)) < 1.5, "10 pt wider from the keyboard");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => (await unsavedText(s)) === "1 unsaved change", "one unsaved change");
+    await axeCheck(s, "comments-resizing");
+    writeFileSync(join(ART, "comments-resized.png"), await s.screenshot());
+    await s.keys(["Control", "s"]);
+    await s.waitFor("#output");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved comments-resized.pdf")), "saved notice");
+  });
+  if (CLI) {
+    const rects = (f) => Object.fromEntries(JSON.parse(execFileSync(CLI, ["--json", "annotations", f], { encoding: "utf8" })).result.data.annotations.map((a) => [a.subtype, a.rect]));
+    const [a, b] = [rects(src).Square, rects(out).Square];
+    const near = (x, y, tol = 0.6) => Math.abs(x - y) < tol;
+    assert(near(b.left, a.left) && near(b.top, a.top) && near(b.right, a.right + 40 / k + 10) && near(b.bottom, a.bottom - 30 / k), `rectangle ${JSON.stringify(a)} → ${JSON.stringify(b)}`);
   }
 });
 

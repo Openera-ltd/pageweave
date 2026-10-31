@@ -68,7 +68,8 @@ enum Command {
     /// List the comments and markup already in a file, or change them in a new file (-o):
     /// --delete PAGE:INDEX:TYPE removes one (with its pop-up); --set-text PAGE:INDEX:TYPE=TEXT
     /// changes its comment; --set-color PAGE:INDEX:TYPE=#rrggbb its colour (markup, shapes, ink,
-    /// notes); --move PAGE:INDEX:TYPE=DX,DY moves it by DX,DY points (right and up). PAGE is
+    /// notes); --move PAGE:INDEX:TYPE=DX,DY moves it by DX,DY points (right and up); --resize
+    /// PAGE:INDEX:TYPE=LEFT,BOTTOM,RIGHT,TOP fits a shape, drawing or stamp into that box. PAGE is
     /// 1-based; INDEX and TYPE are as the listing prints them.
     Annotations {
         file: PathBuf,
@@ -80,6 +81,8 @@ enum Command {
         set_color: Vec<String>,
         #[arg(long = "move", value_name = "PAGE:INDEX:TYPE=DX,DY", allow_hyphen_values = true)]
         move_by: Vec<String>,
+        #[arg(long, value_name = "PAGE:INDEX:TYPE=L,B,R,T", allow_hyphen_values = true)]
+        resize: Vec<String>,
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
@@ -706,8 +709,13 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
         }
         Command::Inspect { file } => Operation::Inspect { input: file.clone() },
         Command::Fields { file } => Operation::FormFields { input: file.clone() },
-        Command::Annotations { file, delete, set_text, set_color, move_by, output } => {
-            if delete.is_empty() && set_text.is_empty() && set_color.is_empty() && move_by.is_empty() {
+        Command::Annotations { file, delete, set_text, set_color, move_by, resize, output } => {
+            if delete.is_empty()
+                && set_text.is_empty()
+                && set_color.is_empty()
+                && move_by.is_empty()
+                && resize.is_empty()
+            {
                 Operation::ListAnnotations { input: file.clone() }
             } else {
                 let out = output
@@ -724,6 +732,7 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
                         text: None,
                         color: None,
                         offset: None,
+                        rect: None,
                     });
                 }
                 for t in set_text {
@@ -739,6 +748,7 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
                         text: Some(text.to_string()),
                         color: None,
                         offset: None,
+                        rect: None,
                     });
                 }
                 for t in set_color {
@@ -757,6 +767,37 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
                             text: None,
                             color: Some(color.to_string()),
                             offset: None,
+                            rect: None,
+                        }),
+                    }
+                }
+                for t in resize {
+                    let syntax = || {
+                        PwError::invalid(
+                            "annotations.syntax",
+                            format!("“{t}”: use PAGE:INDEX:TYPE=LEFT,BOTTOM,RIGHT,TOP (points)."),
+                        )
+                    };
+                    let (r, to) = t.split_once('=').ok_or_else(syntax)?;
+                    let (page, index, subtype) = parse_annot_ref(r)?;
+                    let v: Vec<f32> = to
+                        .split(',')
+                        .map(|x| x.trim().parse::<f32>())
+                        .collect::<Result<_, _>>()
+                        .map_err(|_| syntax())?;
+                    let [left, bottom, right, top] = v[..] else { return Err(syntax()) };
+                    let rect = pw_core::ops::RectPt { left, bottom, right, top };
+                    match changes.iter_mut().find(|c| c.page == page && c.index == index) {
+                        Some(c) => c.rect = Some(rect),
+                        None => changes.push(pw_core::ops::AnnotationChange {
+                            page,
+                            index,
+                            subtype,
+                            delete: false,
+                            text: None,
+                            color: None,
+                            offset: None,
+                            rect: Some(rect),
                         }),
                     }
                 }
@@ -781,6 +822,7 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
                             text: None,
                             color: None,
                             offset: Some(offset),
+                            rect: None,
                         }),
                     }
                 }

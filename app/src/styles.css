@@ -618,6 +618,8 @@ textarea {
   border-right: 1px solid var(--border);
   display: grid;
   grid-template-rows: auto 1fr;
+  /* Content never widens the sidebar (it would be cut off at its edge). */
+  grid-template-columns: minmax(0, 1fr);
   min-height: 0;
 }
 
@@ -635,7 +637,9 @@ textarea {
   justify-content: center;
   gap: var(--space-2);
   height: var(--control-h);
-  min-width: calc(var(--control-h) + var(--space-2));
+  /* Full size when they fit; narrower (down to the icon) when the sidebar is tight. */
+  flex: 0 1 calc(var(--control-h) + var(--space-2));
+  min-width: 0;
   padding: 0 var(--space-2);
   border: none;
   border-bottom: 2px solid transparent;
@@ -645,6 +649,7 @@ textarea {
 }
 
 .sidebar-tabs [role="tab"] svg {
+  flex: none;
   width: var(--icon);
   height: var(--icon);
 }
@@ -894,6 +899,39 @@ textarea {
   cursor: move;
   pointer-events: auto;
   touch-action: none;
+}
+
+.annot-handle {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  background: var(--surface);
+}
+
+.annot-handle[data-corner="nw"] {
+  left: -5px;
+  top: -5px;
+  cursor: nwse-resize;
+}
+
+.annot-handle[data-corner="ne"] {
+  right: -5px;
+  top: -5px;
+  cursor: nesw-resize;
+}
+
+.annot-handle[data-corner="sw"] {
+  left: -5px;
+  bottom: -5px;
+  cursor: nesw-resize;
+}
+
+.annot-handle[data-corner="se"] {
+  right: -5px;
+  bottom: -5px;
+  cursor: nwse-resize;
 }
 
 .annot-frame.active:focus-visible {
@@ -2376,6 +2414,7 @@ kbd,
 }
 .comment-actions {
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: var(--space-1);
 }
 .comment-edit textarea {

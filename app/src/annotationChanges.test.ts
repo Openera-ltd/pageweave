@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { kindName, markDeleted, offsetOf, revert, setColor, setOffset, setText, toChanges } from "./annotationChanges";
+import { boundsOf, kindName, moveBy, setBounds, markDeleted, offsetOf, revert, setColor, setOffset, setText, toChanges } from "./annotationChanges";
 import type { ExistingAnnotation } from "./types";
 
 const a = (page: number, index: number, subtype = "Text", text: string | null = "hello"): ExistingAnnotation => ({
@@ -49,6 +49,18 @@ describe("pending annotation changes", () => {
     expect(setOffset(setColor(c, hl, "#ffff00"), hl, [0, 0])).toEqual({});
     // A deleted annotation is not moved.
     expect(offsetOf(markDeleted(setOffset({}, hl, [5, 5]), hl), hl)).toEqual([0, 0]);
+  });
+
+  it("a resize is a new box; later moves shift that box; back to the original box drops it", () => {
+    const sq = { ...a(0, 7, "Square", null), rect: { left: 300, bottom: 500, right: 360, top: 540 } };
+    let c = moveBy({}, sq, 10, 0);
+    expect(boundsOf(c, sq)).toEqual({ left: 310, bottom: 500, right: 370, top: 540 });
+    c = setBounds(c, sq, { left: 310, bottom: 500, right: 400.004, top: 560 });
+    expect(toChanges(c)).toEqual([{ page: 0, index: 7, subtype: "Square", delete: false, text: null, color: null, rect: { left: 310, bottom: 500, right: 400, top: 560 } }]);
+    c = moveBy(c, sq, -10, -5);
+    expect(toChanges(c)[0]).toMatchObject({ rect: { left: 300, bottom: 495, right: 390, top: 555 } });
+    expect(toChanges(c)[0]!.offset).toBeUndefined();
+    expect(setBounds(c, sq, sq.rect)).toEqual({});
   });
 
   it("names kinds the way people say them", () => {

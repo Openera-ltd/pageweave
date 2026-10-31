@@ -1007,6 +1007,40 @@ fn annotations_list_delete_and_retext() {
 }
 
 #[test]
+fn annotations_resize_a_shape_and_refuse_text_markup() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let copy = dir.path().join("r.pdf");
+    let r = bin()
+        .args(["annotations", "--resize", "1:7:Square=290,-0,420.5,580", "-o"])
+        .arg(&copy)
+        .arg(fixture("hidden-info.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let v = json(&bin().args(["--json", "annotations"]).arg(&copy).output().expect("run"));
+    let sq = v["result"]["data"]["annotations"]
+        .as_array()
+        .expect("list")
+        .iter()
+        .find(|a| a["index"] == 7)
+        .cloned()
+        .expect("square");
+    let r = &sq["rect"];
+    let got =
+        [r["left"].as_f64(), r["bottom"].as_f64(), r["right"].as_f64(), r["top"].as_f64()].map(|x| x.unwrap_or(-1.0));
+    assert!(got.iter().zip([290.0, 0.0, 420.5, 580.0]).all(|(a, b)| (a - b).abs() < 0.01), "{got:?}");
+    for bad in ["1:2:Highlight=0,0,100,100", "1:7:Square=1,2,3", "1:7:Square=a,b,c,d"] {
+        let r = bin()
+            .args(["annotations", "--resize", bad, "-o"])
+            .arg(dir.path().join("x.pdf"))
+            .arg(fixture("hidden-info.pdf"))
+            .output()
+            .expect("run");
+        assert_eq!(r.status.code(), Some(2), "{bad} is invalid input");
+    }
+}
+
+#[test]
 fn annotations_move_with_negative_offsets_and_bad_syntax_is_invalid() {
     let dir = tempfile::tempdir().expect("tmp");
     let copy = dir.path().join("m.pdf");
