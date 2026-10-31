@@ -255,11 +255,11 @@ the network — and only touches files inside the folders you name:
 }
 ```
 
-- Read tools: `list_capabilities`, `inspect_document`, `extract_text`, `search_text`, `list_form_fields`,
+- Read tools: `list_capabilities`, `inspect_document`, `extract_text`, `search_text`, `list_form_fields`, `list_annotations`,
   `compare_documents`, `check_signatures`, `check_accessibility`, `find_sensitive_text`.
 - With `--allow-write` also: `extract_pages`, `delete_pages`, `rotate_pages`, `merge_documents`,
   `split_document`, `fill_form`, `recognize_text` (OCR, with progress and cancel), `reduce_file_size`,
-  `export_text`, `convert_to_docx`, `convert_to_pptx`, `export_tables` (Excel), `read_aloud_to_wav`, `translate_document`, `reconstruct_design`, `export_design`. These only create **new** files; existing files are never replaced or changed.
+  `export_text`, `convert_to_docx`, `convert_to_pptx`, `export_tables` (Excel), `read_aloud_to_wav`, `translate_document` (PDF in the same layout, optionally side by side, Word or text; optional glossary), `reconstruct_design`, `export_design`. These only create **new** files; existing files are never replaced or changed.
 - Not available through MCP: password-protected files, signing, redaction, removing hidden information,
   passwords and attachments. Paths outside the named folders (including through symbolic links) are refused.
 - The agent and its AI model are separate from PageWeave; nothing here sends documents anywhere. What the

@@ -176,6 +176,7 @@ fn read_only_server_lists_and_runs_read_tools_and_refuses_writing() {
             "extract_text",
             "search_text",
             "list_form_fields",
+            "list_annotations",
             "compare_documents",
             "check_signatures",
             "check_accessibility",
@@ -195,6 +196,8 @@ fn read_only_server_lists_and_runs_read_tools_and_refuses_writing() {
 
     let info = c.ok("inspect_document", json!({ "path": "five-pages.pdf" }));
     assert_eq!(info["data"]["page_count"], 5);
+    let comments = c.ok("list_annotations", json!({ "path": "five-pages.pdf" }));
+    assert!(comments["data"]["annotations"].is_array(), "{comments}");
     let text = c.ok("extract_text", json!({ "path": "five-pages.pdf", "pages": "2" }));
     assert!(text["data"]["pages"][0]["text"].as_str().unwrap_or("").contains("PWMARK002"), "{text}");
     let hits = c.ok("search_text", json!({ "path": "search-terms.pdf", "query": "alpha", "whole_word": true }));
@@ -283,7 +286,7 @@ fn write_tools_create_verified_new_files_and_leave_sources_alone() {
     let before = std::fs::read(root.path().join("five-pages.pdf")).expect("read");
     let mut c = Client::start(&[root.path()], true);
     let names = tool_names(&mut c);
-    assert_eq!(names.len(), 26, "{names:?}");
+    assert_eq!(names.len(), 27, "{names:?}");
 
     let r = c.ok("extract_pages", json!({ "path": "five-pages.pdf", "pages": "4, 2", "output": "ex.pdf" }));
     assert_eq!(r["outputs"][0]["pages"], 2);
@@ -353,8 +356,14 @@ fn write_tools_create_verified_new_files_and_leave_sources_alone() {
     );
     assert_eq!(tr["data"]["target"], "fr", "{tr}");
     assert!(std::fs::read_to_string(root.path().join("p1-fr.txt")).expect("txt").contains("PWMARK001"));
+    // A PDF in the same layout, here each page next to its translation.
+    let side = c.ok(
+        "translate_document",
+        json!({ "path": "five-pages.pdf", "pages": "1", "source": "en", "target": "fr", "output": "p1-fr.pdf", "bilingual": true }),
+    );
+    assert_eq!(side["outputs"][0]["pages"], 1, "{side}");
     assert_eq!(
-        c.err("translate_document", json!({ "path": "five-pages.pdf", "target": "fr", "output": "p1.pdf" })),
+        c.err("translate_document", json!({ "path": "five-pages.pdf", "target": "fr", "output": "p1.odt" })),
         "mcp.output_extension"
     );
     let t = c.ok("export_tables", json!({ "path": "tables.pdf", "output": "t.xlsx" }));

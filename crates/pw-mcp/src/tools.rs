@@ -89,6 +89,14 @@ pub const TOOLS: &[Tool] = &[
         schema: || obj(json!({ "path": path_prop("PDF file") }), &["path"]),
     },
     Tool {
+        name: "list_annotations",
+        title: "List comments and markup",
+        description: "The comments, notes and markup already in the PDF (highlights, underlines, shapes, drawings, stamps…): kind, page, position, comment text, author, date and colour. Read-only.",
+        effect: Effect::ReadOnly,
+        long: false,
+        schema: || obj(json!({ "path": path_prop("PDF file") }), &["path"]),
+    },
+    Tool {
         name: "compare_documents",
         title: "Compare two PDFs",
         description: "Differences between an older and a newer PDF: aligned pages, inserted/deleted/changed words, moved passages, formatting and visual changes.",
@@ -297,7 +305,7 @@ pub const TOOLS: &[Tool] = &[
     Tool {
         name: "translate_document",
         title: "Translate a document",
-        description: "Translate all or chosen pages with PageWeave's own local translation models (nothing leaves the computer) into a Word document (.docx, layout kept: headings, columns, tables, pictures) or a text file (.txt). Languages: en, de, fr, es, it, pt (every pair translated directly). An optional glossary fixes how chosen terms are translated. The source language is detected when not given. The result reports numbers, dates, codes and addresses the translation did not keep exactly.",
+        description: "Translate all or chosen pages with PageWeave's own local translation models (nothing leaves the computer) into a PDF in the same layout (.pdf; with bilingual, each original page next to its translation), a Word document (.docx, layout kept: headings, columns, tables, pictures) or a text file (.txt). Languages: en, de, fr, es, it, pt (every pair translated directly). An optional glossary fixes how chosen terms are translated. The source language is detected when not given. The result reports numbers, dates, codes and addresses the translation did not keep exactly.",
         effect: Effect::WritesNewFiles,
         long: true,
         schema: || {
@@ -307,7 +315,8 @@ pub const TOOLS: &[Tool] = &[
                     "pages": { "type": "string", "description": PAGES },
                     "source": { "type": "string", "enum": ["en", "de", "fr", "es", "it", "pt"], "description": "Language of the document (detected when absent)" },
                     "target": { "type": "string", "enum": ["en", "de", "fr", "es", "it", "pt"], "description": "Language to translate into" },
-                    "output": path_prop("New .docx or .txt file (must not exist)"),
+                    "output": path_prop("New .pdf, .docx or .txt file (must not exist)"),
+                    "bilingual": { "type": "boolean", "description": "PDF output only: each original page next to its translation" },
                     "glossary": {
                         "type": "array",
                         "maxItems": 1000,
@@ -483,6 +492,8 @@ struct TranslateArg {
     output: String,
     #[serde(default)]
     glossary: Vec<pw_core::ops::GlossaryEntry>,
+    #[serde(default)]
+    bilingual: bool,
 }
 
 #[derive(Deserialize)]
@@ -564,6 +575,7 @@ pub fn operation(tool: &Tool, a: &Value, roots: &Roots) -> PwResult<Operation> {
     Ok(match tool.name {
         "inspect_document" => Operation::Inspect { input: roots.input(&args::<PathArg>(a)?.path)? },
         "list_form_fields" => Operation::FormFields { input: roots.input(&args::<PathArg>(a)?.path)? },
+        "list_annotations" => Operation::ListAnnotations { input: roots.input(&args::<PathArg>(a)?.path)? },
         "check_signatures" => {
             Operation::VerifySignatures { input: roots.input(&args::<PathArg>(a)?.path)?, trusted: vec![] }
         }
@@ -706,8 +718,8 @@ pub fn operation(tool: &Tool, a: &Value, roots: &Roots) -> PwResult<Operation> {
                 pages: x.pages,
                 source: x.source,
                 target: x.target,
-                output: roots.output(&x.output, &["docx", "txt"])?,
-                bilingual: false,
+                output: roots.output(&x.output, &["pdf", "docx", "txt"])?,
+                bilingual: x.bilingual,
                 glossary: x.glossary,
             }
         }
