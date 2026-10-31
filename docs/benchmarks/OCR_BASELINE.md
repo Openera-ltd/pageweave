@@ -111,3 +111,23 @@ PP-OCRv5 mobile recognition (official training weights published, Apache-2.0) on
 only if it beats PP-OCRv6 small on the same validation and blind sets; or (b) wait for official v6
 training weights. Kaggle preparation that does not depend on this (environment probe, rights-gated
 dataset upload, budgeted runs, verified output pull) is in `ml/`.
+
+## Real documents as scans (tools/corpus/ocrquality.py, 2026-10-31)
+
+Pages 1–2 of the test corpus' real documents rendered at 200 dpi, turned up to ±0.8°, noise, blur
+0.4 px, JPEG quality 60, then `pageweave ocr` (debug build, Linux). Word recall against the
+born-digital text of the same page:
+
+| Document | Page 1 | Page 2 |
+|---|---|---|
+| IRS Form 1040 | 0.997 | 0.999 |
+| IRS Schedule C | 0.985 | 0.974 |
+| IRS Form W-4 | 1.000 | 1.000 |
+| IRS Publication 15 | 0.808* | 0.928 |
+| NIST SP 800-63-3 | 1.000 | 1.000 |
+| W3C table | 1.000 | — |
+| fixture article.pdf | 1.000 | 0.984 |
+
+\* The reference text of that page includes an invisible printer's proof slug ("Userid: CPM Schema:
+tipx …") that is not on the rendered page; the words OCR missed are those. Cyrillic and Vietnamese
+link labels on the cover are read as Latin letters (OCR is Latin-only).
