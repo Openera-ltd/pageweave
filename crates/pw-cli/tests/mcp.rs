@@ -361,7 +361,10 @@ fn write_tools_create_verified_new_files_and_leave_sources_alone() {
         "translate_document",
         json!({ "path": "five-pages.pdf", "pages": "1", "source": "en", "target": "fr", "output": "p1-fr.pdf", "bilingual": true }),
     );
-    assert_eq!(side["outputs"][0]["pages"], 1, "{side}");
+    assert!(side["outputs"][0]["path"].as_str().is_some_and(|p| p.ends_with("p1-fr.pdf")), "{side}");
+    let sheet = c.ok("inspect_document", json!({ "path": "p1-fr.pdf" }));
+    assert_eq!(sheet["data"]["page_count"], 1, "one sheet: {sheet}");
+    assert_eq!(sheet["data"]["pages"][0]["width_pt"], 1224.0, "twice the page's width: {sheet}");
     assert_eq!(
         c.err("translate_document", json!({ "path": "five-pages.pdf", "target": "fr", "output": "p1.odt" })),
         "mcp.output_extension"
