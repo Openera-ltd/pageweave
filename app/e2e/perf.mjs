@@ -155,6 +155,70 @@ if (existsSync(LONG)) {
   }
 }
 
+// Soak (PERF_SOAK=1): open and close documents again and again, and scroll the long document end to
+// end twice, sampling memory, to see whether it keeps growing.
+if (process.env.PERF_SOAK && existsSync(LONG)) {
+  const samples = [];
+  // Both files become recent files; each round closes the tab, reopens a file from Home ▸ Recent,
+  // scrolls through 40 pages and closes it again — the way people work through documents.
+  const s = await Session.create(DRIVER, APP, [join(FIX, "article.pdf"), LONG]);
+  try {
+    const tabs = () => s.exec("return document.querySelectorAll('.tab-label').length");
+    await waitFor(async () => (await tabs()) === 2, "two tabs");
+    await sleep(2000);
+    samples.push({ step: "two documents open", rss: treeRssMiB(), by: treeRss().by });
+    const closeAll = async () => {
+      while ((await tabs()) > 0) {
+        await s.exec("document.querySelector('[data-testid=viewer]')?.focus(); return 1");
+        await s.keys(["Control", "w"]);
+        await sleep(150);
+      }
+      await waitFor(() => s.exec("return !!document.querySelector('ul.recent')"), "Home with recent files");
+    };
+    for (let round = 1; round <= 20; round++) {
+      await closeAll();
+      const name = round % 2 ? "rl-long.pdf" : "article.pdf";
+      await s.exec(`[...document.querySelectorAll('ul.recent button.open')].find((b) => b.textContent.includes(${JSON.stringify(name)})).click(); return 1`);
+      await waitFor(() => pageShown(s, 0), `${name} reopened`);
+      await s.execAsync(`const done = arguments[arguments.length - 1]; const v = document.querySelector('[data-testid=viewer]'); let n = 0;
+        function step() { v.scrollTop += 400; if (++n < 100) requestAnimationFrame(step); else done(1); } requestAnimationFrame(step);`);
+      await sleep(300);
+      if (round % 5 === 0) {
+        await sleep(1500);
+        samples.push({ step: `round ${round}`, rss: treeRssMiB(), by: treeRss().by });
+      }
+    }
+    await closeAll();
+    await sleep(3000);
+    samples.push({ step: "all closed after 20 rounds", rss: treeRssMiB(), by: treeRss().by });
+  } finally {
+    await s.delete();
+  }
+  const l = await Session.create(DRIVER, APP, [LONG]);
+  try {
+    await waitFor(() => pageShown(l, 0), "first page of the long document");
+    await sleep(2000);
+    samples.push({ step: "long document open", rss: treeRssMiB(), by: treeRss().by });
+    for (let pass = 1; pass <= Number(process.env.PERF_SOAK_PASSES ?? 2); pass++) {
+      // In chunks of 100 frames (each driver command must finish within 30 s).
+      for (let atEnd = false; !atEnd; ) {
+        atEnd = await l.execAsync(`const done = arguments[arguments.length - 1];
+          const v = document.querySelector('[data-testid=viewer]'); let n = 0;
+          function step() { v.scrollTop += 600; const end = v.scrollTop + v.clientHeight >= v.scrollHeight - 2; if (end || ++n >= 100) done(end); else requestAnimationFrame(step); }
+          requestAnimationFrame(step);`);
+      }
+      await sleep(3000);
+      samples.push({ step: `after scrolling to the end (pass ${pass})`, rss: treeRssMiB(), by: treeRss().by });
+      await l.exec("document.querySelector('[data-testid=viewer]').scrollTop = 0; return 1");
+      await sleep(3000);
+      samples.push({ step: `back at the top (pass ${pass})`, rss: treeRssMiB(), by: treeRss().by });
+    }
+  } finally {
+    await l.delete();
+  }
+  results.soak = samples;
+}
+
 // Engine throughput through the command line (one run each; wall time).
 if (CLI) {
   const time = (name, args) => {

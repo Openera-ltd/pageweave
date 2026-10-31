@@ -46,6 +46,28 @@ with move frames get those handlers. Page and thumbnail pictures decode asynchro
 change moved these numbers measurably on this machine (re-rendering was not the bottleneck here);
 both stay because they remove needless main-thread work.
 
+## Long session (PERF_SOAK=1)
+
+Twenty rounds of closing every tab, reopening a file from Home ▸ Recent (the 300-page document and
+the article alternately) and scrolling 40 pages; then the 300-page document scrolled end to end and
+back five times. Memory of the process tree (MiB), with the host and web view separately:
+
+| Step | Total | Host | Web view |
+|---|---|---|---|
+| Two documents open | 870 | 342 | 482 |
+| Open/close round 5 / 10 / 15 / 20 | 1346 / 1377 / 1399 / 1380 | 352 / 353 / 353 / 351 | 946 / 976 / 998 / 982 |
+| Everything closed after 20 rounds | 1375 | 351 | 977 |
+| Long document, fresh start | 875 | 336 | 492 |
+| After full scroll passes 1 / 2 / 3 / 4 / 5 | 1365 / 1399 / 1408 / 1392 / 1395 | 339–342 | 979 / 1013 / 1018 / 1006 / 1005 |
+
+The host (engine, documents, workers) stays flat: no growth across 20 open/close rounds or five
+passes through 300 pages. The web view grows to about 1 GiB and then levels off, and keeps it after
+every document is closed: WebKit keeps decoded pictures and its heap for reuse, sized from the
+machine's memory (16 GiB here). Serving page pictures with `Cache-Control: no-store` instead of
+`private, max-age=3600` lowered that plateau by only about 80 MiB (web view 809–961 MiB), at the cost
+of re-rendering pages scrolled back to, so caching stays. Whether WebView2 on Windows behaves the
+same is to be measured there.
+
 ## Engine through the command line (debug build, one run each)
 
 | Operation | Time |
@@ -61,5 +83,5 @@ both stay because they remove needless main-thread work.
 
 ## Not measured yet
 
-Release build; Windows (WebView2) on minimum/recommended hardware; GPU compositing; long-session
-memory stability (hours); low-memory and slow-disk behaviour; high DPI.
+Release build; Windows (WebView2) on minimum/recommended hardware; GPU compositing; sessions of
+hours; low-memory and slow-disk behaviour; high DPI.
