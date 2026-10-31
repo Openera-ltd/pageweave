@@ -41,3 +41,26 @@ By font (blind): Inter 99.3 %, DejaVu Sans 97.7 %, Carlito Bold 97.5 %, Carlito 
 Frames (D-036) on `fixtures/pdf/frames.pdf`: 3 pt rectangular border and 2 pt elliptical ring
 rebuilt as outlines (6.1 px / 4.2 px against 6.25 / 4.17), text inside kept; PDF export mean
 difference 2.22/255. Paragraphs (D-035): poster PDF export 2.23/255.
+
+## Real pages rebuilt from pictures (tools/corpus/studioquality.py, 2026-10-31)
+
+Pages rendered at 144 dpi and rebuilt with `pageweave design` (debug build). Recall: words of the
+editable text against the page's own text; export diff: mean absolute difference per channel
+between the picture and the design's PNG export.
+
+| Page | Words | Recall | Text / shapes / pictures | Export diff |
+|---|---|---|---|---|
+| Chromium web page | 402 | 0.980 | 22 / 9 / 30 | 12.2 |
+| LibreOffice slides | 3 | 1.000 | 2 / 0 / 0 | 1.1 |
+| LibreOffice report | 506 | 0.988 | 20 / 0 / 4 | 10.5 |
+| W3C table | 42 | 1.000 | 35 / 0 / 1 | 2.0 |
+| NIST SP 800-63-3 cover | 171 | 0.994 | 30 / 1 / 2 | 8.6 |
+| IRS Publication 15 cover | 302 | 0.815* | 45 / 3 / 495 | 8.7 |
+
+\* includes an invisible proof slug that is not on the page. Fixed while measuring: wording on page
+background inside a picture's box showed twice (it stayed opaque in the picture); paragraph glyph
+scale from the median let lines run past their original width (now the smallest ratio); a line in
+another script inflated its paragraph's size (now the median); table rules inside a line's box
+counted as glyphs (taller lines, false serifs) and darkened the background painted behind text on
+shaded bands. Known: the photo on the IRS cover is split into many small pictures; some sans lines
+are still read as serif; text-dense pages differ mostly by font metrics (built-in fonts).

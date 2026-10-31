@@ -238,10 +238,26 @@ fn behind_box(
             })
             .collect()
     };
-    let top = smooth((x0..x1).map(|x| img.at(x, ry0)).collect());
-    let bottom = smooth((x0..x1).map(|x| img.at(x, ry1 - 1)).collect());
-    let left = smooth((y0..y1).map(|y| img.at(rx0, y)).collect());
-    let right = smooth((y0..y1).map(|y| img.at(rx1 - 1, y)).collect());
+    let mut top = smooth((x0..x1).map(|x| img.at(x, ry0)).collect());
+    let mut bottom = smooth((x0..x1).map(|x| img.at(x, ry1 - 1)).collect());
+    let mut left = smooth((y0..y1).map(|y| img.at(rx0, y)).collect());
+    let mut right = smooth((y0..y1).map(|y| img.at(rx1 - 1, y)).collect());
+    // A side running along a rule (a table line, a box edge) is not the background: it is far darker
+    // than the opposite side along its whole length. That side takes the opposite side's colours.
+    fn darker(a: &[[i32; 3]], b: &[[i32; 3]]) -> bool {
+        let luma = |c: &[i32; 3]| c[0] + c[1] + c[2];
+        !a.is_empty() && a.iter().zip(b).filter(|(p, q)| luma(q) - luma(p) > 3 * INK).count() * 10 >= a.len() * 8
+    }
+    if darker(&top, &bottom) {
+        top = bottom.clone();
+    } else if darker(&bottom, &top) {
+        bottom = top.clone();
+    }
+    if darker(&left, &right) {
+        left = right.clone();
+    } else if darker(&right, &left) {
+        right = left.clone();
+    }
     let (span_y, span_x) = ((ry1 - 1 - ry0).max(1) as f32, (rx1 - 1 - rx0).max(1) as f32);
     let mut out = Vec::with_capacity((x1 - x0) * (y1 - y0));
     for y in y0..y1 {
@@ -385,6 +401,28 @@ fn serif_share(ink: &[bool], bw: usize, bh: usize) -> Option<f32> {
     Some(feet as f32 / stems.len() as f32)
 }
 
+/// Table rules and box edges inside a recognised line's box are not part of its glyphs: rows inked
+/// across nearly the whole box width, and columns inked down nearly the whole box height, are
+/// cleared (they made a line look taller, wider and "serifed").
+fn drop_rules(ink: &mut [bool], bw: usize, bh: usize) {
+    if bw < 8 || bh < 4 {
+        return;
+    }
+    for y in 0..bh {
+        let row = &mut ink[y * bw..(y + 1) * bw];
+        if row.iter().filter(|&&v| v).count() * 100 >= bw * 85 {
+            row.fill(false);
+        }
+    }
+    for x in 0..bw {
+        if (0..bh).filter(|&y| ink[y * bw + x]).count() * 100 >= bh * 85 {
+            for y in 0..bh {
+                ink[y * bw + x] = false;
+            }
+        }
+    }
+}
+
 /// Rows `a..b` of a line's ink: the run of rows holding ink (split at empty rows) with the most ink.
 fn main_band(ink: &[bool], bw: usize, bh: usize) -> (usize, usize) {
     let count = |y: usize| ink[y * bw..(y + 1) * bw].iter().filter(|&&v| v).count();
@@ -427,6 +465,9 @@ pub fn reconstruct(
     let mut mask: Vec<bool> = (0..w * h).map(|i| dist(img.at(i % w, i / w), bg) > SAME).collect();
     // Pixels of text lines that sit on a box: part of the box's area, not of its colour.
     let mut under_text = vec![false; w * h];
+    // Pixels of text lines on the page background: they became text objects, so a picture whose
+    // box reaches over them leaves them out (else the wording shows twice).
+    let mut as_text = vec![false; w * h];
     // The picture the regions are cut from: words recognised over a picture are painted out of it,
     // so the editable text is not doubled by the original wording underneath.
     let mut work = Rgb { w, h, px: img.px.clone() };
@@ -464,6 +505,7 @@ pub fn reconstruct(
                 dist(img.at(x, y), behind_at(x, y)) > INK
             })
             .collect();
+        drop_rules(&mut line_ink, bw, bh);
         let (band0, band1) = main_band(&line_ink, bw, bh);
         line_ink[..band0 * bw].fill(false);
         line_ink[band1 * bw..].fill(false);
@@ -475,7 +517,7 @@ pub fn reconstruct(
             for x in l.x0..l.x1 {
                 let c = img.at(x, y);
                 let d = dist(c, behind_at(x, y));
-                let on = d > INK;
+                let on = line_ink[(y - l.y0) * bw + (x - l.x0)];
                 if on {
                     ink.push((c, d));
                     (ix0, iy0, ix1, iy1) = (ix0.min(x), iy0.min(y), ix1.max(x + 1), iy1.max(y + 1));
@@ -498,9 +540,10 @@ pub fn reconstruct(
             // Paint out the ink and one pixel around it (anti-aliased edges).
             for y in l.y0..l.y1 {
                 for x in l.x0..l.x1 {
+                    // Glyph ink only (rules through the box were cleared from `line_ink` and stay).
                     let near = (y.saturating_sub(1).max(l.y0)..(y + 2).min(l.y1)).any(|ny| {
                         (x.saturating_sub(1).max(l.x0)..(x + 2).min(l.x1))
-                            .any(|nx| dist(img.at(nx, ny), behind_at(nx, ny)) > INK)
+                            .any(|nx| line_ink[(ny - l.y0) * bw + (nx - l.x0)])
                     });
                     if near {
                         work.set(x, y, behind_at(x, y));
@@ -515,6 +558,7 @@ pub fn reconstruct(
             for x in l.x0..l.x1 {
                 mask[y * w + x] = on_box || (estimate.is_some() && dist(work.at(x, y), bg) > SAME);
                 under_text[y * w + x] |= on_box;
+                as_text[y * w + x] |= on_background;
             }
         }
         // Text colour: the ink pixels furthest from what is behind them (anti-aliased edges are
@@ -595,7 +639,7 @@ pub fn reconstruct(
 
     let recognised_lines = texts.len();
     let (mut texts, painted) = paragraphs(texts, painted, measure);
-    let mut regions = regions(&work, &mask, bg, &under_text);
+    let mut regions = regions(&work, &mask, bg, &under_text, &as_text);
     // Painted-out wording that lies on a picture: say so (the painting is a guess on photographs).
     for (t, _) in texts.iter_mut().zip(painted).filter(|(t, p)| *p && t.note.is_none()) {
         let (cx, cy) = (t.x + t.w / 2.0, t.y + t.h / 2.0);
@@ -699,7 +743,10 @@ fn paragraphs(
         let y0 = ls.iter().map(|o| o.y).fold(f32::MAX, f32::min);
         let x1 = ls.iter().map(|o| o.x + o.w).fold(f32::MIN, f32::max);
         let y1 = ls.iter().map(|o| o.y + o.h).fold(f32::MIN, f32::max);
-        let font_size = ls.iter().map(|o| size(o)).sum::<f32>() / ls.len() as f32;
+        // The median size: a line in another script (taller glyphs) does not inflate the rest.
+        let mut sizes: Vec<f32> = ls.iter().map(|o| size(o)).collect();
+        sizes.sort_by(|a, b| a.total_cmp(b));
+        let font_size = sizes[sizes.len() / 2];
         let align = if aligns[0] {
             TextAlign::Left
         } else if aligns[1] {
@@ -709,15 +756,16 @@ fn paragraphs(
         };
         let mut style = first.clone();
         style.font_size = Some(font_size);
-        let mut ratios: Vec<f32> = ls
+        let ratios: Vec<f32> = ls
             .iter()
             .filter_map(|o| {
                 let natural = measure(&style, o.text.as_deref().unwrap_or(""));
                 (natural > 0.0).then(|| o.w / natural)
             })
             .collect();
-        ratios.sort_by(|a, b| a.total_cmp(b));
-        let stretch = ratios.get(ratios.len() / 2).map(|v| v.clamp(0.5, 2.0));
+        // The smallest ratio: no line comes out wider than it was (justified lines then end a little
+        // short). Characters the built-in fonts cannot draw only make a line's ratio larger.
+        let stretch = ratios.iter().copied().reduce(f32::min).map(|v| v.clamp(0.5, 2.0));
         let round1 = |v: f32| (v * 10.0).round() / 10.0;
         let text = ls.iter().map(|o| o.text.as_deref().unwrap_or("")).collect::<Vec<_>>().join("\n");
         out.push(DesignObject {
@@ -742,7 +790,7 @@ fn paragraphs(
 }
 
 /// Connected ink regions (8-neighbours) as shapes or pictures.
-fn regions(img: &Rgb, mask: &[bool], bg: [i32; 3], under_text: &[bool]) -> Vec<DesignObject> {
+fn regions(img: &Rgb, mask: &[bool], bg: [i32; 3], under_text: &[bool], as_text: &[bool]) -> Vec<DesignObject> {
     let (w, h) = (img.w, img.h);
     let mut label = vec![0u32; w * h];
     let mut found: Vec<(usize, usize, usize, usize, Vec<usize>)> = Vec::new();
@@ -865,7 +913,8 @@ fn regions(img: &Rgb, mask: &[bool], bg: [i32; 3], under_text: &[bool]) -> Vec<D
                 for y in y0..y1 {
                     for x in x0..x1 {
                         let c = img.at(x, y);
-                        let a = if mask[y * w + x] || dist(c, bg) > SAME { 255 } else { 0 };
+                        let i = y * w + x;
+                        let a = if mask[i] || (dist(c, bg) > SAME && !as_text[i]) { 255 } else { 0 };
                         rgba.put_pixel(
                             (x - x0) as u32,
                             (y - y0) as u32,
@@ -2103,6 +2152,31 @@ mod tests {
             assert_eq!(crop_png(&b64, bad).expect_err("refused").code, "design.crop");
         }
         assert_eq!(crop_png("not base64!", [0.1, 0.0, 0.0, 0.0]).expect_err("bad data").code, "design.png");
+    }
+
+    #[test]
+    fn a_table_rule_inside_a_line_box_is_not_part_of_the_text() {
+        // Three letter bars 20 px tall on white, a 1 px rule right under them inside the line's box.
+        let mut img = canvas(200, 60, [255, 255, 255]);
+        for x0 in [40, 70, 100] {
+            fill(&mut img, x0, 20, x0 + 6, 40, [0, 0, 0]);
+        }
+        fill(&mut img, 30, 40, 130, 41, [0, 0, 0]); // touching the letters, as in a table cell
+        let line = Line { text: "HIT".into(), score: 0.95, x0: 32, y0: 16, x1: 125, y1: 43 };
+        let (objects, _, _) = reconstruct(&img, &[line], &chars);
+        let t = objects.iter().find(|o| o.kind == ObjectKind::Text).expect("text");
+        assert_eq!((t.x, t.y, t.w, t.h), (40.0, 20.0, 66.0, 20.0), "the rule is not ink of the line");
+        assert_eq!(t.font, FontFamily::Sans);
+    }
+
+    #[test]
+    fn a_rule_along_one_side_of_a_shaded_band_does_not_darken_what_is_painted_behind_text() {
+        let mut img = canvas(120, 60, [255, 255, 255]);
+        fill(&mut img, 10, 18, 110, 42, [200, 200, 200]);
+        fill(&mut img, 10, 18, 110, 19, [0, 0, 0]); // rule along the band's top edge
+        let est = behind_box(&img, (20, 20, 100, 40), (18, 18, 102, 42));
+        let worst = est.iter().map(|c| dist(*c, [200, 200, 200])).max().expect("pixels");
+        assert!(worst <= 2, "background estimate stays the band's grey (off by {worst})");
     }
 
     #[test]
