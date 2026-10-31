@@ -4,10 +4,11 @@
 use crate::document::{open_document, page_count, page_texts, render_page_png, search, OpenOptions};
 use crate::edit;
 use pw_core::job::JobContext;
-use pw_core::ops::{Operation, OperationRequest, OperationResult, OutputInfo, SCHEMA_VERSION};
+use pw_core::ops::{Operation, OperationRequest, OperationResult, OutputInfo, ProtectPermissions, SCHEMA_VERSION};
 use pw_core::output::write_atomic_bytes;
+use pw_core::output::CollisionPolicy;
 use pw_core::range::parse_page_ranges;
-use pw_core::PwResult;
+use pw_core::{PwError, PwResult};
 use serde_json::json;
 use std::time::Instant;
 
@@ -782,6 +783,21 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             (outs, json!({ "parts": n }))
         }
     };
+    let mut outputs = outputs;
+    if let (true, Some(pw)) = (req.keep_protection, req.password.as_deref()) {
+        if warnings.iter().any(|w| w == crate::edit::PROTECTION_REMOVED) {
+            match protect_outputs(&mut outputs, pw) {
+                Ok(()) => {
+                    warnings.retain(|w| w != crate::edit::PROTECTION_REMOVED);
+                    warnings.push(
+                        "The output is protected with the same open password as the original (its permissions and permissions password are not carried over)."
+                            .into(),
+                    );
+                }
+                Err(e) => warnings.push(format!("The output could not be protected again: {}", e.message)),
+            }
+        }
+    }
     Ok(OperationResult {
         schema_version: SCHEMA_VERSION,
         operation: req.operation.id().to_string(),
@@ -790,4 +806,37 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
         warnings,
         duration_ms: started.elapsed().as_millis() as u64,
     })
+}
+
+/// Protect each PDF output with `password` in place: a verified protected copy is written next to it
+/// (crate::protect checks it before it is kept) and then takes its name.
+fn protect_outputs(outputs: &mut [OutputInfo], password: &str) -> PwResult<()> {
+    for o in outputs.iter_mut() {
+        if !o.path.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf")) {
+            continue;
+        }
+        let name = o.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let staged = o.path.with_file_name(format!(".{name}.protecting.pdf"));
+        let _ = std::fs::remove_file(&staged);
+        let plain = OpenOptions { password: None };
+        let result = crate::protect::protect(
+            &o.path,
+            &plain,
+            password,
+            None,
+            &ProtectPermissions::default(),
+            &staged,
+            CollisionPolicy::Fail,
+        );
+        if let Err(e) = result {
+            let _ = std::fs::remove_file(&staged);
+            return Err(e);
+        }
+        std::fs::rename(&staged, &o.path).map_err(|e| {
+            let _ = std::fs::remove_file(&staged);
+            PwError::from_io(&e, "protected output")
+        })?;
+        o.bytes = std::fs::metadata(&o.path).map(|m| m.len()).unwrap_or(o.bytes);
+    }
+    Ok(())
 }

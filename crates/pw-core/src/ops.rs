@@ -1961,6 +1961,10 @@ pub struct OperationRequest {
     /// For `sign`: the certificate file's password. Never serialized.
     #[serde(default, skip_serializing)]
     pub certificate_password: Option<String>,
+    /// When the source was opened with `password` and a new PDF would come out unprotected, protect
+    /// it with that same open password (AES-256; the original's permissions are not carried over).
+    #[serde(default)]
+    pub keep_protection: bool,
 }
 
 impl OperationRequest {
@@ -1974,6 +1978,7 @@ impl OperationRequest {
             new_password: None,
             new_owner_password: None,
             certificate_password: None,
+            keep_protection: false,
         }
     }
 

@@ -382,6 +382,66 @@ fn encrypted_document_requires_password() {
 
 /// Probe: does an output derived from an encrypted file stay encrypted? Records actual behaviour.
 #[test]
+fn keep_protection_protects_outputs_with_the_same_password() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let src = fixture("encrypted-rc4-user-password.pdf");
+    let ops = [
+        Operation::ExtractPages { input: src.clone(), pages: "1".into(), output: dir.path().join("ext.pdf") },
+        Operation::Split {
+            input: src.clone(),
+            split: pw_core::ops::SplitMode::EveryN { n: 1 },
+            output_dir: dir.path().join("parts"),
+        },
+    ];
+    std::fs::create_dir_all(dir.path().join("parts")).expect("dir");
+    for op in ops {
+        let mut req = OperationRequest::new(op);
+        req.password = Some(USER_PW.into());
+        req.keep_protection = true;
+        let r = execute(&req, None).expect("run");
+        assert!(!r.outputs.is_empty());
+        for o in &r.outputs {
+            assert_eq!(
+                open_document(&o.path, &opts()).expect_err("needs the password").code,
+                "pdf.password",
+                "{:?}",
+                o.path
+            );
+            let with = pw_pdf::OpenOptions { password: Some(USER_PW) };
+            assert_eq!(
+                open_document(&o.path, &with).expect("opens with the original password").pages.len() as u32,
+                o.pages.unwrap_or(1)
+            );
+            assert_eq!(
+                std::fs::metadata(&o.path).expect("size").len(),
+                o.bytes,
+                "reported size is the protected file's"
+            );
+        }
+        assert!(!r.warnings.iter().any(|w| w.contains("not password protected")), "{:?}", r.warnings);
+        assert!(r.warnings.iter().any(|w| w.contains("same open password")), "{:?}", r.warnings);
+        // No staged copies left behind.
+        let stray = |d: &std::path::Path| {
+            std::fs::read_dir(d)
+                .expect("dir")
+                .filter_map(|e| e.ok())
+                .any(|e| e.file_name().to_string_lossy().contains(".protecting."))
+        };
+        assert!(!stray(dir.path()) && !stray(&dir.path().join("parts")));
+    }
+    // Without the option (the API default) the output is plain and the warning stays.
+    let mut req = OperationRequest::new(Operation::ExtractPages {
+        input: src,
+        pages: "1".into(),
+        output: dir.path().join("plain.pdf"),
+    });
+    req.password = Some(USER_PW.into());
+    let r = execute(&req, None).expect("run");
+    assert!(open_document(&r.outputs[0].path, &opts()).is_ok());
+    assert!(r.warnings.iter().any(|w| w.contains("not password protected")));
+}
+
+#[test]
 fn protection_status_of_outputs_from_encrypted_input() {
     let dir = tempfile::tempdir().expect("tmp");
     let src = fixture("encrypted-rc4-user-password.pdf");

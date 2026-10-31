@@ -2525,6 +2525,40 @@ await test("combine: open files added with one button, reordered, combined; firs
   }
 });
 
+await test("pages taken out of a password-protected PDF stay protected with the same password", async () => {
+  const src = join(FIX, "encrypted-rc4-user-password.pdf");
+  const out = join(work, "protected-extract.pdf");
+  const s = await Session.create(DRIVER, APP, appArgs([src]));
+  try {
+    await s.waitFor("#pdf-password", { timeout: 20000 });
+    await s.type("#pdf-password", "pw-user-test");
+    await s.keys(["Enter"]);
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "Shift", "E"]);
+    await s.waitFor("#pages");
+    await s.type("#pages", "1");
+    await s.waitUntil(async () => (await s.text("#pages-msg")) === "1 page selected", "page 1 chosen");
+    await s.replaceText("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("same open password")), "notice says the copy keeps the password");
+    assert(!(await noticeTexts(s)).some((t) => t.includes("not password protected")), "no unprotected-output warning");
+  } finally {
+    await s.delete();
+  }
+  if (CLI) {
+    let refused = false;
+    try {
+      execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8", stdio: "pipe" });
+    } catch (e) {
+      refused = JSON.parse(e.stdout || e.stderr).error.code === "pdf.password";
+    }
+    assert(refused, "the copy needs a password");
+    const info = JSON.parse(execFileSync(CLI, ["--json", "inspect", "--password-stdin", out], { encoding: "utf8", input: "pw-user-test\n" })).result.data;
+    assert(info.page_count === 1 && info.encrypted, `opens with the original password: ${JSON.stringify({ n: info.page_count, enc: info.encrypted })}`);
+  }
+});
+
 await test("protect with password: AES-256 copy needs the password; wrong password refused; content intact", async () => {
   const src = join(FIX, "five-pages.pdf");
   const before = sha(src);

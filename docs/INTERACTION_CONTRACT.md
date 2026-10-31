@@ -89,6 +89,10 @@ Maintain a single documented shortcut registry. Include common system convention
 - Uncertain objects (pictures, confidence under 80 %) carry a warning icon and a note in the properties panel; nothing is drawn over the canvas. Compare: Design, Original, Overlay (opacity slider), Differences (difference blend).
 - Export SVG/PDF saves first, asks where (the system dialog confirms replacing), runs the engine's verified export and offers Show in folder.
 
+## Password-protected documents
+
+- A new PDF made from a document that was opened with a password keeps that open password: the host sets `keep_protection` on every request for such a document. The notice says so and that permissions are not carried over. If protecting the new file fails, the notice says the output is unprotected and why. Remove password (its own command) is the way to make an unprotected copy.
+
 ## Combine files
 
 - The list starts with the current document. Add files… opens the system picker; Add open files (n) adds every other document open in a tab that is not listed yet (disabled, with the reason in its tooltip, when there is none). Items move up/down or leave the list (files are never deleted). The result takes the first file's title, author, subject and keywords and keeps every file's bookmarks.

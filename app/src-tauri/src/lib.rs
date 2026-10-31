@@ -480,6 +480,9 @@ fn start_operation(
     let mut request = request;
     if let Some(id) = doc_id {
         request.password = state.doc(id)?.password.clone();
+        // New PDFs made from a password-protected document keep its open password (people expect
+        // a page taken out of a protected file to stay protected); Remove password is the way out.
+        request.keep_protection = request.password.is_some();
     }
     let label = request.operation.id().to_string();
     let key = serde_json::to_string(&request.operation).unwrap_or_default();
