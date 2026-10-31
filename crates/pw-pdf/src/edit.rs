@@ -1097,3 +1097,27 @@ pub fn annotate(
     })?;
     Ok((c, count, protection_warnings(src_encrypted, encrypted)))
 }
+
+/// Regenerate a page's content after objects were removed or changed, keeping colours.
+///
+/// PDFium writes regenerated colours only for device colour spaces: a fill or stroke set through
+/// an ICC-based space (how Word and many generators write every colour) came out as `0 0 0 rg`, so
+/// table shading turned black after translation or editing. Each path and text object's colour is
+/// set again as the RGB PDFium renders it with before writing; colours it cannot give (patterns)
+/// are left as they are.
+pub(crate) fn regenerate_keeping_colours(page: &mut PdfPage) -> Result<(), PdfiumError> {
+    let n = page.objects().len();
+    for i in 0..n {
+        let Ok(mut o) = page.objects().get(i) else { continue };
+        if !matches!(o, PdfPageObject::Path(_) | PdfPageObject::Text(_)) {
+            continue;
+        }
+        if let Ok(c) = o.fill_color() {
+            let _ = o.set_fill_color(c);
+        }
+        if let Ok(c) = o.stroke_color() {
+            let _ = o.set_stroke_color(c);
+        }
+    }
+    page.regenerate_content()
+}

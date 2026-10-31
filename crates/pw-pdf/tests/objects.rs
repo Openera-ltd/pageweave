@@ -303,3 +303,25 @@ fn combined_edits_never_replace_the_source_even_with_replace() {
     assert!(execute(&req, None).is_err(), "writing over the source must be refused");
     assert_eq!(std::fs::read(&src).expect("read"), before, "source unchanged");
 }
+
+#[test]
+fn colours_in_calibrated_colour_spaces_survive_an_edit() {
+    // Removing an object makes the engine rewrite the page; its writer once wrote colours set
+    // through a non-device colour space (ICC-based in Word files, CalRGB here) as black (D-041).
+    let dir = tempfile::tempdir().expect("tmp");
+    let src = fixture("calibrated-colour.pdf");
+    let l = list(&src);
+    let gone = run(&l, "Remove this line");
+    let out = dir.path().join("o.pdf");
+    edit(&src, vec![PageEdit::DeleteObjects { objects: gone.objects.clone() }], &out).expect("edit");
+    let (png, _, _) = pw_pdf::render_page_png(&out, &OpenOptions::default(), 0, 1.0).expect("render");
+    let img = image::load_from_memory(&png).expect("png").to_rgb8();
+    // Inside the shaded box (72..372 × 600..680 pt; image y from the top).
+    let p = img.get_pixel(300, 792 - 620);
+    assert!(p[2] > 180 && p[0] < 60, "the shading stays blue, not black: {p:?}");
+    let text = list(&out);
+    assert!(
+        text.texts.iter().any(|t| t.text == "Keep this line")
+            && !text.texts.iter().any(|t| t.text == "Remove this line")
+    );
+}

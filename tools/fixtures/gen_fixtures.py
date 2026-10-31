@@ -883,6 +883,26 @@ def build_shaded_table_document() -> bytes:
     return w.render(catalog, info)
 
 
+def build_calibrated_colour_document() -> bytes:
+    """Shading and text in a calibrated (non-device) colour space, as Word writes colours through ICC
+    profiles. Removing an object makes PDFium rewrite the page, and its writer once turned such
+    colours black (D-041)."""
+    w = PdfWriter()
+    catalog, pages_obj = w.reserve(), w.reserve()
+    font = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    cs = w.add("[/CalRGB << /WhitePoint [0.9505 1 1.089] /Gamma [2.2 2.2 2.2] >>]")
+    ops = "/CS0 cs 0.2 0.4 0.85 scn 72 600 300 80 re f\n"
+    ops += "0 0 0 rg BT /F1 14 Tf 90 630 Td (Remove this line) Tj ET\n"
+    ops += "0 0 0 rg BT /F1 14 Tf 90 560 Td (Keep this line) Tj ET\n"
+    content = w.stream(ops.encode("latin-1"))
+    page = w.add(f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] "
+                 f"/Resources << /Font << /F1 {font} 0 R >> /ColorSpace << /CS0 {cs} 0 R >> >> /Contents {content} 0 R >>")
+    w.set(pages_obj, f"<< /Type /Pages /Kids [{page} 0 R] /Count 1 >>")
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R >>")
+    info = w.add("<< /Title (Calibrated colour fixture) /Producer (gen_fixtures.py) >>")
+    return w.render(catalog, info)
+
+
 def build_frames_document() -> bytes:
     """Outlined shapes the Design Studio rebuilds as vector frames (D-036): a 3 pt dark blue border
     inset 10 pt, a 2 pt red elliptical ring with "SEAL" inside it, and a heading, on a tinted page.
@@ -998,6 +1018,7 @@ def main() -> int:
     files["caption.pdf"] = build_caption_document()
     files["fonts.pdf"] = build_fonts_document()
     files["shaded-table.pdf"] = build_shaded_table_document()
+    files["calibrated-colour.pdf"] = build_calibrated_colour_document()
     files["frames.pdf"] = build_frames_document()
     # A word hyphenated across lines (the engine joins it and marks the hyphen), large enough to be
     # recognised again by OCR with --all-pages.

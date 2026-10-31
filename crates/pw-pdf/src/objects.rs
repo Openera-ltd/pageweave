@@ -403,7 +403,7 @@ pub(crate) fn apply_object_edits(input: &Path, opts: &OpenOptions, pages: &[Page
                             // In-place changes must be written into the content stream through this
                             // same page handle: a page loaded again starts from the saved content.
                             drop(o);
-                            page.regenerate_content().map_err(err)?;
+                            crate::edit::regenerate_keeping_colours(&mut page).map_err(err)?;
                         }
                         Some(font) => {
                             substituted += 1;
@@ -458,7 +458,7 @@ pub(crate) fn apply_object_edits(input: &Path, opts: &OpenOptions, pages: &[Page
                         let mut obj = page.objects().get(o as PdfPageObjectIndex).map_err(err)?;
                         obj.translate(PdfPoints::new(tx), PdfPoints::new(ty)).map_err(err)?;
                     }
-                    page.regenerate_content().map_err(err)?;
+                    crate::edit::regenerate_keeping_colours(&mut page).map_err(err)?;
                 }
                 PageEdit::ReplaceImage { object, .. } | PageEdit::RotateImage { object, .. } => {
                     if !image_ids.contains(object) {
@@ -525,7 +525,7 @@ pub(crate) fn apply_object_edits(input: &Path, opts: &OpenOptions, pages: &[Page
         for &o in remove.iter().rev() {
             page.objects_mut().remove_object_at_index(o as PdfPageObjectIndex).map_err(err)?;
         }
-        page.regenerate_content().map_err(err)?;
+        crate::edit::regenerate_keeping_colours(&mut page).map_err(err)?;
         expectations.push(Expectation {
             page: pe.page,
             texts: expect_texts,

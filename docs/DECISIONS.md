@@ -310,3 +310,10 @@ These were made by Claude Code under the owner's standing instruction to "start 
 - **Context:** The many-document sweep refused WebP, TIFF, GIF and BMP in Create PDF from images, the Design Studio, signature pictures and picture replacement; scanners save TIFF, phones and the web WebP.
 - **Decision:** Enable the `image` crate's WebP, TIFF, GIF and BMP decoders (pure Rust; `tiff` MIT, `gif`/`image-webp`/`weezl` MIT or Apache-2.0, `fax`/`color_quant` MIT — within deny.toml). Formats are recognised by content, decoded with the same limits as PNG and embedded like PNG; JPEG keeps its exact data. TIFF and GIF give their first page or frame; a multi-page TIFF is reported ("Only the first page of … (N pages) was used"). HEIC is not supported (its codec needs patent licensing). A picture over 20 000 pixels on a side is refused as too large rather than "unreadable".
 - **Consequences:** Engine test with generated WebP/TIFF/GIF/BMP and a two-page TIFF (pages rendered, colours checked); app file filters, drop routing and Studio sources extended.
+
+### D-041 — Keep colours when the engine rewrites a page
+- **Status:** Accepted
+- **Date:** 2026-10-31
+- **Context:** Translating the W3C table turned its blue header black. PDFium writes regenerated page content with device colours only; fills and strokes set through other colour spaces (ICC-based in Word files, CalRGB) came out as `0 0 0 rg`. Every operation that removes or changes objects and regenerates the page was affected: translation into a PDF, Edit text and pictures, and redaction.
+- **Decision:** Before regenerating, each path and text object's fill and stroke is set again as the RGB the engine renders it with (`edit::regenerate_keeping_colours`); colours it cannot give (patterns) are left untouched.
+- **Consequences:** Fixture `calibrated-colour.pdf`: deleting a line kept the shading blue (old code: black); the translated W3C table keeps its header colour. The colour is stored as device RGB afterwards, so a print workflow relying on the original ICC profile sees converted values for rewritten pages.

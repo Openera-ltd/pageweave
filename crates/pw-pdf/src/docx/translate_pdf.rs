@@ -689,7 +689,7 @@ pub(super) fn write_in_place(
             obj.translate(PdfPoints::new(pc.x), PdfPoints::new(pc.y)).map_err(err)?;
             page.objects_mut().add_text_object(obj).map_err(err)?;
         }
-        page.regenerate_content().map_err(err)?;
+        crate::edit::regenerate_keeping_colours(&mut page).map_err(err)?;
     }
     Ok(written)
 }
