@@ -605,6 +605,8 @@ fn fill_bytes(input: &Path, password: Option<&str>, values: &[FieldValue]) -> Pw
         let Some(value) = wanted.get(name.as_str()) else { return Ok(true) };
         let field = by_name[name.as_str()];
         let ok = match (field.kind, value) {
+            // Cleared after saving (the form filler cannot turn a radio off or deselect a choice).
+            (FieldKind::Radio | FieldKind::Combo | FieldKind::List, FormValue::Text(t)) if t.is_empty() => true,
             (FieldKind::Text, FormValue::Text(t)) => done.contains(&name) || fd.replace_text(page, annot, t),
             (FieldKind::Checkbox, FormValue::Checked(want)) => {
                 if !done.contains(&name) && fd.checked(annot) != *want {
@@ -642,9 +644,108 @@ fn fill_bytes(input: &Path, password: Option<&str>, values: &[FieldValue]) -> Pw
     if let Some(name) = failed {
         return Err(fail("form.fill", format!("The field “{name}” could not be filled.")));
     }
+    let clear: HashMap<String, FieldKind> = values
+        .iter()
+        .filter(|v| matches!(&v.value, FormValue::Text(t) if t.is_empty()))
+        .filter_map(|v| by_name.get(v.name.as_str()).map(|f| (v.name.clone(), f.kind)))
+        .filter(|(_, k)| matches!(k, FieldKind::Radio | FieldKind::Combo | FieldKind::List))
+        .collect();
     let bytes = fd.save()?;
     drop(fd);
-    finish_filled(&bytes, hybrid)
+    let bytes = if clear.is_empty() { bytes } else { clear_choices(&bytes, &clear, password)? };
+    finish_filled(&bytes, hybrid, password)
+}
+
+/// The saved form for lopdf: decrypted with the document's password when it is protected.
+fn lopdf_doc(bytes: &[u8], password: Option<&str>) -> Option<lopdf::Document> {
+    match lopdf::Document::load_mem(bytes) {
+        Ok(d) if !d.is_encrypted() => Some(d),
+        _ => password
+            .and_then(|p| lopdf::Document::load_mem_with_options(bytes, lopdf::LoadOptions::with_password(p)).ok()),
+    }
+}
+
+/// Empty radio groups (value and every button `Off`) and choice fields (no value, no selection;
+/// their stored appearance is dropped so viewers draw them empty) named in `clear`.
+/// A protected form comes out decrypted (the caller reports that the copy is not protected).
+fn clear_choices(bytes: &[u8], clear: &HashMap<String, FieldKind>, password: Option<&str>) -> PwResult<Vec<u8>> {
+    let broken = || fail("form.save", "The form could not be saved with the cleared choices.");
+    let mut doc = lopdf_doc(bytes, password).ok_or_else(broken)?;
+    let root = doc.trailer.get(b"Root").and_then(|o| o.as_reference()).map_err(|_| broken())?;
+    let acro = doc.get_dictionary(root).and_then(|c| c.get(b"AcroForm")).cloned().map_err(|_| broken())?;
+    let acro_id = acro.as_reference().ok();
+    let fields: Vec<lopdf::ObjectId> = {
+        let a = match acro_id {
+            Some(id) => doc.get_dictionary(id).map_err(|_| broken())?.clone(),
+            None => acro.as_dict().map_err(|_| broken())?.clone(),
+        };
+        a.get(b"Fields")
+            .and_then(|f| f.as_array())
+            .map(|arr| arr.iter().filter_map(|o| o.as_reference().ok()).collect())
+            .unwrap_or_default()
+    };
+    // Walk the field tree with full names (parent names joined by dots).
+    let mut stack: Vec<(lopdf::ObjectId, String)> = fields.into_iter().map(|id| (id, String::new())).collect();
+    let mut cleared = 0usize;
+    let mut seen = HashSet::new();
+    while let Some((id, parent)) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Ok(d) = doc.get_dictionary(id) else { continue };
+        let partial = d.get(b"T").ok().and_then(|t| lopdf::decode_text_string(t).ok());
+        let name = match (&partial, parent.is_empty()) {
+            (Some(p), true) => p.clone(),
+            (Some(p), false) => format!("{parent}.{p}"),
+            (None, _) => parent.clone(),
+        };
+        let kids: Vec<lopdf::ObjectId> = d
+            .get(b"Kids")
+            .and_then(|k| k.as_array())
+            .map(|a| a.iter().filter_map(|o| o.as_reference().ok()).collect())
+            .unwrap_or_default();
+        if let (Some(kind), Some(_)) = (clear.get(&name), &partial) {
+            // This is the field; its widgets are itself (no kids) or its kids without names.
+            let widgets: Vec<lopdf::ObjectId> = if kids.is_empty() { vec![id] } else { kids.clone() };
+            let field = doc.get_dictionary_mut(id).map_err(|_| broken())?;
+            if *kind == FieldKind::Radio {
+                field.set("V", lopdf::Object::Name(b"Off".to_vec()));
+            } else {
+                field.remove(b"V");
+                field.remove(b"I");
+            }
+            for w in widgets {
+                if let Ok(wd) = doc.get_dictionary_mut(w) {
+                    if *kind == FieldKind::Radio {
+                        wd.set("AS", lopdf::Object::Name(b"Off".to_vec()));
+                    } else {
+                        wd.remove(b"AP");
+                    }
+                }
+            }
+            cleared += 1;
+            continue;
+        }
+        stack.extend(kids.into_iter().map(|k| (k, name.clone())));
+    }
+    if cleared != clear.len() {
+        return Err(broken());
+    }
+    if clear.values().any(|k| *k != FieldKind::Radio) {
+        // Choice fields without a stored appearance are drawn by the viewer.
+        let a = match acro_id {
+            Some(id) => doc.get_dictionary_mut(id).map_err(|_| broken())?,
+            None => doc
+                .get_dictionary_mut(root)
+                .and_then(|c| c.get_mut(b"AcroForm"))
+                .and_then(|o| o.as_dict_mut())
+                .map_err(|_| broken())?,
+        };
+        a.set("NeedAppearances", lopdf::Object::Boolean(true));
+    }
+    let mut out = Vec::new();
+    doc.save_to(&mut out).map_err(|_| broken())?;
+    Ok(out)
 }
 
 /// What a filled copy must not keep (D-038):
@@ -652,9 +753,13 @@ fn fill_bytes(input: &Path, password: Option<&str>, values: &[FieldValue]) -> Pw
 ///   show those instead of the standard fields that were filled;
 /// - Adobe's usage-rights signature (/Perms /UR3): it covers the original file, so after filling
 ///   Acrobat Reader warns that the document was changed and its extended features are gone.
-fn finish_filled(bytes: &[u8], hybrid: bool) -> PwResult<Vec<u8>> {
+fn finish_filled(bytes: &[u8], hybrid: bool, password: Option<&str>) -> PwResult<Vec<u8>> {
     let broken = || fail("form.save", "The filled form could not be saved.");
-    let mut doc = lopdf::Document::load_mem(bytes).map_err(|_| broken())?;
+    // Only rewritten when something must go; a protected form rewritten here comes out decrypted
+    // (reported by the caller as an unprotected copy).
+    let Some(mut doc) = lopdf_doc(bytes, password) else {
+        return if hybrid { Err(broken()) } else { Ok(bytes.to_vec()) };
+    };
     let root = doc.trailer.get(b"Root").and_then(|o| o.as_reference()).map_err(|_| broken())?;
     let (perms, acro) = {
         let catalog = doc.get_object(root).and_then(|o| o.as_dict()).map_err(|_| broken())?;
@@ -809,6 +914,8 @@ fn check_value(f: &FormField, v: &FormValue) -> PwResult<()> {
     match (f.kind, v) {
         (FieldKind::Text, FormValue::Text(_)) => Ok(()),
         (FieldKind::Checkbox, FormValue::Checked(_)) => Ok(()),
+        // Empty: no option chosen (cleared).
+        (FieldKind::Radio | FieldKind::Combo | FieldKind::List, FormValue::Text(t)) if t.is_empty() => Ok(()),
         (FieldKind::Radio, FormValue::Text(t)) => {
             if f.widgets.iter().any(|w| w.export_value.as_deref() == Some(t.as_str())) {
                 Ok(())
@@ -830,6 +937,7 @@ fn check_value(f: &FormField, v: &FormValue) -> PwResult<()> {
 fn value_matches(f: &FormField, v: &FormValue) -> bool {
     match (f.kind, v) {
         (FieldKind::Checkbox, FormValue::Checked(want)) => f.widgets.iter().any(|w| w.checked) == *want,
+        (FieldKind::Radio, FormValue::Text(t)) if t.is_empty() => !f.widgets.iter().any(|w| w.checked),
         (FieldKind::Radio, FormValue::Text(t)) => {
             f.widgets.iter().any(|w| w.checked && w.export_value.as_deref() == Some(t.as_str()))
         }

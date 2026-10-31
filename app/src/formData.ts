@@ -75,11 +75,12 @@ export function planImport(match: FormDataMatch, fields: FormField[], edits: For
   return { edits: next, changes, unchanged };
 }
 
-/** A value as shown in the preview list. */
-export function shownValue(v: FormValue): string {
+/** A value as shown in the preview list (an empty radio group or choice reads "nothing chosen"). */
+export function shownValue(v: FormValue, kind?: FormField["kind"]): string {
   if (v === true) return "Checked";
   if (v === false) return "Not checked";
-  return v === "" ? "(empty)" : v.replace(/\s*\n\s*/g, " ⏎ ");
+  if (v === "") return kind === "radio" || kind === "combo" || kind === "list" ? "(nothing chosen)" : "(empty)";
+  return v.replace(/\s*\n\s*/g, " ⏎ ");
 }
 
 export { fieldLabel };

@@ -202,6 +202,42 @@ fn clearing_and_unchecking_work() {
 }
 
 #[test]
+fn radio_groups_and_choice_lists_can_be_emptied() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let run = |input: PathBuf, values: Vec<FieldValue>, out: &Path| {
+        let mut req = OperationRequest::new(Operation::FillForm { input, values, output: out.into() });
+        req.collision = CollisionPolicy::Fail;
+        execute(&req, None)
+    };
+    let field = |p: &Path, name: &str| {
+        form_fields(p, None).expect("fields").fields.into_iter().find(|f| f.name == name).expect("field")
+    };
+    // Choose, then clear from the chosen copy.
+    let chosen = dir.path().join("chosen.pdf");
+    run(fixture("form-fields.pdf"), vec![text("plan", "pro"), text("country", "Germany")], &chosen).expect("choose");
+    assert!(field(&chosen, "plan").widgets.iter().any(|w| w.checked));
+    let cleared = dir.path().join("cleared.pdf");
+    run(chosen.clone(), vec![text("plan", ""), text("country", "")], &cleared).expect("clear");
+    assert!(!field(&cleared, "plan").widgets.iter().any(|w| w.checked), "no radio button on");
+    assert_eq!(field(&cleared, "country").value.unwrap_or_default(), "", "no country chosen");
+    // An independent reader agrees: the radio group's value and buttons are Off.
+    let lf = lopdf_fields(&cleared);
+    assert!(lf["plan"].1.iter().all(|(state, _)| state == "Off"), "{:?}", lf["plan"]);
+    // A list box: choose, then clear (nested names).
+    let listed = dir.path().join("listed.pdf");
+    run(fixture("form-nested.pdf"), vec![text("colour", "Green")], &listed).expect("choose colour");
+    assert_eq!(field(&listed, "colour").value.as_deref(), Some("Green"));
+    let unlisted = dir.path().join("unlisted.pdf");
+    run(listed, vec![text("colour", "")], &unlisted).expect("clear colour");
+    assert_eq!(field(&unlisted, "colour").value.unwrap_or_default(), "");
+    // Text fields filled in the same request still work, and the rest of the page renders.
+    let both = dir.path().join("both.pdf");
+    run(chosen, vec![text("plan", ""), text("full_name", "Ada")], &both).expect("clear and fill");
+    assert_eq!(field(&both, "full_name").value.as_deref(), Some("Ada"));
+    render_page_png(&both, &pw_pdf::OpenOptions::default(), 0, 1.0).expect("renders");
+}
+
+#[test]
 fn invalid_requests_fail_before_anything_is_written() {
     let dir = tempfile::tempdir().expect("tmp");
     let out = dir.path().join("never.pdf");
@@ -424,4 +460,41 @@ fn a_dynamic_xfa_form_is_refused_before_anything_is_written() {
     let e = execute(&req, None).expect_err("refused");
     assert_eq!((e.category, e.code.as_ref()), (ErrorCategory::UnsupportedOperation, "form.xfa"));
     assert!(!out.exists());
+}
+
+#[test]
+fn a_password_protected_form_fills_and_clears() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let protected = dir.path().join("p.pdf");
+    let mut req = OperationRequest::new(Operation::Protect {
+        input: fixture("form-fields.pdf"),
+        permissions: Default::default(),
+        output: protected.clone(),
+    });
+    req.new_password = Some("form-pw".into());
+    execute(&req, None).expect("protect");
+    let run = |input: &Path, values: Vec<FieldValue>, out: &Path, keep: bool| {
+        let mut req = OperationRequest::new(Operation::FillForm { input: input.into(), values, output: out.into() });
+        req.password = Some("form-pw".into());
+        req.keep_protection = keep;
+        execute(&req, None)
+    };
+    // Filling (regression: the filled bytes were always re-read with lopdf, which failed on any
+    // protected form): the copy stays protected with no warning.
+    let chosen = dir.path().join("chosen.pdf");
+    let r = run(&protected, vec![text("plan", "pro"), text("full_name", "Ada")], &chosen, false).expect("fill");
+    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    assert_eq!(form_fields(&chosen, None).expect_err("still protected").code, "pdf.password");
+    let info = form_fields(&chosen, Some("form-pw")).expect("fields");
+    assert!(info.fields.iter().any(|f| f.name == "plan" && f.widgets.iter().any(|w| w.checked)));
+    // Clearing rewrites the file: unprotected (said so), or protected again with keep_protection.
+    let plain = dir.path().join("plain.pdf");
+    let r = run(&chosen, vec![text("plan", "")], &plain, false).expect("clear");
+    assert!(r.warnings.iter().any(|w| w.contains("not password protected")), "{:?}", r.warnings);
+    let kept = dir.path().join("kept.pdf");
+    run(&chosen, vec![text("plan", "")], &kept, true).expect("clear, keep protection");
+    assert_eq!(form_fields(&kept, None).expect_err("protected").code, "pdf.password");
+    let info = form_fields(&kept, Some("form-pw")).expect("fields");
+    let plan = info.fields.iter().find(|f| f.name == "plan").expect("plan");
+    assert!(!plan.widgets.iter().any(|w| w.checked), "cleared");
 }

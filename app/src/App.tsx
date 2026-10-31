@@ -861,20 +861,20 @@ export function App() {
     });
   };
 
-  /** Empty the form's text fields and checkboxes as unsaved edits, with Undo. */
+  /** Empty every field the user can fill (text, checkboxes, choices, radio groups) as unsaved edits, with Undo. */
   const clearForm = (docId: number) => {
     const fields = forms[docId]?.fields ?? [];
     const before = formEdits[docId];
     const r = clearedEdits(before ?? {}, fields);
     if (r.changed === 0) {
-      notify({ kind: "info", title: "The form is already empty", detail: r.kept ? `${r.kept} choice field${r.kept === 1 ? "" : "s"} can’t be emptied here.` : undefined, persistent: false });
+      notify({ kind: "info", title: "The form is already empty", persistent: false });
       return;
     }
     setFormEdits((all) => ({ ...all, [docId]: r.edits }));
     notify({
       kind: "success",
       title: `Cleared ${r.changed} field${r.changed === 1 ? "" : "s"}`,
-      detail: r.kept ? `${r.kept} choice field${r.kept === 1 ? " keeps its" : "s keep their"} option (choices can’t be emptied here).` : "Save a copy to keep the empty form (Ctrl+S).",
+      detail: "Save a copy to keep the empty form (Ctrl+S).",
       actions: [{ label: "Undo", run: () => setFormEdits(({ [docId]: _new, ...rest }) => (before ? { ...rest, [docId]: before } : rest)) }],
       persistent: false,
     });
@@ -885,16 +885,15 @@ export function App() {
     const fields = forms[docId]?.fields ?? [];
     const before = formEdits[docId];
     const r = resetEdits(before ?? {}, fields);
-    const keptNote = r.kept ? `${r.kept} choice field${r.kept === 1 ? " has" : "s have"} no default and keep${r.kept === 1 ? "s its" : " their"} option.` : undefined;
     if (r.changed === 0) {
-      notify({ kind: "info", title: "The form already shows its default values", detail: keptNote, persistent: false });
+      notify({ kind: "info", title: "The form already shows its default values", persistent: false });
       return;
     }
     setFormEdits((all) => ({ ...all, [docId]: r.edits }));
     notify({
       kind: "success",
       title: `Reset ${r.changed} field${r.changed === 1 ? "" : "s"} to default values`,
-      detail: keptNote ?? "Save a copy to keep the reset form (Ctrl+S).",
+      detail: "Save a copy to keep the reset form (Ctrl+S).",
       actions: [{ label: "Undo", run: () => setFormEdits(({ [docId]: _new, ...rest }) => (before ? { ...rest, [docId]: before } : rest)) }],
       persistent: false,
     });

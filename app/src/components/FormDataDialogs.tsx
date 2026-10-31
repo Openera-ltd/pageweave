@@ -260,7 +260,7 @@ export function ImportFormDataDialog({ doc, form, edits, jobs, onClose, onApply 
                 {fieldLabel(c.field)}
               </span>
               <span className="formdata-value grow" title={typeof c.to === "string" ? c.to : undefined}>
-                {shownValue(c.to)}
+                {shownValue(c.to, c.field.kind)}
               </span>
             </li>
           ))}

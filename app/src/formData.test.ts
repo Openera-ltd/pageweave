@@ -68,6 +68,8 @@ describe("form data files", () => {
   it("shows values plainly", () => {
     expect(shownValue(true)).toBe("Checked");
     expect(shownValue(false)).toBe("Not checked");
+    expect(shownValue("", "text")).toBe("(empty)");
+    expect(shownValue("", "radio")).toBe("(nothing chosen)");
     expect(shownValue("")).toBe("(empty)");
     expect(shownValue("a\n b")).toBe("a ⏎ b");
   });

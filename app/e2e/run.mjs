@@ -1281,7 +1281,7 @@ await test("form data: export XFDF with unsaved values; import JSON with preview
   }
 });
 
-await test("clear form fields: text and checkboxes emptied as unsaved edits, choices kept and said so; Undo", async () => {
+await test("clear form fields: text, checkboxes, choices and radio groups emptied as unsaved edits; Undo; a saved copy has nothing chosen", async () => {
   const field = (name) => `[data-formlayer="0"] [data-field="${name}"]`;
   await withApp([join(FIX, "form-nested.pdf")], async (s) => {
     await pageLoaded(s, 0);
@@ -1294,13 +1294,39 @@ await test("clear form fields: text and checkboxes emptied as unsaved edits, cho
     await s.keys(["Control", "k"]);
     await s.type('[role="dialog"] input', "Clear form");
     await s.click('[role="option"][data-command="edit.clearForm"]');
-    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Cleared 2 fields") && t.includes("1 choice field keeps its option")), "cleared notice");
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Cleared 3 fields")), "cleared notice");
     const state = () => s.exec(`const q = (n) => document.querySelector('[data-formlayer="0"] [data-field="' + n + '"]'); return [q('applicant.name').value, q('agree').checked, q('colour').value, q('ref_no').value]`);
-    assert(JSON.stringify(await state()) === JSON.stringify(["", false, "Green", "R-1001"]), `after clear: ${JSON.stringify(await state())}`);
-    await s.waitUntil(async () => (await unsavedText(s)) === "1 unsaved change", "only the kept choice remains an edit");
+    assert(JSON.stringify(await state()) === JSON.stringify(["", false, "", "R-1001"]), `after clear (the read-only field kept): ${JSON.stringify(await state())}`);
+    await s.waitUntil(async () => (await unsavedText(s)) === "", "back to the file's empty values: nothing unsaved");
     await s.click('.notice button[data-action="Undo"]');
     await s.waitUntil(async () => JSON.stringify(await state()) === JSON.stringify(["Ada", true, "Green", "R-1001"]), "Undo restores");
   });
+  // A copy where a radio button is on and a country chosen: Clear form, save, nothing chosen.
+  if (!CLI) throw new Skip("needs the CLI to make the filled copy");
+  const chosen = join(work, "form-chosen.pdf");
+  const cleared = join(work, "form-cleared.pdf");
+  const req = join(work, "fill-chosen.json");
+  writeFileSync(req, JSON.stringify({ schema_version: 1, operation: { op: "fill_form", input: join(FIX, "form-fields.pdf"), values: [{ name: "plan", value: "pro" }, { name: "country", value: "Germany" }], output: chosen } }));
+  execFileSync(CLI, ["run", req]);
+  await withApp([chosen], async (s) => {
+    await pageLoaded(s, 0);
+    await s.waitFor(field("country"));
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Clear form");
+    await s.click('[role="option"][data-command="edit.clearForm"]');
+    await s.waitUntil(async () => (await s.exec("return [...document.querySelectorAll('[data-formlayer=\"0\"] [data-field=\"plan\"]')].some((r) => r.checked)")) === false, "no radio button on");
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-formlayer=\"0\"] [data-field=\"country\"]').value")) === "", "no country chosen");
+    await s.keys(["Control", "s"]);
+    await s.waitFor("#output");
+    await s.replaceText("#output", cleared);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved form-cleared.pdf")), "saved notice");
+  });
+  const f = JSON.parse(execFileSync(CLI, ["--json", "fields", cleared], { encoding: "utf8" })).result.data.fields;
+  const plan = f.find((x) => x.name === "plan");
+  const country = f.find((x) => x.name === "country");
+  assert(!plan.widgets.some((w) => w.checked) && (country.value ?? "") === "", `saved copy: plan ${JSON.stringify(plan.widgets.map((w) => w.checked))}, country ${country.value}`);
 });
 
 await test("reset form: fields return to the document's default values as unsaved edits; Undo; saved copy verified", async () => {

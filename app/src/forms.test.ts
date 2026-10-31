@@ -53,23 +53,24 @@ describe("clear form", () => {
   const f = (name: string, kind: FormField["kind"], extra: Partial<FormField> = {}): FormField => ({
     name, label: null, kind, value: null, options: [], read_only: false, required: false, multiline: false, editable: false, widgets: [w], ...extra,
   });
-  it("empties text and checkboxes, keeps choices it cannot empty, leaves read-only fields", () => {
+  it("empties text, checkboxes, choices and radio groups, leaves read-only fields", () => {
     const fields = [
       f("name", "text", { value: "Ada" }),
       f("notes", "text", { value: "" }),
       f("agree", "checkbox"),
       f("plan", "radio"),
+      f("size", "radio", { widgets: [{ page: 0, rect: { left: 0, bottom: 0, right: 10, top: 10 }, export_value: "L", checked: true }] }),
       f("country", "combo", { value: "Japan", options: ["Japan"] }),
       f("city", "combo", { value: "Oslo", editable: true }),
       f("ref", "text", { value: "R-1", read_only: true }),
     ];
     const r = clearedEdits({ notes: "typed" }, fields);
-    expect(r.edits).toEqual({ name: "", agree: false, city: "" });
-    expect(r.changed).toBe(4);
-    expect(r.kept).toBe(2);
+    // "plan" has a button on (the shared widget is checked): emptied too.
+    expect(r.edits).toEqual({ name: "", agree: false, plan: "", size: "", country: "", city: "" });
+    expect(r.changed).toBe(7);
   });
 
-  it("resets to the document's defaults, empties fields without one, keeps choices it cannot reset", () => {
+  it("resets to the document's defaults and empties fields without a usable one", () => {
     const wd = (checked = false, export_value: string | null = null) => ({ page: 0, rect: { left: 0, bottom: 0, right: 10, top: 10 }, export_value, checked });
     const fields: FormField[] = [
       { ...text, default_value: "Jane" },
@@ -84,9 +85,9 @@ describe("clear form", () => {
       { ...text, name: "ref", value: "R-1", read_only: true, default_value: "R-0" },
     ];
     const r = resetEdits({ notes: "typed", plan: "basic" }, fields);
-    expect(r.edits).toEqual({ full_name: "Jane", notes: "", subscribe: true, news: false, plan: "pro", country: "Japan", city: "" });
-    expect(r.changed).toBe(7);
-    expect(r.kept).toBe(2);
+    // "size" (basic on, no default) and "colour" (its default is not an option) are emptied.
+    expect(r.edits).toEqual({ full_name: "Jane", notes: "", subscribe: true, news: false, plan: "pro", size: "", country: "Japan", colour: "", city: "" });
+    expect(r.changed).toBe(9);
     // A second reset changes nothing.
     expect(resetEdits(r.edits, fields).changed).toBe(0);
   });
