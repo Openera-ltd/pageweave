@@ -1658,7 +1658,7 @@ await test("convert to PowerPoint: one slide per page with text boxes, table and
   assert(s2.includes("<a:tbl>") && s2.includes("Station"), "slide 2: table");
 });
 
-await test("translate side by side: page 1 into German as a PDF with the original next to its translation; option only for PDF", async () => {
+await test("translate side by side: page 1 into German as a PDF with the original next to its translation, with a glossary; option only for PDF", async () => {
   const src = join(FIX, "five-pages.pdf");
   const out = join(work, "five-pages-de-side.pdf");
   await withApp([src], async (s) => {
@@ -1679,7 +1679,14 @@ await test("translate side by side: page 1 into German as a PDF with the origina
     await s.type("#pages", "1");
     await s.waitUntil(async () => (await s.text("#pages-msg")) === "1 page selected", "page 1 chosen");
     await s.replaceText("#output", out);
+    // Glossary: a line without "=" blocks Translate with its reason; then a valid term.
+    await s.type("#translate-glossary", "fox");
+    await s.waitUntil(async () => (await s.text('[data-testid="translate-glossary-msg"]')).includes("Glossary line 1"), "glossary line refused");
+    assert((await s.exec("return document.querySelector('[data-testid=tool-start]').title")).includes("Glossary line 1"), "start blocked with the reason");
+    await s.replaceText("#translate-glossary", "fox = Wolf");
+    await s.waitUntil(async () => (await s.text('[data-testid="translate-glossary-msg"]')).startsWith("1 term"), "one term");
     await axeCheck(s, "translate-side-by-side");
+    writeFileSync(join(ART, "translate-glossary.png"), await s.screenshot());
     await s.waitUntil(async () => !["Recognizing the document's language…", "Download the language first."].includes(await s.exec("return document.querySelector('[data-testid=tool-start]').title")), "ready to translate", 60000);
     await s.click('[data-testid="tool-start"]');
     await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved five-pages-de-side.pdf")), "saved notice", 180000);
@@ -1693,6 +1700,7 @@ await test("translate side by side: page 1 into German as a PDF with the origina
     const firstLine = original.split("\n").map((l) => l.trim()).find((l) => l.length > 10);
     assert(text.includes(firstLine), `original kept on the sheet: ${firstLine}`);
     assert(/\b(und|der|die|das|Seite|Kapitel)\b/i.test(text), `German on the sheet: ${text.slice(0, 400)}`);
+    assert(text.includes("Wolf") && !text.includes("Fuchs"), `the glossary's translation used: ${text.slice(0, 400)}`);
   }
 });
 

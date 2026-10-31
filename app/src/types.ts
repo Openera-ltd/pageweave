@@ -353,7 +353,7 @@ export type Operation =
   | { op: "install_translation"; source: string; target: string }
   | { op: "download_update"; version: string }
   | { op: "install_office" }
-  | { op: "translate_document"; input: string; pages: string | null; source: string | null; target: string; output: string; bilingual?: boolean }
+  | { op: "translate_document"; input: string; pages: string | null; source: string | null; target: string; output: string; bilingual?: boolean; glossary?: Array<{ source: string; target: string }> }
   | { op: "read_aloud_to_wav"; input: string; pages: string | null; voice: string | null; rate: number; output: string }
   | { op: "convert_to_pptx"; input: string; pages: string | null; output: string }
   | { op: "convert_office_to_pdf"; input: string; output: string }

@@ -56,6 +56,16 @@ pub struct AnnotationChange {
     pub rect: Option<RectPt>,
 }
 
+/// One glossary term (in the document's language) and its fixed translation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GlossaryEntry {
+    pub source: String,
+    pub target: String,
+}
+
+/// Most glossary entries in one translation.
+pub const MAX_GLOSSARY: usize = 1000;
+
 /// Largest move of one annotation, in points (the largest page side PDF allows).
 pub const MAX_ANNOTATION_MOVE: f32 = 14_400.0;
 
@@ -782,6 +792,9 @@ pub enum Operation {
         output: PathBuf,
         #[serde(default)]
         bilingual: bool,
+        /// Terms translated one fixed way (whole words, any case), e.g. a company's own wording.
+        #[serde(default)]
+        glossary: Vec<GlossaryEntry>,
     },
     /// Read pages (all when `pages` is absent) aloud with the computer's speech voice into a WAV
     /// file (`voice`: an id from the speech engine, the default voice when absent; `rate`: 0.5–2,
@@ -1418,7 +1431,17 @@ impl Operation {
                     return Err(PwError::invalid("office.extension", "Save the PDF with a .pdf name."));
                 }
             }
-            Operation::TranslateDocument { output, source, target, bilingual, .. } => {
+            Operation::TranslateDocument { output, source, target, bilingual, glossary, .. } => {
+                let term_ok = |t: &str| {
+                    let t = t.trim();
+                    !t.is_empty() && t.chars().count() <= 200 && !t.chars().any(char::is_control)
+                };
+                if glossary.len() > MAX_GLOSSARY || !glossary.iter().all(|g| term_ok(&g.source) && term_ok(&g.target)) {
+                    return Err(PwError::invalid(
+                        "translate.glossary",
+                        "Each glossary line needs a term and its translation (at most 200 characters each, 1000 lines).",
+                    ));
+                }
                 if *bilingual && !output.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf")) {
                     return Err(PwError::invalid(
                         "translate.bilingual",

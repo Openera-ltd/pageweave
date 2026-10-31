@@ -344,6 +344,13 @@ textarea {
   min-width: 0;
 }
 
+/* Multi-line fields take their height from rows, not the one-line control height. */
+textarea.input {
+  height: auto;
+  padding: var(--space-2) var(--space-3);
+  resize: vertical;
+}
+
 .input[aria-invalid="true"] {
   border-color: var(--danger);
 }

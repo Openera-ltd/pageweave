@@ -191,6 +191,10 @@ enum Command {
         /// PDF output: each sheet shows the original page next to its translation.
         #[arg(long)]
         bilingual: bool,
+        /// Terms translated one fixed way: a UTF-8 file with one "term = translation" per line
+        /// (blank lines and lines starting with # are ignored).
+        #[arg(long, value_name = "FILE")]
+        glossary: Option<PathBuf>,
         /// Download a language direction's model (e.g. en-de) into PageWeave's data folder.
         #[arg(long, value_name = "SOURCE-TARGET")]
         install: Option<String>,
@@ -915,6 +919,7 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
             to: Some(to),
             output: Some(output),
             bilingual,
+            glossary,
             install: None,
             remove: None,
         } => Operation::TranslateDocument {
@@ -924,6 +929,10 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
             target: to.clone(),
             output: output.clone(),
             bilingual: *bilingual,
+            glossary: match glossary {
+                Some(f) => read_glossary(f)?,
+                None => vec![],
+            },
         },
         Command::Translate { .. } => {
             return Err(PwError::invalid(
@@ -1847,6 +1856,26 @@ fn run() -> ExitCode {
             ExitCode::from(e.category.exit_code().clamp(2, 255) as u8)
         }
     }
+}
+
+/// A glossary file: one "term = translation" per line; blank lines and # comments are skipped.
+fn read_glossary(path: &std::path::Path) -> pw_core::PwResult<Vec<pw_core::ops::GlossaryEntry>> {
+    let text = std::fs::read_to_string(path).map_err(|e| PwError::from_io(&e, "glossary file"))?;
+    let mut out = Vec::new();
+    for (n, line) in text.lines().enumerate() {
+        let line = line.trim().trim_start_matches('\u{feff}');
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (s, t) = line.split_once('=').ok_or_else(|| {
+            PwError::invalid(
+                "translate.glossary",
+                format!("Glossary line {}: write it as \"term = translation\".", n + 1),
+            )
+        })?;
+        out.push(pw_core::ops::GlossaryEntry { source: s.trim().to_string(), target: t.trim().to_string() });
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

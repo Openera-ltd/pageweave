@@ -176,6 +176,7 @@ pub fn translate_document(
     target: &str,
     output: &Path,
     bilingual: bool,
+    glossary: &[pw_core::ops::GlossaryEntry],
     policy: CollisionPolicy,
     cancelled: &dyn Fn() -> bool,
     progress: &dyn Fn(u64, u64),
@@ -254,7 +255,9 @@ pub fn translate_document(
         }
     }
     batch.extend(run_texts.iter().cloned());
-    let mut translated = pw_translate::translate_all(&source, target, &batch, cancelled, progress)?;
+    let terms: Vec<(String, String)> =
+        glossary.iter().map(|g| (g.source.trim().to_string(), g.target.trim().to_string())).collect();
+    let mut translated = pw_translate::translate_all(&source, target, &batch, &terms, cancelled, progress)?;
     let run_out: HashMap<String, String> = run_texts.into_iter().zip(translated.split_off(texts.len())).collect();
 
     let mut report = TranslateReport {

@@ -39,3 +39,29 @@ export function route(dirs: TranslationDirection[], source: string, target: stri
 
 /** "111 MB" */
 export const megabytes = (bytes: number): string => `${Math.max(1, Math.round(bytes / 1_000_000))} MB`;
+
+export interface GlossaryEntry {
+  source: string;
+  target: string;
+}
+
+/**
+ * A glossary typed as one "term = translation" per line (blank lines and # comments skipped), or
+ * the reason it cannot be used (the same rules as the engine: both sides, ≤ 200 characters each,
+ * at most 1000 lines).
+ */
+export function parseGlossary(text: string): GlossaryEntry[] | string {
+  const out: GlossaryEntry[] = [];
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!.trim();
+    if (!line || line.startsWith("#")) continue;
+    const at = line.indexOf("=");
+    const source = at < 0 ? "" : line.slice(0, at).trim();
+    const target = at < 0 ? "" : line.slice(at + 1).trim();
+    if (!source || !target) return `Glossary line ${i + 1}: write it as "term = translation".`;
+    if ([...source].length > 200 || [...target].length > 200) return `Glossary line ${i + 1} is too long (at most 200 characters a side).`;
+    out.push({ source, target });
+  }
+  return out.length > 1000 ? "A glossary can have at most 1000 lines." : out;
+}

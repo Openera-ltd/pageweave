@@ -1198,6 +1198,32 @@ fn translate_lists_directions_and_translates_pages() {
         .output()
         .expect("run");
     assert_eq!(json(&r)["error"]["code"], "translate.bilingual");
+    // --glossary: "term = translation" lines; a line without "=" is refused with its number.
+    let g = dir.path().join("g.txt");
+    std::fs::write(&g, "# terms\n\nfox = Wolf\n").expect("glossary");
+    let out = dir.path().join("g-de.txt");
+    let r = bin()
+        .args(["--json", "translate", "--pages", "1", "--to", "de", "--glossary"])
+        .arg(&g)
+        .arg("-o")
+        .arg(&out)
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", json(&r));
+    assert!(std::fs::read_to_string(&out).expect("txt").contains("Wolf"));
+    std::fs::write(&g, "fox = Wolf\nno equals sign\n").expect("glossary");
+    let r = bin()
+        .args(["--json", "translate", "--pages", "1", "--to", "de", "--glossary"])
+        .arg(&g)
+        .arg("-o")
+        .arg(dir.path().join("g2.txt"))
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    let v = json(&r);
+    assert_eq!(v["error"]["code"], "translate.glossary");
+    assert!(v["error"]["message"].as_str().unwrap_or("").contains("line 2"), "{v}");
 }
 
 #[test]

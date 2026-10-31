@@ -589,7 +589,7 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             let path = pw_update::download(env!("CARGO_PKG_VERSION"), version, &cancelled, &byte_progress)?;
             (vec![], serde_json::json!({ "version": version, "installer": path }))
         }
-        Operation::TranslateDocument { input, pages, source, target, output, bilingual } => {
+        Operation::TranslateDocument { input, pages, source, target, output, bilingual, glossary } => {
             let page_progress = |done: u64, total: u64| {
                 if let Some(c) = ctx {
                     c.set_progress(done, total, "paragraphs");
@@ -603,6 +603,7 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
                 target,
                 output,
                 *bilingual,
+                glossary,
                 policy,
                 &cancelled,
                 &page_progress,

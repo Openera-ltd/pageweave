@@ -37,6 +37,7 @@ fn translate_as(
         target: target.into(),
         output: output.into(),
         bilingual,
+        glossary: vec![],
     });
     req.collision = CollisionPolicy::Fail;
     execute(&req, None)
@@ -182,4 +183,30 @@ fn bilingual_pdf_puts_each_page_next_to_its_translation() {
     let e = translate_as("article.pdf", Some("1"), Some("en"), "de", &dir.path().join("x.docx"), true)
         .expect_err("refused");
     assert_eq!(e.code, "translate.bilingual");
+}
+
+#[test]
+fn glossary_terms_are_translated_one_fixed_way() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("g.txt");
+    let mut req = OperationRequest::new(Operation::TranslateDocument {
+        input: fixture("five-pages.pdf"),
+        pages: Some("1".into()),
+        source: Some("en".into()),
+        target: "de".into(),
+        output: out.clone(),
+        bilingual: false,
+        glossary: vec![pw_core::ops::GlossaryEntry { source: "FOX".into(), target: "Wolf".into() }],
+    });
+    req.collision = CollisionPolicy::Fail;
+    execute(&req, None).expect("translate");
+    let t = std::fs::read_to_string(&out).expect("text");
+    assert!(t.contains("Wolf") && !t.contains("Fuchs"), "the glossary's word, any case: {t}");
+    // An empty term is refused before anything runs.
+    let mut bad = req.clone();
+    if let Operation::TranslateDocument { glossary, output, .. } = &mut bad.operation {
+        glossary.push(pw_core::ops::GlossaryEntry { source: " ".into(), target: "x".into() });
+        *output = dir.path().join("bad.txt");
+    }
+    assert_eq!(execute(&bad, None).expect_err("refused").code, "translate.glossary");
 }

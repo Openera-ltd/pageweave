@@ -297,7 +297,7 @@ pub const TOOLS: &[Tool] = &[
     Tool {
         name: "translate_document",
         title: "Translate a document",
-        description: "Translate all or chosen pages with PageWeave's own local translation models (nothing leaves the computer) into a Word document (.docx, layout kept: headings, columns, tables, pictures) or a text file (.txt). Languages: en, de, fr, es, it (pairs without English go through English). The source language is detected when not given. The result reports numbers, dates, codes and addresses the translation did not keep exactly.",
+        description: "Translate all or chosen pages with PageWeave's own local translation models (nothing leaves the computer) into a Word document (.docx, layout kept: headings, columns, tables, pictures) or a text file (.txt). Languages: en, de, fr, es, it, pt (every pair translated directly). An optional glossary fixes how chosen terms are translated. The source language is detected when not given. The result reports numbers, dates, codes and addresses the translation did not keep exactly.",
         effect: Effect::WritesNewFiles,
         long: true,
         schema: || {
@@ -305,9 +305,15 @@ pub const TOOLS: &[Tool] = &[
                 json!({
                     "path": path_prop("Source PDF"),
                     "pages": { "type": "string", "description": PAGES },
-                    "source": { "type": "string", "enum": ["en", "de", "fr", "es", "it"], "description": "Language of the document (detected when absent)" },
-                    "target": { "type": "string", "enum": ["en", "de", "fr", "es", "it"], "description": "Language to translate into" },
-                    "output": path_prop("New .docx or .txt file (must not exist)")
+                    "source": { "type": "string", "enum": ["en", "de", "fr", "es", "it", "pt"], "description": "Language of the document (detected when absent)" },
+                    "target": { "type": "string", "enum": ["en", "de", "fr", "es", "it", "pt"], "description": "Language to translate into" },
+                    "output": path_prop("New .docx or .txt file (must not exist)"),
+                    "glossary": {
+                        "type": "array",
+                        "maxItems": 1000,
+                        "description": "Terms (in the document's language) and their fixed translations; whole words, any case",
+                        "items": obj(json!({ "source": { "type": "string" }, "target": { "type": "string" } }), &["source", "target"])
+                    }
                 }),
                 &["path", "target", "output"],
             )
@@ -475,6 +481,8 @@ struct TranslateArg {
     source: Option<String>,
     target: String,
     output: String,
+    #[serde(default)]
+    glossary: Vec<pw_core::ops::GlossaryEntry>,
 }
 
 #[derive(Deserialize)]
@@ -700,6 +708,7 @@ pub fn operation(tool: &Tool, a: &Value, roots: &Roots) -> PwResult<Operation> {
                 target: x.target,
                 output: roots.output(&x.output, &["docx", "txt"])?,
                 bilingual: false,
+                glossary: x.glossary,
             }
         }
         "read_aloud_to_wav" => {

@@ -254,6 +254,8 @@ pub struct Translator {
     prefix: Option<u32>,
     /// Hypotheses kept while decoding (1 = greedy).
     beam: usize,
+    /// Terms translated one fixed way (source term, its translation), longest first.
+    glossary: Vec<(String, String)>,
 }
 
 impl Translator {
@@ -327,7 +329,7 @@ impl Translator {
             Some(t) => Some(tok.id(t).ok_or_else(|| corrupt(&pair, TOKENIZER_FILE))?),
             None => None,
         };
-        Ok(Translator { encoder, decoder, tok, cfg, prefix, beam: BEAM })
+        Ok(Translator { encoder, decoder, tok, cfg, prefix, beam: BEAM, glossary: Vec::new() })
     }
 
     /// Hypotheses kept while decoding (1 = greedy); for benchmarks.
@@ -523,8 +525,15 @@ impl Translator {
         Ok(first)
     }
 
+    /// Translate glossary terms one fixed way from now on (empty: none).
+    pub fn set_glossary(&mut self, glossary: &[(String, String)]) {
+        self.glossary = glossary.to_vec();
+        // Longest first, so "river basin" wins over "river".
+        self.glossary.sort_by_key(|(s, _)| std::cmp::Reverse(s.chars().count()));
+    }
+
     fn masked_with(&mut self, sentence: &str, all_numbers: bool) -> PwResult<String> {
-        let (masked, originals) = mask_with(sentence, all_numbers);
+        let (masked, originals) = mask_glossary(sentence, all_numbers, &self.glossary);
         let t = self.sentence(&masked)?;
         if originals.is_empty() || placeholders_kept(&t, originals.len()) {
             return Ok(unmask(&t, &originals));
@@ -652,6 +661,7 @@ pub fn translate_all(
     source: &str,
     target: &str,
     texts: &[String],
+    glossary: &[(String, String)],
     cancelled: &dyn Fn() -> bool,
     progress: &dyn Fn(u64, u64),
 ) -> PwResult<Vec<String>> {
@@ -660,12 +670,23 @@ pub fn translate_all(
     let mut current: Vec<String> = texts.to_vec();
     for (k, (s, t)) in steps.iter().enumerate() {
         current = with_translator(s, t, |tr| {
+            // The glossary is in the document's language: it applies to the first step.
+            tr.set_glossary(if k == 0 { glossary } else { &[] });
             let mut out = Vec::with_capacity(current.len());
+            let mut failed = None;
             for (i, text) in current.iter().enumerate() {
-                out.push(tr.text(text, cancelled, &|_, _| {})?);
+                match tr.text(text, cancelled, &|_, _| {}) {
+                    Ok(t) => out.push(t),
+                    Err(e) => {
+                        failed = Some(e);
+                        break;
+                    }
+                }
                 progress((k * texts.len() + i + 1) as u64, total);
             }
-            Ok(out)
+            // The loaded model is kept for the next request: it must not keep this glossary.
+            tr.set_glossary(&[]);
+            failed.map_or(Ok(out), Err)
         })?;
     }
     Ok(current)
@@ -795,8 +816,61 @@ pub fn mask(text: &str) -> (String, Vec<String>) {
 
 /// As [`mask`]; with `all_numbers`, every number is masked too (after a translation changed one).
 pub fn mask_with(text: &str, all_numbers: bool) -> (String, Vec<String>) {
+    mask_glossary(text, all_numbers, &[])
+}
+
+/// As [`mask_with`], and glossary terms (whole words, any case; `glossary` longest first) become
+/// placeholders that are put back as their fixed translation.
+pub fn mask_glossary(text: &str, all_numbers: bool, glossary: &[(String, String)]) -> (String, Vec<String>) {
     let mut out = String::with_capacity(text.len());
     let mut originals: Vec<String> = Vec::new();
+    let mut rest = text;
+    while let Some((at, len, translation)) = first_term(rest, glossary) {
+        mask_words(&rest[..at], all_numbers, &mut out, &mut originals);
+        originals.push(translation.to_string());
+        out.push_str(&format!("PWX{}", originals.len()));
+        rest = &rest[at + len..];
+    }
+    mask_words(rest, all_numbers, &mut out, &mut originals);
+    (out, originals)
+}
+
+/// The earliest glossary term in `text` as a whole word (any case): byte start, byte length and its
+/// translation. Among terms starting at the same place the first listed (the longest) wins.
+fn first_term<'g>(text: &str, glossary: &'g [(String, String)]) -> Option<(usize, usize, &'g str)> {
+    if glossary.is_empty() {
+        return None;
+    }
+    let lower = text.to_lowercase();
+    // Only when lowercasing keeps byte offsets (true for the six languages' letters).
+    if lower.len() != text.len() {
+        return None;
+    }
+    let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric());
+    let mut best: Option<(usize, usize, &str)> = None;
+    for (src, dst) in glossary {
+        let term = src.to_lowercase();
+        if term.is_empty() {
+            continue;
+        }
+        let mut from = 0;
+        while let Some(i) = lower[from..].find(&term) {
+            let at = from + i;
+            let end = at + term.len();
+            if !word(lower[..at].chars().next_back()) && !word(lower[end..].chars().next()) {
+                if best.is_none_or(|(b, _, _)| at < b) {
+                    best = Some((at, term.len(), dst.as_str()));
+                }
+                break;
+            }
+            from = at + term.chars().next().map_or(1, char::len_utf8);
+        }
+    }
+    best
+}
+
+/// Mask the maskable words of `text` (see [`mask_with`]) onto `out`, numbering after `originals`.
+fn mask_words(text: &str, all_numbers: bool, out: &mut String, originals: &mut Vec<String>) {
     // Names in capitals (brands, acronyms) are kept, unless the sentence is mostly capitals (a
     // heading set in capitals is translated).
     let words: Vec<&str> = text.split_whitespace().filter(|w| w.chars().any(char::is_alphabetic)).collect();
@@ -823,7 +897,6 @@ pub fn mask_with(text: &str, all_numbers: bool) -> (String, Vec<String>) {
             out.push_str(part);
         }
     }
-    (out, originals)
 }
 
 /// Whether every placeholder PWX1..PWXn is in `text` (any case).
@@ -855,6 +928,29 @@ pub fn unmask(text: &str, originals: &[String]) -> String {
 #[cfg(test)]
 mod route_tests {
     use super::*;
+
+    #[test]
+    fn glossary_terms_become_placeholders_put_back_as_their_translation() {
+        let g = |pairs: &[(&str, &str)]| {
+            let mut v: Vec<(String, String)> = pairs.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+            v.sort_by_key(|(s, _)| std::cmp::Reverse(s.chars().count()));
+            v
+        };
+        let glossary = g(&[("river", "Strom"), ("river basin", "Einzugsgebiet"), ("sediment", "Schwebstoff")]);
+        let (m, o) = mask_glossary("The River basin holds sediment; the river at gauge RX-100.", false, &glossary);
+        // Longest term first, any case, whole words only; other masking still applies (RX-100).
+        assert_eq!(m, "The PWX1 holds PWX2; the PWX3 at gauge PWX4.");
+        assert_eq!(o, ["Einzugsgebiet", "Schwebstoff", "Strom", "RX-100"]);
+        assert_eq!(
+            unmask("Das PWX1 hält PWX2; der PWX3 am Pegel PWX4.", &o),
+            "Das Einzugsgebiet hält Schwebstoff; der Strom am Pegel RX-100."
+        );
+        // Not inside other words.
+        let (m, o) = mask_glossary("Riverside sediments", false, &glossary);
+        assert_eq!((m.as_str(), o.len()), ("Riverside sediments", 0));
+        // Without a glossary masking is unchanged.
+        assert_eq!(mask_glossary("Call NASA at 10.", false, &[]), mask_with("Call NASA at 10.", false));
+    }
 
     #[test]
     fn routes_protected_tokens_and_names() {
