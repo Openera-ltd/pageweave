@@ -14,7 +14,7 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 fn change(index: u32, subtype: &str, delete: bool, text: Option<&str>) -> AnnotationChange {
-    AnnotationChange { page: 0, index, subtype: subtype.into(), delete, text: text.map(str::to_string) }
+    AnnotationChange { page: 0, index, subtype: subtype.into(), delete, text: text.map(str::to_string), color: None }
 }
 
 fn apply(
@@ -121,4 +121,49 @@ fn stale_or_impossible_changes_are_refused_and_write_nothing() {
     req.password = Some("pw-user-test".into());
     assert_eq!(execute(&req, None).expect_err("protected").code, "annotation.protected");
     assert!(!out.exists());
+}
+
+#[test]
+fn colours_of_markup_and_shapes_change_and_are_drawn_in_the_new_colour() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("recoloured.pdf");
+    let recolour = |index, subtype: &str, color: &str| AnnotationChange {
+        color: Some(color.into()),
+        ..change(index, subtype, false, None)
+    };
+    apply(
+        fixture("hidden-info.pdf"),
+        vec![recolour(2, "Highlight", "#00ff00"), recolour(7, "Square", "#0000ff")],
+        vec![],
+        &out,
+    )
+    .expect("recolour");
+    let l = list_annotations(&out, &OpenOptions::default()).expect("list");
+    let col = |i: u32| l.annotations.iter().find(|a| a.index == i).and_then(|a| a.color.clone());
+    assert_eq!((col(2).as_deref(), col(7).as_deref()), (Some("#00ff00"), Some("#0000ff")));
+    // Drawn in the new colours (the stored appearance with the old one was dropped).
+    let (png, _, h) = pw_pdf::render_page_png(&out, &OpenOptions::default(), 0, 1.0).expect("render");
+    let img = image::load_from_memory(&png).expect("png").to_rgb8();
+    let at = |x: f32, y: f32| *img.get_pixel(x as u32, h - y as u32);
+    let hl = at(80.0, 745.0); // inside the highlight (72..200 × 736..754)
+    assert!(hl[1] > 150 && hl[0] < 100, "highlight is green now (was yellow): {hl:?}");
+    // The square (300..360 × 500..540) has a blue outline now, no red left.
+    let (mut blue, mut red) = (0, 0);
+    for y in (h - 542)..(h - 498) {
+        for x in 298..362 {
+            let p = img.get_pixel(x, y);
+            blue += (p[2] > 150 && p[0] < 100) as u32;
+            red += (p[0] > 150 && p[2] < 100) as u32;
+        }
+    }
+    assert!(blue > 100 && red == 0, "square outline blue {blue} px, red {red} px");
+    // Kinds that are not drawn from the colour are refused before anything is written.
+    let other = dir.path().join("other.pdf");
+    let e = apply(fixture("hidden-info.pdf"), vec![recolour(6, "FileAttachment", "#00ff00")], vec![], &other)
+        .expect_err("refused");
+    assert_eq!(e.code, "annotation.color_kind");
+    let e = apply(fixture("hidden-info.pdf"), vec![recolour(2, "Highlight", "green")], vec![], &other)
+        .expect_err("refused");
+    assert_eq!(e.code, "annotation.color");
+    assert!(!other.exists());
 }

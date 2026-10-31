@@ -3360,7 +3360,11 @@ await test("comments panel: delete a note and change a highlight's comment; clos
     await s.type('[aria-label="Comment for Highlight on page 1"]', "Checked by QA");
     await s.click('[data-testid="comment-apply"]');
     await s.waitUntil(async () => (await items(s))[1].includes("Checked by QA") && (await items(s))[1].includes("Changed"), "pending text shown");
-    await s.waitUntil(async () => (await unsavedText(s)) === "2 unsaved changes", "two unsaved changes");
+    // Recolour the rectangle (the native colour picker cannot be driven: set its value as the browser does).
+    await s.exec(`const i=document.querySelector('[aria-label="Colour of Rectangle on page 1"]');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(i, '#0000ff');
+      i.dispatchEvent(new Event('input', { bubbles: true })); return 1`);
+    await s.waitUntil(async () => (await unsavedText(s)) === "3 unsaved changes", "three unsaved changes");
     await axeCheck(s, "comments-panel");
     writeFileSync(join(ART, "comments-panel.png"), await s.screenshot());
     // Closing the tab asks first.
@@ -3385,6 +3389,9 @@ await test("comments panel: delete a note and change a highlight's comment; clos
   if (CLI) {
     const list = execFileSync(CLI, ["annotations", out], { encoding: "utf8" });
     assert(!list.includes("PWCOMMENT") && list.includes("Checked by QA") && list.includes("3 annotation(s)"), `CLI listing:\n${list}`);
+    const listed = JSON.parse(execFileSync(CLI, ["--json", "annotations", out], { encoding: "utf8" })).result.data.annotations;
+    const square = listed.find((x) => x.subtype === "Square");
+    assert(square && square.color === "#0000ff", `rectangle recoloured: ${JSON.stringify(square)}`);
   }
 });
 

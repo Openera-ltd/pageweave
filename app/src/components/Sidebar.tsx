@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Bookmark, Download, LayoutGrid, MessageSquare, Paperclip, Pencil, Plus, ShieldCheck, Trash2, Undo2 } from "lucide-react";
 import { useApi } from "../api";
 import { toPwError, type AttachmentInfo, type ExistingAnnotation, type OpenedDoc, type PwError, type SignatureReport } from "../types";
-import { keyOf, kindName, markDeleted, revert, setText, type AnnotChanges } from "../annotationChanges";
+import { keyOf, kindName, markDeleted, RECOLOURABLE, revert, setColor, setText, type AnnotChanges } from "../annotationChanges";
 import { formatDate, formatTime, statusLabel } from "../signatures";
 import { formatBytes } from "../format";
 import { Thumbnails } from "./Thumbnails";
@@ -139,7 +139,7 @@ function Comments({ doc, changes, onChanges, onSelect }: { doc: OpenedDoc; chang
           const k = keyOf(a);
           const c = changes[k];
           const deleted = c?.delete === true;
-          const text = c && !c.delete ? (c.text ?? "") : (a.text ?? "");
+          const text = c && !c.delete && c.text !== null ? c.text : (a.text ?? "");
           return (
             <li key={k} data-annot={k} className={deleted ? "deleted" : undefined}>
               <button type="button" className="comment-main" onClick={() => onSelect(a.page)} title={`Go to page ${a.page + 1}`}>
@@ -202,6 +202,16 @@ function Comments({ doc, changes, onChanges, onSelect }: { doc: OpenedDoc; chang
                     >
                       <Pencil />
                     </button>
+                  )}
+                  {!deleted && RECOLOURABLE.has(a.subtype) && (
+                    <input
+                      type="color"
+                      className="comment-color"
+                      aria-label={`Colour of ${kindName(a.subtype)} on page ${a.page + 1}`}
+                      title="Colour (when you save a copy)"
+                      value={c?.color ?? a.color ?? "#000000"}
+                      onChange={(e) => onChanges(setColor(changes, a, e.target.value))}
+                    />
                   )}
                   {!deleted && (
                     <button type="button" className="btn icon" aria-label={`Delete ${kindName(a.subtype)} on page ${a.page + 1}`} title="Delete (when you save a copy)" onClick={() => onChanges(markDeleted(changes, a))}>

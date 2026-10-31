@@ -67,13 +67,16 @@ enum Command {
     Fields { file: PathBuf },
     /// List the comments and markup already in a file, or change them in a new file (-o):
     /// --delete PAGE:INDEX:TYPE removes one (with its pop-up); --set-text PAGE:INDEX:TYPE=TEXT
-    /// changes its comment. PAGE is 1-based; INDEX and TYPE are as the listing prints them.
+    /// changes its comment; --set-color PAGE:INDEX:TYPE=#rrggbb its colour (markup, shapes, ink,
+    /// notes). PAGE is 1-based; INDEX and TYPE are as the listing prints them.
     Annotations {
         file: PathBuf,
         #[arg(long, value_name = "PAGE:INDEX:TYPE")]
         delete: Vec<String>,
         #[arg(long, value_name = "PAGE:INDEX:TYPE=TEXT")]
         set_text: Vec<String>,
+        #[arg(long, value_name = "PAGE:INDEX:TYPE=#RRGGBB")]
+        set_color: Vec<String>,
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
@@ -700,8 +703,8 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
         }
         Command::Inspect { file } => Operation::Inspect { input: file.clone() },
         Command::Fields { file } => Operation::FormFields { input: file.clone() },
-        Command::Annotations { file, delete, set_text, output } => {
-            if delete.is_empty() && set_text.is_empty() {
+        Command::Annotations { file, delete, set_text, set_color, output } => {
+            if delete.is_empty() && set_text.is_empty() && set_color.is_empty() {
                 Operation::ListAnnotations { input: file.clone() }
             } else {
                 let out = output
@@ -710,7 +713,14 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
                 let mut changes = Vec::new();
                 for d in delete {
                     let (page, index, subtype) = parse_annot_ref(d)?;
-                    changes.push(pw_core::ops::AnnotationChange { page, index, subtype, delete: true, text: None });
+                    changes.push(pw_core::ops::AnnotationChange {
+                        page,
+                        index,
+                        subtype,
+                        delete: true,
+                        text: None,
+                        color: None,
+                    });
                 }
                 for t in set_text {
                     let (r, text) = t.split_once('=').ok_or_else(|| {
@@ -723,7 +733,26 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
                         subtype,
                         delete: false,
                         text: Some(text.to_string()),
+                        color: None,
                     });
+                }
+                for t in set_color {
+                    let (r, color) = t.split_once('=').ok_or_else(|| {
+                        PwError::invalid("annotations.syntax", format!("“{t}”: use PAGE:INDEX:TYPE=#RRGGBB."))
+                    })?;
+                    let (page, index, subtype) = parse_annot_ref(r)?;
+                    // Several changes to one annotation are one change (text and colour together).
+                    match changes.iter_mut().find(|c| c.page == page && c.index == index) {
+                        Some(c) => c.color = Some(color.to_string()),
+                        None => changes.push(pw_core::ops::AnnotationChange {
+                            page,
+                            index,
+                            subtype,
+                            delete: false,
+                            text: None,
+                            color: Some(color.to_string()),
+                        }),
+                    }
                 }
                 Operation::ApplyEdits {
                     input: file.clone(),

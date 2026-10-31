@@ -163,6 +163,7 @@ fn fail(what: &str) -> PwError {
 struct PageExpect {
     subtypes: Vec<String>,
     texts: Vec<(usize, String)>,
+    colors: Vec<(usize, [f32; 3])>,
 }
 
 fn subtype_of(doc: &Document, o: &Object) -> String {
@@ -207,6 +208,7 @@ pub(crate) fn apply_annotation_changes(
         let (mut entries, array_obj) = annots_of(&doc, pid);
         let mut remove: HashSet<usize> = HashSet::new();
         let mut new_text: BTreeMap<usize, String> = BTreeMap::new();
+        let mut new_color: BTreeMap<usize, [f32; 3]> = BTreeMap::new();
         for c in list {
             let i = c.index as usize;
             let entry = entries.get(i).cloned().ok_or_else(changed)?;
@@ -223,7 +225,29 @@ pub(crate) fn apply_annotation_changes(
                         remove.insert(pi);
                     }
                 }
-            } else if let Some(t) = &c.text {
+            }
+            if let (false, Some(col)) = (c.delete, &c.color) {
+                let v = u32::from_str_radix(col.trim_start_matches('#'), 16).map_err(|_| changed())?;
+                let rgb =
+                    [(v >> 16) as u8, (v >> 8) as u8, v as u8].map(|b| (b as f32 / 255.0 * 1000.0).round() / 1000.0);
+                // The stored appearance carries the old colour: dropping it makes viewers draw the
+                // annotation from /C (PDFium and Acrobat regenerate it for these types).
+                let set = |d: &mut Dictionary| {
+                    d.set("C", Object::Array(rgb.iter().map(|&x| Object::Real(x)).collect()));
+                    d.remove(b"AP");
+                    d.set("M", Object::string_literal(stamp.clone()));
+                };
+                match &mut entries[i] {
+                    Object::Reference(r) => {
+                        let r = *r;
+                        set(doc.get_dictionary_mut(r).map_err(|_| changed())?);
+                    }
+                    Object::Dictionary(d) => set(d),
+                    _ => return Err(changed()),
+                }
+                new_color.insert(i, rgb);
+            }
+            if let (false, Some(t)) = (c.delete, &c.text) {
                 if c.subtype == "FreeText" {
                     return Err(PwError::invalid(
                         "annotation.freetext",
@@ -258,7 +282,12 @@ pub(crate) fn apply_annotation_changes(
             .enumerate()
             .filter_map(|(new_i, (old_i, _))| new_text.get(old_i).map(|t| (new_i, t.clone())))
             .collect();
-        expect.insert(*page, PageExpect { subtypes, texts });
+        let colors = kept
+            .iter()
+            .enumerate()
+            .filter_map(|(new_i, (old_i, _))| new_color.get(old_i).map(|c| (new_i, *c)))
+            .collect();
+        expect.insert(*page, PageExpect { subtypes, texts, colors });
         let arr = Object::Array(kept.into_iter().map(|(_, o)| o).collect());
         match array_obj {
             Some(id) => {
@@ -290,6 +319,16 @@ pub(crate) fn apply_annotation_changes(
             let have = dict_of(&back, &entries[*i]).and_then(|d| d.get(b"Contents").ok()).map(text).unwrap_or_default();
             if have.trim() != t {
                 return Err(fail(&format!("a comment on page {} did not take its new text", page + 1)));
+            }
+        }
+        for (i, want_c) in &want.colors {
+            let have: Vec<f32> = dict_of(&back, &entries[*i])
+                .and_then(|d| d.get(b"C").ok())
+                .and_then(|c| c.as_array().ok())
+                .map(|a| a.iter().filter_map(|v| v.as_float().ok()).collect())
+                .unwrap_or_default();
+            if have.len() != 3 || have.iter().zip(want_c).any(|(a, b)| (a - b).abs() > 0.002) {
+                return Err(fail(&format!("an annotation on page {} did not take its new colour", page + 1)));
             }
         }
     }

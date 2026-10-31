@@ -2995,3 +2995,19 @@ kbd,
   outline: 2px dashed var(--accent);
   box-shadow: 0 0 0 9999px color-mix(in srgb, var(--bg) 55%, transparent);
 }
+
+/* Colour of an existing annotation in the Comments panel: a compact swatch beside its actions. */
+.comment-color {
+  width: calc(24px * var(--ui-scale));
+  height: calc(24px * var(--ui-scale));
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-1);
+  background: none;
+  cursor: pointer;
+}
+
+.comment-color:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}

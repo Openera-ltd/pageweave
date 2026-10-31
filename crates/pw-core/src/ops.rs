@@ -44,7 +44,26 @@ pub struct AnnotationChange {
     /// New comment text (not for text boxes, whose text is drawn on the page).
     #[serde(default)]
     pub text: Option<String>,
+    /// New colour `#rrggbb` (markup, shapes, ink and notes; viewers redraw it in the new colour).
+    #[serde(default)]
+    pub color: Option<String>,
 }
+
+/// Annotation types whose colour can be changed: their look follows the colour (/C) when the stored
+/// appearance is dropped, in PDFium and in other viewers.
+pub const RECOLOURABLE: &[&str] = &[
+    "Highlight",
+    "Underline",
+    "StrikeOut",
+    "Squiggly",
+    "Square",
+    "Circle",
+    "Ink",
+    "Line",
+    "Polygon",
+    "PolyLine",
+    "Text",
+];
 
 pub const MAX_ANNOTATION_CHANGES: usize = 10_000;
 
@@ -1721,7 +1740,7 @@ impl Operation {
                 }
                 let mut seen = std::collections::HashSet::new();
                 for c in annotation_changes {
-                    if !c.delete && c.text.is_none() {
+                    if !c.delete && c.text.is_none() && c.color.is_none() {
                         return Err(PwError::invalid(
                             "annotation.no_change",
                             "An annotation change has nothing to change.",
@@ -1729,6 +1748,19 @@ impl Operation {
                     }
                     if c.text.as_ref().is_some_and(|t| t.chars().count() > MAX_NOTE_CHARS) {
                         return Err(PwError::invalid("annotation.too_long", "A comment is too long."));
+                    }
+                    if let Some(col) = &c.color {
+                        let ok =
+                            col.len() == 7 && col.starts_with('#') && col[1..].chars().all(|h| h.is_ascii_hexdigit());
+                        if !ok {
+                            return Err(PwError::invalid("annotation.color", "Give the colour as #rrggbb."));
+                        }
+                        if !RECOLOURABLE.contains(&c.subtype.as_str()) {
+                            return Err(PwError::invalid(
+                                "annotation.color_kind",
+                                format!("The colour of a {} annotation can't be changed here.", c.subtype),
+                            ));
+                        }
                     }
                     if !seen.insert((c.page, c.index)) {
                         return Err(PwError::invalid(

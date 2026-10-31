@@ -276,6 +276,8 @@ export interface AnnotationChange {
   subtype: string;
   delete: boolean;
   text: string | null;
+  /** New colour "#rrggbb" (markup, shapes, ink and notes). */
+  color?: string | null;
 }
 
 export type Operation =

@@ -70,11 +70,15 @@ describe("Comments panel", () => {
     expect(screen.getByText("Note")).toBeTruthy();
     expect(screen.getByText("Text box")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Delete Note on page 1" }));
-    expect(onChanges).toHaveBeenLastCalledWith({ "0:0": { page: 0, index: 0, subtype: "Text", delete: true, text: null } });
+    expect(onChanges).toHaveBeenLastCalledWith({ "0:0": { page: 0, index: 0, subtype: "Text", delete: true, text: null, color: null } });
     fireEvent.click(screen.getByRole("button", { name: "Edit comment of Note on page 1" }));
     fireEvent.change(screen.getByLabelText("Comment for Note on page 1"), { target: { value: "Fixed" } });
     fireEvent.click(screen.getByTestId("comment-apply"));
-    expect(onChanges).toHaveBeenLastCalledWith({ "0:0": { page: 0, index: 0, subtype: "Text", delete: false, text: "Fixed" } });
+    expect(onChanges).toHaveBeenLastCalledWith({ "0:0": { page: 0, index: 0, subtype: "Text", delete: false, text: "Fixed", color: null } });
+    // A note's colour can change; a text box (drawn text) offers no colour.
+    fireEvent.change(screen.getByLabelText("Colour of Note on page 1"), { target: { value: "#00aa00" } });
+    expect(onChanges).toHaveBeenLastCalledWith({ "0:0": { page: 0, index: 0, subtype: "Text", delete: false, text: null, color: "#00aa00" } });
+    expect(screen.queryByLabelText("Colour of Text box on page 1")).toBeNull();
     const editBox = screen.getByRole("button", { name: "Edit comment of Text box on page 1" });
     expect(editBox.getAttribute("aria-disabled")).toBe("true");
     fireEvent.click(screen.getByText("Fix this"));
