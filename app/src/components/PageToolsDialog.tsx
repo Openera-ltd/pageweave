@@ -169,6 +169,8 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   const [trFrom, setTrFrom] = useState<string | null>(null);
   const [trTo, setTrTo] = useState("en");
   const [trFormat, setTrFormat] = useState<"pdf" | "docx" | "txt">("pdf");
+  /** PDF output: each original page next to its translation. */
+  const [trSideBySide, setTrSideBySide] = useState(false);
   const [trDirs, setTrDirs] = useState<TranslationDirection[] | null>(null);
   const [trDirsError, setTrDirsError] = useState<string | null>(null);
   const [trDetected, setTrDetected] = useState<string | null | undefined>(undefined);
@@ -377,7 +379,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
       case "slides":
         return { op: "convert_to_pptx", input: doc.path, pages: allPages ? null : pages, output };
       case "translate":
-        return { op: "translate_document", input: doc.path, pages: allPages ? null : pages, source: trFrom, target: trTo, output };
+        return { op: "translate_document", input: doc.path, pages: allPages ? null : pages, source: trFrom, target: trTo, output, bilingual: trFormat === "pdf" && trSideBySide };
       case "audio":
         return { op: "read_aloud_to_wav", input: doc.path, pages: allPages ? null : pages, voice: readVoice, rate: readRate, output };
       case "tables":
@@ -744,6 +746,13 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
               ))}
             </div>
           </div>
+          {trFormat === "pdf" && (
+            <div className="field">
+              <label className="row">
+                <input type="checkbox" checked={trSideBySide} onChange={(e) => setTrSideBySide(e.target.checked)} data-testid="translate-side-by-side" /> Original and translation side by side
+              </label>
+            </div>
+          )}
         </>
       )}
       {tool === "tables" && (

@@ -175,6 +175,7 @@ pub fn translate_document(
     source: Option<&str>,
     target: &str,
     output: &Path,
+    bilingual: bool,
     policy: CollisionPolicy,
     cancelled: &dyn Fn() -> bool,
     progress: &dyn Fn(u64, u64),
@@ -296,7 +297,8 @@ pub fn translate_document(
     }
     if pdf {
         let blocks = blocks.unwrap_or_default();
-        let (c, written) = write_pdf(input, opts, &blocks, &styled, output, policy, cancelled)?;
+        let spread = bilingual.then_some(idx.as_slice());
+        let (c, written) = write_pdf(input, opts, &blocks, &styled, spread, output, policy, cancelled)?;
         report.millis = started.elapsed().as_millis() as u64;
         let mut warnings = notes(&report);
         if written.overflowing > 0 {
@@ -455,6 +457,7 @@ fn write_pdf(
     opts: &OpenOptions,
     placed: &[super::translate_pdf::Placed],
     styled: &[Option<Vec<StyledWord>>],
+    spread: Option<&[u32]>,
     output: &Path,
     policy: CollisionPolicy,
     cancelled: &dyn Fn() -> bool,
@@ -464,9 +467,21 @@ fn write_pdf(
     if placed.len() != styled.len() {
         return Err(PwError::internal("translate.layout", "The page layout changed while translating."));
     }
-    let written = super::translate_pdf::write_in_place(&mut doc, placed, styled, cancelled)?;
-    let bytes = crate::edit::save_bytes(&doc)?;
-    let pages = doc.pages().len().max(0) as u32;
+    let mut written = super::translate_pdf::write_in_place(&mut doc, placed, styled, cancelled)?;
+    let (bytes, pages) = match spread {
+        None => (crate::edit::save_bytes(&doc)?, doc.pages().len().max(0) as u32),
+        Some(idx) => {
+            let original = load(&pdfium, input, opts)?;
+            let bytes = side_by_side(&pdfium, &original, &doc, idx)?;
+            // The translated lines of page idx[i] are on sheet i.
+            written.lines = idx
+                .iter()
+                .enumerate()
+                .filter_map(|(sheet, p)| written.lines.remove(p).map(|l| (sheet as u32, l)))
+                .collect();
+            (bytes, idx.len() as u32)
+        }
+    };
     drop(doc);
     let c = write_atomic_bytes(output, policy, &[input.to_path_buf()], &bytes, |staged| {
         let back = pdfium.load_pdf_from_file(staged, opts.password).map_err(|_| {
@@ -482,4 +497,38 @@ fn write_pdf(
         super::translate_pdf::verify_lines(&back, &written)
     })?;
     Ok((c, written))
+}
+
+/// Sheets with each chosen page of `original` on the left and the same page of `translated` on the
+/// right, each sheet twice its page's width. Runs of pages of one size are laid out together
+/// (PDFium tiles a run onto sheets of one size), then joined in order.
+fn side_by_side(pdfium: &Pdfium, original: &PdfDocument, translated: &PdfDocument, idx: &[u32]) -> PwResult<Vec<u8>> {
+    let err = |e: PdfiumError| crate::map_pdfium_error(&e, "side-by-side pages");
+    let size = |p: u32| -> PwResult<(f32, f32)> {
+        let page = original.pages().get(p as PdfPageIndex).map_err(err)?;
+        Ok((page.width().value, page.height().value))
+    };
+    let mut out = pdfium.create_new_pdf().map_err(err)?;
+    let mut start = 0;
+    while start < idx.len() {
+        let (w, h) = size(idx[start])?;
+        let mut end = start + 1;
+        while end < idx.len() && size(idx[end])? == (w, h) {
+            end += 1;
+        }
+        let mut pairs = pdfium.create_new_pdf().map_err(err)?;
+        for (n, &p) in idx[start..end].iter().enumerate() {
+            let at = (2 * n) as PdfPageIndex;
+            pairs.pages_mut().copy_page_from_document(original, p as PdfPageIndex, at).map_err(err)?;
+            pairs.pages_mut().copy_page_from_document(translated, p as PdfPageIndex, at + 1).map_err(err)?;
+        }
+        let sheets = pairs
+            .pages()
+            .tile_into_new_document(1, 2, PdfPagePaperSize::new_custom(PdfPoints::new(2.0 * w), PdfPoints::new(h)))
+            .map_err(err)?;
+        let at = out.pages().len();
+        out.pages_mut().copy_pages_from_document(&sheets, &format!("1-{}", end - start), at).map_err(err)?;
+        start = end;
+    }
+    crate::edit::save_bytes(&out)
 }

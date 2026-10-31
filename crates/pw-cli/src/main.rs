@@ -188,6 +188,9 @@ enum Command {
         to: Option<String>,
         #[arg(short, long)]
         output: Option<PathBuf>,
+        /// PDF output: each sheet shows the original page next to its translation.
+        #[arg(long)]
+        bilingual: bool,
         /// Download a language direction's model (e.g. en-de) into PageWeave's data folder.
         #[arg(long, value_name = "SOURCE-TARGET")]
         install: Option<String>,
@@ -911,6 +914,7 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
             from,
             to: Some(to),
             output: Some(output),
+            bilingual,
             install: None,
             remove: None,
         } => Operation::TranslateDocument {
@@ -919,6 +923,7 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
             source: from.clone(),
             target: to.clone(),
             output: output.clone(),
+            bilingual: *bilingual,
         },
         Command::Translate { .. } => {
             return Err(PwError::invalid(

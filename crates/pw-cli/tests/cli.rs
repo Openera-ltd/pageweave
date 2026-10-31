@@ -1179,6 +1179,25 @@ fn translate_lists_directions_and_translates_pages() {
     assert!(std::fs::read_to_string(&out).expect("txt").contains("PWMARK001"));
     let r = bin().args(["--json", "translate", "--to", "it"]).arg(fixture("five-pages.pdf")).output().expect("run");
     assert_eq!(r.status.code(), Some(2), "missing -o is a usage error");
+    // --bilingual: one sheet per page, twice as wide; only for PDF output.
+    let side = dir.path().join("p1-it.pdf");
+    let r = bin()
+        .args(["--json", "translate", "--pages", "1", "--to", "it", "--bilingual", "-o"])
+        .arg(&side)
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", json(&r));
+    let info = json(&bin().args(["--json", "inspect"]).arg(&side).output().expect("run"));
+    assert_eq!(info["result"]["data"]["page_count"], 1);
+    assert_eq!(info["result"]["data"]["pages"][0]["width_pt"].as_f64(), Some(1224.0));
+    let r = bin()
+        .args(["--json", "translate", "--pages", "1", "--to", "it", "--bilingual", "-o"])
+        .arg(dir.path().join("p1.docx"))
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert_eq!(json(&r)["error"]["code"], "translate.bilingual");
 }
 
 #[test]

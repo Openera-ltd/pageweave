@@ -19,12 +19,24 @@ fn translate(
     target: &str,
     output: &Path,
 ) -> PwResult<OperationResult> {
+    translate_as(name, pages, source, target, output, false)
+}
+
+fn translate_as(
+    name: &str,
+    pages: Option<&str>,
+    source: Option<&str>,
+    target: &str,
+    output: &Path,
+    bilingual: bool,
+) -> PwResult<OperationResult> {
     let mut req = OperationRequest::new(Operation::TranslateDocument {
         input: fixture(name),
         pages: pages.map(str::to_string),
         source: source.map(str::to_string),
         target: target.into(),
         output: output.into(),
+        bilingual,
     });
     req.collision = CollisionPolicy::Fail;
     execute(&req, None)
@@ -126,4 +138,48 @@ fn pdf_output_keeps_the_layout_and_replaces_the_text() {
     // Page 2 was not asked for: unchanged.
     let src = lopdf::Document::load(fixture("article.pdf")).expect("src");
     assert_eq!(doc.extract_text(&[2]).expect("p2"), src.extract_text(&[2]).expect("p2"));
+}
+
+#[test]
+fn bilingual_pdf_puts_each_page_next_to_its_translation() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("side.pdf");
+    let o = pw_pdf::OpenOptions::default();
+    // Pages 2 and 3 of the article: two sheets, each twice the page's width.
+    translate_as("article.pdf", Some("2-3"), Some("en"), "de", &out, true).expect("bilingual");
+    let info = pw_pdf::open_document(&out, &o).expect("open");
+    let src = pw_pdf::open_document(&fixture("article.pdf"), &o).expect("src");
+    assert_eq!(info.pages.len(), 2);
+    for (sheet, page) in [(0u32, 1u32), (1, 2)] {
+        let (s, p) = (&info.pages[sheet as usize], &src.pages[page as usize]);
+        assert!((s.width_pt - 2.0 * p.width_pt).abs() < 0.5 && (s.height_pt - p.height_pt).abs() < 0.5, "sheet size");
+        let half = |right: bool| {
+            let t = pw_pdf::page_text_segments(&out, &o, sheet).expect("segments");
+            let mid = s.width_pt / 2.0;
+            t.segments
+                .iter()
+                .filter(|g| (g.left >= mid) == right)
+                .map(|g| g.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let (left, right) = (half(false), half(true));
+        // The original's English on the left, the German on the right.
+        let original = pw_pdf::page_text_segments(&fixture("article.pdf"), &o, page).expect("original");
+        let lines: Vec<&str> =
+            original.segments.iter().map(|g| g.text.trim()).filter(|t| t.len() > 20).take(4).collect();
+        assert!(
+            lines.iter().all(|l| left.contains(l)),
+            "sheet {sheet} left half is the original: {lines:?} in {left:?}"
+        );
+        assert!(
+            right.contains(" und ") || right.contains(" die ") || right.contains(" der "),
+            "sheet {sheet} right half is German: {right:?}"
+        );
+        assert!(!right.contains("while upstream"), "sheet {sheet} right half is translated: {right:?}");
+    }
+    // Not for Word or text output.
+    let e = translate_as("article.pdf", Some("1"), Some("en"), "de", &dir.path().join("x.docx"), true)
+        .expect_err("refused");
+    assert_eq!(e.code, "translate.bilingual");
 }

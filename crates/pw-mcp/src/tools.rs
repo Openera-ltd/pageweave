@@ -699,6 +699,7 @@ pub fn operation(tool: &Tool, a: &Value, roots: &Roots) -> PwResult<Operation> {
                 source: x.source,
                 target: x.target,
                 output: roots.output(&x.output, &["docx", "txt"])?,
+                bilingual: false,
             }
         }
         "read_aloud_to_wav" => {

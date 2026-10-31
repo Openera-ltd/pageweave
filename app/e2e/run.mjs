@@ -1658,6 +1658,44 @@ await test("convert to PowerPoint: one slide per page with text boxes, table and
   assert(s2.includes("<a:tbl>") && s2.includes("Station"), "slide 2: table");
 });
 
+await test("translate side by side: page 1 into German as a PDF with the original next to its translation; option only for PDF", async () => {
+  const src = join(FIX, "five-pages.pdf");
+  const out = join(work, "five-pages-de-side.pdf");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Translate");
+    await s.click('[role="option"][data-command="file.translate"]');
+    await s.waitFor("#translate-to");
+    await s.exec("const t = document.querySelector('#translate-to'); t.value = 'de'; t.dispatchEvent(new Event('change', { bubbles: true }));");
+    await s.waitFor('[data-testid="translate-side-by-side"]');
+    // Word and text output have no side-by-side option.
+    await s.click('[data-testid="translate-format-docx"]');
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=translate-side-by-side]')")), "no option for Word");
+    await s.click('[data-testid="translate-format-pdf"]');
+    await s.click('[data-testid="translate-side-by-side"]');
+    await s.exec("const c = [...document.querySelectorAll('[role=dialog] input[type=checkbox]')].find((x) => x.checked && x.dataset.testid !== 'translate-side-by-side'); if (c) c.click();");
+    await s.type("#pages", "1");
+    await s.waitUntil(async () => (await s.text("#pages-msg")) === "1 page selected", "page 1 chosen");
+    await s.replaceText("#output", out);
+    await axeCheck(s, "translate-side-by-side");
+    await s.waitUntil(async () => !["Recognizing the document's language…", "Download the language first."].includes(await s.exec("return document.querySelector('[data-testid=tool-start]').title")), "ready to translate", 60000);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved five-pages-de-side.pdf")), "saved notice", 180000);
+  });
+  if (CLI) {
+    const info = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data;
+    const orig = JSON.parse(execFileSync(CLI, ["--json", "inspect", src], { encoding: "utf8" })).result.data;
+    assert(info.page_count === 1 && Math.abs(info.pages[0].width_pt - 2 * orig.pages[0].width_pt) < 0.5, `one sheet twice the page's width: ${JSON.stringify(info.pages)}`);
+    const text = JSON.parse(execFileSync(CLI, ["--json", "text", out], { encoding: "utf8" })).result.data.pages[0].text;
+    const original = JSON.parse(execFileSync(CLI, ["--json", "text", "--pages", "1", src], { encoding: "utf8" })).result.data.pages[0].text;
+    const firstLine = original.split("\n").map((l) => l.trim()).find((l) => l.length > 10);
+    assert(text.includes(firstLine), `original kept on the sheet: ${firstLine}`);
+    assert(/\b(und|der|die|das|Seite|Kapitel)\b/i.test(text), `German on the sheet: ${text.slice(0, 400)}`);
+  }
+});
+
 await test("translate: page to German as Word (layout kept), language detected; six languages, pairs direct; source unchanged", async () => {
   const src = join(FIX, "five-pages.pdf");
   const before = sha(src);

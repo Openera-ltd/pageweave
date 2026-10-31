@@ -770,7 +770,8 @@ pub enum Operation {
     InstallOffice,
     /// Translate pages (all when `pages` is absent) with the local translation models into a Word
     /// document (`output` .docx, layout kept) or a text file (.txt). `source` is detected when
-    /// absent; language codes are BCP 47 ("en", "de", …).
+    /// absent; language codes are BCP 47 ("en", "de", …). `bilingual` (PDF only): each sheet shows
+    /// the original page next to its translation.
     TranslateDocument {
         input: PathBuf,
         #[serde(default)]
@@ -779,6 +780,8 @@ pub enum Operation {
         source: Option<String>,
         target: String,
         output: PathBuf,
+        #[serde(default)]
+        bilingual: bool,
     },
     /// Read pages (all when `pages` is absent) aloud with the computer's speech voice into a WAV
     /// file (`voice`: an id from the speech engine, the default voice when absent; `rate`: 0.5–2,
@@ -1415,7 +1418,13 @@ impl Operation {
                     return Err(PwError::invalid("office.extension", "Save the PDF with a .pdf name."));
                 }
             }
-            Operation::TranslateDocument { output, source, target, .. } => {
+            Operation::TranslateDocument { output, source, target, bilingual, .. } => {
+                if *bilingual && !output.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf")) {
+                    return Err(PwError::invalid(
+                        "translate.bilingual",
+                        "Side-by-side output is a PDF: save it as .pdf.",
+                    ));
+                }
                 let ok = output.extension().is_some_and(|e| {
                     e.eq_ignore_ascii_case("pdf") || e.eq_ignore_ascii_case("docx") || e.eq_ignore_ascii_case("txt")
                 });
