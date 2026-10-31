@@ -1336,3 +1336,26 @@ fn design_rebuilds_a_page_and_exports_svg_and_pdf() {
         .expect("run");
     assert_eq!(json(&far)["error"]["code"], "design.page");
 }
+
+#[test]
+fn keep_protection_writes_a_copy_that_needs_the_same_password() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("p1.pdf");
+    let mut child = bin()
+        .args(["--json", "--password-stdin", "--keep-protection", "extract", "--pages", "1", "-o"])
+        .arg(&out)
+        .arg(fixture("encrypted-rc4-user-password.pdf"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("run");
+    child.stdin.take().expect("stdin").write_all(b"pw-user-test\n").expect("write");
+    let r = child.wait_with_output().expect("wait");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stdout));
+    let v = json(&bin().args(["--json", "inspect"]).arg(&out).output().expect("run"));
+    assert_eq!(v["error"]["code"], "pdf.password", "{v}");
+    // Only together with --password-stdin (a usage error, exit 1).
+    let r = bin().args(["--keep-protection", "inspect"]).arg(fixture("single-page.pdf")).output().expect("run");
+    assert_eq!(r.status.code(), Some(1));
+}

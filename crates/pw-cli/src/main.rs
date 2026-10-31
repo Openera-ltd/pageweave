@@ -27,6 +27,10 @@ struct Cli {
     /// Read the document password from the first line of standard input.
     #[arg(long, global = true)]
     password_stdin: bool,
+    /// With --password-stdin: new PDFs made from the protected document are protected with the
+    /// same open password (otherwise they are written unprotected, with a warning).
+    #[arg(long, global = true, requires = "password_stdin")]
+    keep_protection: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -1819,6 +1823,7 @@ fn run() -> ExitCode {
         };
         if cli.password_stdin {
             req.password = Some(read_line()?);
+            req.keep_protection = cli.keep_protection;
         }
         if let Command::Sign { .. } = &cli.command {
             req.certificate_password = Some(read_line()?);
