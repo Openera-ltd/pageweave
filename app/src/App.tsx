@@ -3,7 +3,7 @@ import { FileText, X, ZoomIn, ZoomOut, MoveHorizontal } from "lucide-react";
 import { useApi } from "./api";
 import {
   addAnnotations,
-  ANNOTATION_COLORS,
+  markupColor,
   annotationSpecs,
   clientRectsToPageRects,
   EMPTY_HISTORY,
@@ -686,7 +686,7 @@ export function App() {
       return;
     }
     const group = annGroup.current++;
-    const color = kind === "redact" ? REDACT_MARK_COLOR : ANNOTATION_COLORS[kind];
+    const color = kind === "redact" ? REDACT_MARK_COLOR : markupColor(settings?.markup_colors, kind);
     const added: PendingAnnotation[] = [...rects.entries()]
       .sort(([a], [b]) => a - b)
       .map(([page, r], n) => ({ id: makeId(group, n), page, kind, rects: r.slice(0, 1000), color }));
@@ -1795,7 +1795,7 @@ export function App() {
           onCancel={() => setDialog(null)}
           onAdd={(text) => {
             const group = annGroup.current++;
-            updateAnnots(active.doc_id, (h) => addAnnotations(h, [{ id: makeId(group, 0), page: dialog.page, kind: "note", rects: [dialog.rect], color: ANNOTATION_COLORS.note, contents: text }]));
+            updateAnnots(active.doc_id, (h) => addAnnotations(h, [{ id: makeId(group, 0), page: dialog.page, kind: "note", rects: [dialog.rect], color: markupColor(settings?.markup_colors, "note"), contents: text }]));
             setDialog(null);
           }}
         />

@@ -66,7 +66,14 @@ pub struct Settings {
     /// Look for a newer version when the app starts (D-024; reads this project's release page).
     #[serde(default = "yes")]
     pub check_updates: bool,
+    /// Colour of new markup by kind (`highlight`, `underline`, `strike_out`, `note`) as `#rrggbb`;
+    /// a kind left out uses the built-in colour.
+    #[serde(default)]
+    pub markup_colors: BTreeMap<String, String>,
 }
+
+/// The kinds of new markup whose colour can be chosen.
+pub const MARKUP_KINDS: [&str; 4] = ["highlight", "underline", "strike_out", "note"];
 
 fn yes() -> bool {
     true
@@ -93,6 +100,7 @@ impl Default for Settings {
             read_voice: None,
             read_rate: 1.0,
             check_updates: true,
+            markup_colors: BTreeMap::new(),
         }
     }
 }
@@ -201,6 +209,14 @@ impl Settings {
         }
         if let Some(x) = field(obj, "check_updates", &mut bad) {
             s.check_updates = x;
+        }
+        if let Some(map) = field::<BTreeMap<String, String>>(obj, "markup_colors", &mut bad) {
+            let ok = |k: &str, v: &str| MARKUP_KINDS.contains(&k) && is_valid_accent(v);
+            if !map.iter().all(|(k, v)| ok(k, v)) {
+                bad.push("markup_colors".into());
+            }
+            s.markup_colors =
+                map.into_iter().filter(|(k, v)| ok(k, v)).map(|(k, v)| (k, v.to_ascii_lowercase())).collect();
         }
         (s, bad)
     }
@@ -336,6 +352,24 @@ mod tests {
         assert_eq!(s, Settings::default());
         assert_eq!(o, LoadOutcome::RecoveredDefaults { backup: Some("settings.corrupt.json".into()) });
         assert_eq!(fs::read(dir.path().join("settings.corrupt.json")).expect("backup"), b"{ not json");
+    }
+
+    #[test]
+    fn markup_colours_persist_and_bad_entries_are_dropped() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p = dir.path().join("settings.json");
+        let store = SettingsStore::new(&p);
+        let mut s = Settings::default();
+        s.markup_colors.insert("highlight".into(), "#22cc88".into());
+        store.save(&s).expect("save");
+        assert_eq!(store.load().0.markup_colors.get("highlight").map(String::as_str), Some("#22cc88"));
+        fs::write(&p, r##"{"version":1,"markup_colors":{"underline":"#AA0000","ink":"#000000","note":"red"}}"##)
+            .expect("seed");
+        let (s, o) = store.load();
+        assert_eq!(s.markup_colors.into_iter().collect::<Vec<_>>(), [("underline".to_string(), "#aa0000".to_string())]);
+        assert!(matches!(o, LoadOutcome::Repaired { fields } if fields == ["markup_colors"]));
+        fs::write(&p, r#"{"version":1,"theme":"dark"}"#).expect("seed");
+        assert!(store.load().0.markup_colors.is_empty());
     }
 
     #[test]

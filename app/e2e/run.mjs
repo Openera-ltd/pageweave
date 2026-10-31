@@ -882,6 +882,58 @@ await test("annotate: highlight/underline/strike/note from selection and menus; 
   assert(n === null || n === 1, `copy keeps its page (got ${n})`);
 });
 
+await test("markup colours: chosen in Settings, used by new highlights and notes, saved in the copy, kept after restart, Default restores", async () => {
+  const src = join(FIX, "single-page.pdf");
+  const out = join(work, "markup-colours.pdf");
+  const setColour = (s, label, v) => s.exec(`const i=document.querySelector('[aria-label="${label}"]');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(i, '${v}');
+      i.dispatchEvent(new Event('input', { bubbles: true })); return 1`);
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", ","]);
+    await s.waitFor('[aria-label="Highlight color"]');
+    assert((await s.exec("return document.querySelector('[aria-label=\"Highlight color\"]').value")) === "#ffd400", "built-in highlight colour shown");
+    await setColour(s, "Highlight color", "#22cc88");
+    await setColour(s, "Note color", "#3355ff");
+    await axeCheck(s, "settings-markup-colours");
+    writeFileSync(join(ART, "settings-markup-colours.png"), await s.screenshot());
+    await s.click(".dialog .dialog-footer .btn.primary");
+    await s.waitUntil(async () => await s.exec("return !document.querySelector('[role=dialog]')"), "settings saved");
+    const w = await markSpan(s, 0, "PWMARK001");
+    await s.doubleClick('[data-e2e="target"]', w * 0.3, 0);
+    await s.waitUntil(async () => (await selection(s)).trim() === "PWMARK001", "word selected");
+    await s.click('.toolbar [data-command="annotate.highlight"]');
+    await s.waitUntil(async () => (await annotCount(s, "highlight")) === 1, "highlight drawn");
+    const shown = await s.exec("return getComputedStyle(document.querySelector('.annot.highlight')).backgroundColor + '|' + document.querySelector('.annot.highlight').getAttribute('style')");
+    assert(/34,\s*204,\s*136|#22cc88/i.test(shown), `pending highlight drawn in the chosen colour (${shown})`);
+    await s.contextClick('[data-e2e="target"]', 0, 48);
+    await s.click('[role="menuitem"][data-command="annotate.note"]');
+    await s.type("#note-text", "Colour note");
+    await s.keys(["Control", "Enter"]);
+    await s.waitUntil(async () => (await annotCount(s, "note")) === 1, "note added");
+    await s.keys(["Control", "s"]);
+    await s.waitFor("#output");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved markup-colours.pdf")), "saved notice");
+  });
+  if (CLI) {
+    const listed = JSON.parse(execFileSync(CLI, ["--json", "annotations", out], { encoding: "utf8" })).result.data.annotations;
+    const colours = Object.fromEntries(listed.map((a) => [a.subtype, a.color]));
+    assert(colours.Highlight === "#22cc88" && colours.Text === "#3355ff", `saved colours: ${JSON.stringify(colours)}`);
+  }
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", ","]);
+    await s.waitFor('[aria-label="Highlight color"]');
+    assert((await s.exec("return document.querySelector('[aria-label=\"Highlight color\"]').value")) === "#22cc88", "chosen colour kept after restart");
+    await s.exec("[...document.querySelectorAll('.dialog button')].find(b => b.title === 'Use the built-in colors for new markup').click(); return 1");
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[aria-label=\"Highlight color\"]').value")) === "#ffd400", "Default restores the built-in colour");
+    await s.click(".dialog .dialog-footer .btn.primary");
+    await s.waitUntil(async () => await s.exec("return !document.querySelector('[role=dialog]')"), "settings saved again");
+  });
+});
+
 await test("unsaved annotations: closing the tab asks (Save focused); Cancel keeps it; discard can be undone; Discard closes", async () => {
   await withApp([join(FIX, "single-page.pdf")], async (s) => {
     await pageLoaded(s, 0);

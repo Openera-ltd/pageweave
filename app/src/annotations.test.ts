@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addAnnotations, annotationSpecs, clientRectsToPageRects, EMPTY_HISTORY, itemsAt, makeId, mergeLineRects, noteRect, redactAreas, redo, removeItem, undo, type PendingAnnotation } from "./annotations";
+import { addAnnotations, ANNOTATION_COLORS, markupColor, annotationSpecs, clientRectsToPageRects, EMPTY_HISTORY, itemsAt, makeId, mergeLineRects, noteRect, redactAreas, redo, removeItem, undo, type PendingAnnotation } from "./annotations";
 import { describeArea } from "./components/RedactDialog";
 import { pdfRectToScreen, screenRectToPdf } from "./geometry";
 import type { PageInfo } from "./types";
@@ -166,5 +166,14 @@ describe("redaction preview text", () => {
     expect(describeArea({ page: 0, text: "SECRET", images: 1, graphics: 3, graphics_kept: 1, annotations: 2 })).toBe("“SECRET” · 1 image · 2 drawings · 2 comments or links");
     expect(describeArea({ page: 0, text: "", images: 0, graphics: 1, graphics_kept: 1, annotations: 0 })).toBe("Nothing found under this area");
     expect(describeArea({ page: 0, text: "x".repeat(100), images: 0, graphics: 0, graphics_kept: 0, annotations: 0 })).toMatch(/^“x{80}…”$/);
+  });
+});
+
+describe("markup colours", () => {
+  it("uses the chosen colour, or the built-in one when none or an invalid one is set", () => {
+    expect(markupColor(undefined, "highlight")).toBe(ANNOTATION_COLORS.highlight);
+    expect(markupColor({ highlight: "#22CC88" }, "highlight")).toBe("#22cc88");
+    expect(markupColor({ highlight: "#22cc88" }, "underline")).toBe(ANNOTATION_COLORS.underline);
+    expect(markupColor({ note: "red" }, "note")).toBe(ANNOTATION_COLORS.note);
   });
 });

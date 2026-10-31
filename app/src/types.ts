@@ -175,6 +175,8 @@ export interface Settings {
   read_voice: string | null;
   read_rate: number;
   check_updates: boolean;
+  /** Colour of new markup by kind, `#rrggbb`; a missing kind uses the built-in colour. */
+  markup_colors?: Partial<Record<AnnotationKind, string>>;
 }
 
 export type CollisionPolicy = "fail" | "rename" | "replace";

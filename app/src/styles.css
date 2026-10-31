@@ -2997,7 +2997,16 @@ kbd,
 }
 
 /* Colour of an existing annotation in the Comments panel: a compact swatch beside its actions. */
-.comment-color {
+.field .markup-color {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 8px;
+  font-weight: 400;
+}
+
+.comment-color,
+.markup-color input {
   width: calc(24px * var(--ui-scale));
   height: calc(24px * var(--ui-scale));
   padding: 0;
@@ -3007,7 +3016,8 @@ kbd,
   cursor: pointer;
 }
 
-.comment-color:focus-visible {
+.comment-color:focus-visible,
+.markup-color input:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
