@@ -306,8 +306,26 @@ pub fn merge(
         if cancelled() {
             return Err(PwError::cancelled());
         }
-        let src = load(&pdfium, input, opts)
-            .map_err(|e| PwError { message: format!("File {} of {}: {}", n + 1, inputs.len(), e.message), ..e })?;
+        let named = |k: usize, e: PwError| {
+            let name = inputs[k].file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+            PwError { message: format!("File {} of {} ({name}): {}", k + 1, inputs.len(), e.message), ..e }
+        };
+        let src = match load(&pdfium, input, opts) {
+            Ok(d) => d,
+            Err(e) => {
+                // Say which of the other files cannot be opened either, not one per attempt.
+                let first = named(n, e);
+                let others: Vec<String> = (n + 1..inputs.len())
+                    .filter_map(|k| load(&pdfium, &inputs[k], opts).err().map(|e| named(k, e).message))
+                    .collect();
+                if others.is_empty() {
+                    return Err(first);
+                }
+                let count = others.len() + 1;
+                let message = std::iter::once(first.message.clone()).chain(others).collect::<Vec<_>>().join(" ");
+                return Err(PwError { message: format!("{count} files can't be combined. {message}"), ..first });
+            }
+        };
         if let Some(root) = src.bookmarks().root() {
             let mut found = Vec::new();
             crate::document::collect_bookmarks(&root, 0, &mut found, &mut truncated);

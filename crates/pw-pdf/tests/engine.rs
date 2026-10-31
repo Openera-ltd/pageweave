@@ -245,7 +245,25 @@ fn merge_with_bad_input_names_the_file_position_and_writes_nothing() {
         output: out.clone(),
     })
     .expect_err("bad input");
-    assert!(e.message.starts_with("File 2 of 2"), "{}", e.message);
+    assert!(e.message.starts_with("File 2 of 2 (not-a-pdf.pdf)"), "{}", e.message);
+    assert!(!out.exists());
+    // Several bad files: all named at once, the good ones not.
+    let e = run(Operation::Merge {
+        inputs: vec![
+            fixture("five-pages.pdf"),
+            fixture("not-a-pdf.pdf"),
+            fixture("article.pdf"),
+            fixture("corrupt-truncated.pdf"),
+        ],
+        output: out.clone(),
+    })
+    .expect_err("bad inputs");
+    assert_eq!(e.code, "pdf.not_pdf", "the first problem's code");
+    assert!(e.message.starts_with("2 files can't be combined."), "{}", e.message);
+    assert!(
+        e.message.contains("File 2 of 4 (not-a-pdf.pdf)") && e.message.contains("File 4 of 4 (corrupt-truncated.pdf)")
+    );
+    assert!(!e.message.contains("article.pdf") && !e.message.contains("five-pages.pdf"), "{}", e.message);
     assert!(!out.exists());
 }
 
