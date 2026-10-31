@@ -205,6 +205,58 @@ fn display_name(p: &Path) -> String {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// A picture's header and bytes, or why it cannot be used: too big, not a picture, damaged
+/// header, too many pixels to decode. Decoding itself happens later.
+fn check_image(path: &Path, name: &str) -> PwResult<(ImageHeader, Vec<u8>)> {
+    let meta = std::fs::metadata(path).map_err(|e| PwError::from_io(&e, "image"))?;
+    if meta.len() > MAX_IMAGE_BYTES {
+        return Err(PwError::invalid("images.too_large", format!("{name} is larger than 200 MB.")));
+    }
+    let bytes = std::fs::read(path).map_err(|e| PwError::from_io(&e, "image"))?;
+    let header = if bytes.starts_with(&[0xFF, 0xD8]) {
+        jpeg_header(&bytes).ok_or_else(|| damaged(name))?
+    } else if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        png_header(&bytes).ok_or_else(|| damaged(name))?
+    } else if let Some(fmt) = other_format(&bytes) {
+        let (width, height) = image::ImageReader::with_format(std::io::Cursor::new(&bytes), fmt)
+            .into_dimensions()
+            .map_err(|_| damaged(name))?;
+        if width == 0 || height == 0 {
+            return Err(damaged(name));
+        }
+        ImageHeader { kind: Kind::Other(fmt), width, height, dpi: None, turn: 0, mirrored: false }
+    } else {
+        return Err(PwError::new(
+            ErrorCategory::UnsupportedFormat,
+            "images.format",
+            format!("{name} is not a JPEG, PNG, WebP, TIFF, GIF or BMP image."),
+        ));
+    };
+    if header.kind != Kind::Jpeg && header.width as u64 * header.height as u64 > MAX_PNG_PIXELS {
+        return Err(PwError::invalid("images.too_large", format!("{name} has too many pixels.")));
+    }
+    Ok((header, bytes))
+}
+
+/// `first` (the problem with one picture) together with the problems of the pictures after it,
+/// as one error: the first one's kind and code, every picture's reason in the message.
+fn all_problems(first: PwError, rest: &[PathBuf]) -> PwError {
+    let mut reasons = vec![first.message.clone()];
+    for p in rest {
+        if let Err(e) = check_image(p, &display_name(p)) {
+            reasons.push(e.message);
+        }
+    }
+    if reasons.len() == 1 {
+        return first;
+    }
+    PwError {
+        message: format!("{} pictures can't be used: {}", reasons.len(), reasons.join(" ")),
+        action: "Remove them from the list (or replace them) and try again.".into(),
+        ..first
+    }
+}
+
 pub fn images_to_pdf(
     inputs: &[PathBuf],
     size: ImagePageSize,
@@ -224,36 +276,17 @@ pub fn images_to_pdf(
             return Err(PwError::cancelled());
         }
         let name = display_name(path);
-        let meta = std::fs::metadata(path).map_err(|e| PwError::from_io(&e, "image"))?;
-        if meta.len() > MAX_IMAGE_BYTES {
-            return Err(PwError::invalid("images.too_large", format!("{name} is larger than 200 MB.")));
-        }
-        let bytes = std::fs::read(path).map_err(|e| PwError::from_io(&e, "image"))?;
-        let header = if bytes.starts_with(&[0xFF, 0xD8]) {
-            jpeg_header(&bytes).ok_or_else(|| damaged(&name))?
-        } else if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
-            png_header(&bytes).ok_or_else(|| damaged(&name))?
-        } else if let Some(fmt) = other_format(&bytes) {
-            let (width, height) = image::ImageReader::with_format(std::io::Cursor::new(&bytes), fmt)
-                .into_dimensions()
-                .map_err(|_| damaged(&name))?;
-            if width == 0 || height == 0 {
-                return Err(damaged(&name));
-            }
-            if fmt == image::ImageFormat::Tiff {
-                let pages = tiff_pages(&bytes);
-                if pages > 1 {
-                    more_pages.push(format!("{name} ({pages} pages)"));
-                }
-            }
-            ImageHeader { kind: Kind::Other(fmt), width, height, dpi: None, turn: 0, mirrored: false }
-        } else {
-            return Err(PwError::new(
-                ErrorCategory::UnsupportedFormat,
-                "images.format",
-                format!("{name} is not a JPEG, PNG, WebP, TIFF, GIF or BMP image."),
-            ));
+        let (header, bytes) = match check_image(path, &name) {
+            Ok(v) => v,
+            // Say what is wrong with every picture at once, not one per attempt.
+            Err(first) => return Err(all_problems(first, &inputs[n + 1..])),
         };
+        if header.kind == Kind::Other(image::ImageFormat::Tiff) {
+            let pages = tiff_pages(&bytes);
+            if pages > 1 {
+                more_pages.push(format!("{name} ({pages} pages)"));
+            }
+        }
         if header.mirrored {
             mirrored.push(n + 1);
         }
@@ -269,9 +302,6 @@ pub fn images_to_pdf(
             Kind::Jpeg => PdfPageImageObject::new_from_jpeg_reader(&doc, std::io::Cursor::new(bytes.clone()))
                 .map_err(|_| damaged(&name))?,
             Kind::Png | Kind::Other(_) => {
-                if header.width as u64 * header.height as u64 > MAX_PNG_PIXELS {
-                    return Err(PwError::invalid("images.too_large", format!("{name} has too many pixels.")));
-                }
                 let fmt = match header.kind {
                     Kind::Other(f) => f,
                     _ => image::ImageFormat::Png,

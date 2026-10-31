@@ -91,6 +91,30 @@ fn damaged_and_unsupported_files_are_refused() {
 }
 
 #[test]
+fn every_unusable_picture_is_named_at_once() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("x.pdf");
+    let txt = dir.path().join("notes.jpg");
+    std::fs::write(&txt, b"not an image").expect("write");
+    let empty = dir.path().join("empty.png");
+    std::fs::write(&empty, b"").expect("write");
+    let err =
+        run(vec![img("alpha.png"), img("truncated.jpg"), img("alpha.png"), txt, empty], ImagePageSize::A4, 0.0, &out)
+            .expect_err("refused");
+    // The first problem's kind; every bad picture named; the good ones not.
+    assert_eq!(err.code, "images.damaged");
+    assert!(err.message.starts_with("3 pictures can't be used:"), "{}", err.message);
+    for name in ["truncated.jpg", "notes.jpg", "empty.png"] {
+        assert!(err.message.contains(name), "{name} in {}", err.message);
+    }
+    assert!(!err.message.contains("alpha.png"), "{}", err.message);
+    assert!(!out.exists());
+    // One bad picture keeps the original message.
+    let one = run(vec![img("truncated.jpg")], ImagePageSize::A4, 0.0, &out).expect_err("one");
+    assert!(!one.message.contains("pictures can't be used"), "{}", one.message);
+}
+
+#[test]
 fn webp_tiff_gif_and_bmp_become_pages_and_a_multi_page_tiff_is_reported() {
     let dir = tempfile::tempdir().expect("tmp");
     // A 120 × 80 picture: left half blue, right half red.
