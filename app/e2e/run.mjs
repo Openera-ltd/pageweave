@@ -1708,7 +1708,8 @@ await test("translate side by side: page 1 into German as a PDF with the origina
     // Glossary: a line without "=" blocks Translate with its reason; then a valid term.
     await s.type("#translate-glossary", "fox");
     await s.waitUntil(async () => (await s.text('[data-testid="translate-glossary-msg"]')).includes("Glossary line 1"), "glossary line refused");
-    assert((await s.exec("return document.querySelector('[data-testid=tool-start]').title")).includes("Glossary line 1"), "start blocked with the reason");
+    // Earlier reasons (recognising the language) come first; once they are gone the glossary's shows.
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=tool-start]').title")).includes("Glossary line 1"), "start blocked with the reason", 60000);
     await s.replaceText("#translate-glossary", "fox = Wolf");
     await s.waitUntil(async () => (await s.text('[data-testid="translate-glossary-msg"]')).startsWith("1 term"), "one term");
     await axeCheck(s, "translate-side-by-side");
