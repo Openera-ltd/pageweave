@@ -2488,6 +2488,43 @@ await test("edit pictures: resize by a corner and with Ctrl+arrows, then move; t
   }
 });
 
+await test("combine: open files added with one button, reordered, combined; first file's title and every page kept", async () => {
+  const files = [join(FIX, "single-page.pdf"), join(FIX, "article.pdf")];
+  const out = join(work, "combined-open.pdf");
+  const names = (s) => s.exec("return [...document.querySelectorAll('[aria-label=\"Files to combine\"] li .name')].map(n => n.textContent.replace(/^\\d+\\. /, ''))");
+  let movedFirst = "";
+  await withApp(files, async (s) => {
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label').length")) === 2, "two tabs");
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "Shift", "M"]);
+    await s.waitFor('[data-testid="merge-add-open"]');
+    const first = (await names(s))[0];
+    assert((await s.text('[data-testid="merge-add-open"]')).includes("(1)"), "one other open file offered");
+    await s.click('[data-testid="merge-add-open"]');
+    await s.waitUntil(async () => (await names(s)).length === 2, "the open file added");
+    assert((await s.attr('[data-testid="merge-add-open"]', "aria-disabled")) === "true", "nothing more to add");
+    // Put the other file first.
+    const second = (await names(s))[1];
+    movedFirst = second;
+    await s.click(`[aria-label="Move ${second} up"]`);
+    await s.waitUntil(async () => (await names(s))[0] === second && (await names(s))[1] === first, "reordered");
+    await s.replaceText("#output", out);
+    await axeCheck(s, "combine-dialog");
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved combined-open.pdf")), "saved notice");
+  });
+  if (CLI) {
+    const info = (f) => JSON.parse(execFileSync(CLI, ["--json", "inspect", f], { encoding: "utf8" })).result.data;
+    const pageText = (f) => JSON.parse(execFileSync(CLI, ["--json", "text", "--pages", "1", f], { encoding: "utf8" })).result.data.pages[0].text.trim();
+    const firstFile = join(FIX, movedFirst);
+    const got = info(out);
+    assert(got.page_count === files.reduce((n, f) => n + info(f).page_count, 0), `every page kept: ${got.page_count}`);
+    assert(got.title === info(firstFile).title, `the first file's title: ${got.title}`);
+    assert(pageText(out) === pageText(firstFile), "page 1 comes from the file moved to the top");
+  }
+});
+
 await test("protect with password: AES-256 copy needs the password; wrong password refused; content intact", async () => {
   const src = join(FIX, "five-pages.pdf");
   const before = sha(src);

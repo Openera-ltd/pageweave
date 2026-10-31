@@ -244,6 +244,43 @@ fn with_outline(pdfium: &Pdfium, bytes: Vec<u8>, bookmarks: &[BookmarkSpec]) -> 
     Ok(out)
 }
 
+/// The first file's title, author, subject and keywords (those it has), for the combined file.
+fn properties_of(doc: &PdfDocument) -> Vec<(&'static str, String)> {
+    let tags = [
+        ("Title", PdfDocumentMetadataTagType::Title),
+        ("Author", PdfDocumentMetadataTagType::Author),
+        ("Subject", PdfDocumentMetadataTagType::Subject),
+        ("Keywords", PdfDocumentMetadataTagType::Keywords),
+    ];
+    tags.into_iter()
+        .filter_map(|(k, t)| {
+            let v = doc.metadata().get(t)?.value().trim().to_string();
+            (!v.is_empty()).then_some((k, v))
+        })
+        .collect()
+}
+
+/// `bytes` with `props` in a new document information dictionary, read back with PDFium.
+fn with_properties(pdfium: &Pdfium, bytes: Vec<u8>, props: &[(&'static str, String)]) -> PwResult<Vec<u8>> {
+    let fail = || PwError::internal("merge.properties", "The combined file's properties could not be written.");
+    let mut doc = lopdf::Document::load_mem(&bytes).map_err(|_| fail())?;
+    let mut info = lopdf::Dictionary::new();
+    for (k, v) in props {
+        info.set(*k, lopdf::text_string(v));
+    }
+    let id = doc.add_object(info);
+    doc.trailer.set("Info", id);
+    let mut out = Vec::new();
+    doc.save_to(&mut out).map_err(|_| fail())?;
+    let back = pdfium.load_pdf_from_byte_slice(&out, None).map_err(|_| fail())?;
+    let title = back.metadata().get(PdfDocumentMetadataTagType::Title).map(|t| t.value().trim().to_string());
+    if props.iter().any(|(k, v)| *k == "Title" && title.as_deref() != Some(v.as_str())) {
+        return Err(fail());
+    }
+    drop(back);
+    Ok(out)
+}
+
 pub fn merge(
     inputs: &[PathBuf],
     opts: &OpenOptions,
@@ -262,6 +299,7 @@ pub fn merge(
     // Each file's bookmarks, pointed at its pages in the combined document. A bookmark without a
     // page in its file (an action, another document) opens that file's first page.
     let mut bookmarks: Vec<BookmarkSpec> = Vec::new();
+    let mut props = Vec::new();
     let mut truncated = false;
     let mut offset = 0u32;
     for (n, input) in inputs.iter().enumerate() {
@@ -279,6 +317,9 @@ pub fn merge(
                 depth: b.depth,
             }));
         }
+        if n == 0 {
+            props = properties_of(&src);
+        }
         any_encrypted |= source_encrypted(&src);
         offset += src.pages().len().max(0) as u32;
         out.pages_mut().append(&src).map_err(|e| map_pdfium_error(&e, "append"))?;
@@ -292,6 +333,10 @@ pub fn merge(
         if truncated {
             warnings.push("Some files had more bookmarks than PageWeave reads; the rest were left out.".into());
         }
+    }
+    if !props.is_empty() {
+        bytes = with_properties(&pdfium, bytes, &props)?;
+        warnings.push("The combined file has the first file's title, author, subject and keywords.".into());
     }
     let expect = Expect { page_count: total, password: opts.password, rotations: None };
     let (c, enc) = commit(&pdfium, &bytes, output, policy, inputs, &expect)?;

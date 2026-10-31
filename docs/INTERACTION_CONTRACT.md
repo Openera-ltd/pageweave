@@ -89,6 +89,10 @@ Maintain a single documented shortcut registry. Include common system convention
 - Uncertain objects (pictures, confidence under 80 %) carry a warning icon and a note in the properties panel; nothing is drawn over the canvas. Compare: Design, Original, Overlay (opacity slider), Differences (difference blend).
 - Export SVG/PDF saves first, asks where (the system dialog confirms replacing), runs the engine's verified export and offers Show in folder.
 
+## Combine files
+
+- The list starts with the current document. Add files… opens the system picker; Add open files (n) adds every other document open in a tab that is not listed yet (disabled, with the reason in its tooltip, when there is none). Items move up/down or leave the list (files are never deleted). The result takes the first file's title, author, subject and keywords and keeps every file's bookmarks.
+
 ## Edit mode: pictures
 
 - A selected picture shows its toolbar (turn 90°, replace, delete) and four corner handles. Drag a handle to resize (the opposite corner stays; at least 8 px; applied at release; the picture stretches to the box, aspect not locked). Ctrl+Arrow moves the bottom-right corner as shown by 1 pt (Ctrl+Shift 10 pt); plain arrows move the picture. A resize and later moves combine; undo removes the last action. The engine preview shows the result before saving.

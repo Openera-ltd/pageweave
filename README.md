@@ -117,7 +117,7 @@ PageWeave checks before it is kept.
 
 <br>
 
-- Combining PDFs keeps each file's bookmarks (opening their whole page) but not document properties (the app says so).
+- Combining PDFs keeps each file's bookmarks (opening their whole page) and takes the first file's title, author, subject and keywords (the app says so); other files' properties are not merged.
 - Outputs made by extract/delete/split/combine from a password-protected PDF are **not** protected (the app warns); rotate keeps the protection.
 - Editing text: each line is edited on its own (no paragraph reflow); letters missing from an embedded subset font switch the line to a standard font (the app warns); text in scripts the font cannot draw is refused; turned or slanted text cannot be edited yet. Pictures can be moved, turned, replaced, deleted and resized (corner handles or Ctrl+arrow keys; the picture is stretched to the box, aspect not locked).
 - Annotations: new highlights, underlines, strike-outs and notes use the colours chosen in Settings ▸ Appearance ▸ Markup colors (one per kind; Default restores the built-in ones); existing comments and markup can be deleted, have their comment text changed or (highlights, underlines, strike-outs, shapes, drawings, notes) be recoloured, and any of them moved (dragged on the page or nudged with the arrow keys), in the Comments panel or with `pageweave annotations --set-color` / `--move`; shapes, drawings and stamps can also be resized (corner handles, Ctrl+arrow keys, `--resize`); markup that follows text (highlights, underlines) and notes keep their size; text boxes' own text can't be edited; a deleted annotation stays visible on the page until the saved copy is opened; changes are never saved back into the original file by design.

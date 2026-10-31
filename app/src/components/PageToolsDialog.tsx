@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDown, ArrowUp, FolderOpen, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, FolderOpen, Layers, Plus, Trash2 } from "lucide-react";
 import { useApi } from "../api";
 import { basename, dirname, join, siblingOutput, stem } from "../paths";
 import { toPwError, type AnnotationChange, type AnnotationSpec, type BookmarkInfo, type CollisionPolicy, type FieldValue, type PageEdit, type StampPosition, type JobSnapshot, type WatermarkLayer, type OpenedDoc, type Operation, type PwError, type TranslationDirection } from "../types";
@@ -125,6 +125,8 @@ interface Props {
   /** For the audio tool: the read-aloud voice (null = default) and speed. */
   readVoice?: string | null;
   readRate?: number;
+  /** For Combine: the other documents open in tabs (paths), offered with "Add open files". */
+  openPaths?: string[];
 }
 
 type RangeCheck = { state: "idle" | "checking" } | { state: "ok"; count: number } | { state: "error"; message: string };
@@ -151,7 +153,7 @@ function useRangeCheck(docId: number, spec: string, enabled: boolean): RangeChec
   return check;
 }
 
-export function PageToolsDialog({ tool, doc, initialPages, annotations, formValues, objectEdits, annotationChanges, jobs, onClose, onFinished, readVoice = null, readRate = 1 }: Props) {
+export function PageToolsDialog({ tool, doc, initialPages, annotations, formValues, objectEdits, annotationChanges, jobs, onClose, onFinished, readVoice = null, readRate = 1, openPaths = [] }: Props) {
   const nAnnots = annotations?.length ?? 0;
   const nFields = formValues?.length ?? 0;
   const nObjects = (objectEdits ?? []).reduce((n, p) => n + p.edits.length, 0);
@@ -959,7 +961,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
               </li>
             ))}
           </ul>
-          <div>
+          <div className="row">
             <button
               type="button"
               className="btn outline"
@@ -970,6 +972,21 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
             >
               <Plus /> Add files…
             </button>
+            {(() => {
+              const more = openPaths.filter((p) => !files.includes(p));
+              return (
+                <button
+                  type="button"
+                  className="btn outline"
+                  data-testid="merge-add-open"
+                  aria-disabled={more.length === 0 || undefined}
+                  title={more.length === 0 ? (openPaths.length ? "Every open file is already in the list" : "No other files are open") : more.map(basename).join(", ")}
+                  onClick={() => more.length && setFiles((fs) => [...fs, ...more])}
+                >
+                  <Layers /> Add open files{more.length ? ` (${more.length})` : ""}
+                </button>
+              );
+            })()}
           </div>
         </div>
       )}

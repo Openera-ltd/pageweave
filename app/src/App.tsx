@@ -1732,6 +1732,7 @@ export function App() {
           jobs={jobs}
           readVoice={settings?.read_voice ?? null}
           readRate={settings?.read_rate ?? 1}
+          openPaths={tabs.filter((t) => t.doc_id !== active.doc_id).map((t) => t.path)}
           onClose={() => {
             afterSave.current = null;
             setDialog(null);

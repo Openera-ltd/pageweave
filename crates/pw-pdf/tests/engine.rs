@@ -214,6 +214,29 @@ fn merge_in_order_with_progress() {
 }
 
 #[test]
+fn merge_keeps_the_first_files_properties() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("merged.pdf");
+    let r =
+        run(Operation::Merge { inputs: vec![fixture("article.pdf"), fixture("compare-new.pdf")], output: out.clone() })
+            .expect("merge");
+    assert_eq!(
+        pw_pdf::open_document(&out, &opts()).expect("reopen").title.as_deref(),
+        Some("Annual review of river systems")
+    );
+    assert!(r.warnings.iter().any(|w| w.contains("first file's title")), "{:?}", r.warnings);
+    // The first file has none: none are invented (the second file's are not taken either).
+    let out2 = dir.path().join("merged2.pdf");
+    let r = run(Operation::Merge {
+        inputs: vec![fixture("embedded-font.pdf"), fixture("article.pdf")],
+        output: out2.clone(),
+    })
+    .expect("merge");
+    assert_eq!(pw_pdf::open_document(&out2, &opts()).expect("reopen").title, None);
+    assert!(!r.warnings.iter().any(|w| w.contains("first file's title")));
+}
+
+#[test]
 fn merge_with_bad_input_names_the_file_position_and_writes_nothing() {
     let dir = tempfile::tempdir().expect("tmp");
     let out = dir.path().join("merged.pdf");
