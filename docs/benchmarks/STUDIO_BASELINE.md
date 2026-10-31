@@ -62,5 +62,20 @@ background inside a picture's box showed twice (it stayed opaque in the picture)
 scale from the median let lines run past their original width (now the smallest ratio); a line in
 another script inflated its paragraph's size (now the median); table rules inside a line's box
 counted as glyphs (taller lines, false serifs) and darkened the background painted behind text on
-shaded bands. Pictures that touch (within 3 px, small pieces within 4× their size) are merged — the IRS cover's dot leaders made 466 one-dot pictures. Known: some sans lines
-are still read as serif; text-dense pages differ mostly by font metrics (built-in fonts).
+shaded bands. Pictures that touch (within 3 px, small pieces within 4× their size) are merged — the IRS cover's dot leaders made 466 one-dot pictures. Text-dense pages differ mostly
+by font metrics (built-in fonts).
+
+## Serif / sans on real pages (tools/corpus/studiofonts.py, 2026-10-31)
+
+The family the Studio gives each rebuilt text line, against the font the PDF uses there (matched by
+overlap; font names classified by family keywords, unnamed fonts left out). Same pages as above plus
+NIST page 2, IRS Publication 15 page 2 and IRS Form 1040 page 1.
+
+| | Lines | Right | sans→serif | serif→sans |
+|---|---|---|---|---|
+| Before | 350 | 0.82 | 59 | 5 |
+| After (a foot must belong to one stem) | 345 | 0.90 | 31 | 5 |
+
+The false serifs were small labels standing on form lines and underlines: a baseline rule shorter
+than the line's box (so not cleared as a rule) gave every stem a "foot". A run under several stems
+no longer counts. Remaining: W3C table cells (7), Form 1040 labels (16).

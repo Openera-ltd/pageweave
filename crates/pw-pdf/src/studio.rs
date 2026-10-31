@@ -388,14 +388,20 @@ fn serif_share(ink: &[bool], bw: usize, bh: usize) -> Option<f32> {
         return None;
     }
     let base = [runs(yb.saturating_sub(1)), runs(yb)];
+    let centres: Vec<usize> = stems.iter().map(|&(s0, len)| s0 + len / 2).collect();
     let feet = stems
         .iter()
         .filter(|&&(s0, len)| {
-            // A foot sticks out on both sides of the stem (a curve's bottom joins on one side only).
+            // A foot sticks out on both sides of the stem (a curve's bottom joins on one side
+            // only), and belongs to this stem alone: a run under several stems is a rule or an
+            // underline the letters stand on, not serifs.
             let c = s0 + len / 2;
-            base.iter()
-                .filter_map(|row| row.iter().find(|(a, l)| *a <= c && c < a + l))
-                .any(|&(a, l)| a < s0 && a + l > s0 + len && l >= len + 2.max(len / 2))
+            base.iter().filter_map(|row| row.iter().find(|(a, l)| *a <= c && c < a + l)).any(|&(a, l)| {
+                a < s0
+                    && a + l > s0 + len
+                    && l >= len + 2.max(len / 2)
+                    && centres.iter().filter(|&&o| a <= o && o < a + l).count() == 1
+            })
         })
         .count();
     Some(feet as f32 / stems.len() as f32)
@@ -2032,6 +2038,23 @@ mod tests {
         let (ink, bw, bh) = stems(3, true);
         assert_eq!(serif_share(&ink, bw, bh), None, "three stems are too few");
         assert_eq!(serif_share(&[false; 100], 10, 10), None, "no ink");
+    }
+
+    #[test]
+    fn letters_standing_on_a_rule_are_not_serif() {
+        // Plain stems on a 2 px line under the first half of the box (a form's field line): the
+        // run under them covers several stems, so it is not a foot. drop_rules does not clear it
+        // (it is shorter than 85 % of the box).
+        let (mut ink, bw, bh) = stems(8, false);
+        for y in 23..25 {
+            for x in 2..bw / 2 {
+                ink[y * bw + x] = true;
+            }
+        }
+        assert_eq!(serif_share(&ink, bw, bh), Some(0.0));
+        // Real feet still count when the letters are close.
+        let (ink, bw, bh) = stems(8, true);
+        assert_eq!(serif_share(&ink, bw, bh), Some(1.0));
     }
 
     #[test]
