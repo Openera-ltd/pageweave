@@ -276,6 +276,52 @@ pub struct OfficeReport {
 }
 
 /// Convert `input` (an Office document) to a PDF at `output`.
+/// The first 64 KB of a file.
+fn read_head(path: &Path) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut buf = Vec::with_capacity(65_536);
+    std::fs::File::open(path)?.take(65_536).read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
+/// Whether the start of a file is what its extension says, so LibreOffice is never asked to
+/// convert a renamed picture or random bytes (it would turn them into a PDF of noise and report
+/// success). Office Open XML and OpenDocument are ZIP archives, older Office formats OLE
+/// containers (old .doc/.xls files are sometimes RTF, HTML or XML instead), RTF starts with
+/// `{\rtf`, and text formats must look like text.
+fn content_matches(ext: &str, head: &[u8]) -> bool {
+    const ZIP: &[u8] = b"PK\x03\x04";
+    const OLE: &[u8] = &[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+    let markup = || {
+        let t: Vec<u8> = head
+            .iter()
+            .skip_while(|b| matches!(b, 0xEF | 0xBB | 0xBF | b' ' | b'\t' | b'\r' | b'\n'))
+            .take(1)
+            .copied()
+            .collect();
+        t.first() == Some(&b'<')
+    };
+    let rtf = || head.starts_with(b"{\\rtf");
+    match ext {
+        "docx" | "docm" | "dotx" | "dotm" | "xlsx" | "xlsm" | "xlsb" | "xltx" | "xltm" | "pptx" | "pptm" | "ppsx"
+        | "ppsm" | "potx" | "potm" | "vsdx" | "odt" | "ods" | "odp" | "odg" => head.starts_with(ZIP),
+        "doc" | "dot" | "xls" | "xlt" => head.starts_with(OLE) || rtf() || markup(),
+        "ppt" | "pps" | "pot" | "vsd" | "pub" => head.starts_with(OLE),
+        "rtf" => rtf(),
+        _ => looks_like_text(head),
+    }
+}
+
+/// Text (any common encoding): few control characters other than tab and line ends. UTF-16 is
+/// recognised by its byte-order mark (its NUL bytes would look binary).
+fn looks_like_text(head: &[u8]) -> bool {
+    if head.starts_with(&[0xFF, 0xFE]) || head.starts_with(&[0xFE, 0xFF]) {
+        return true;
+    }
+    let control = head.iter().filter(|&&b| b < 0x20 && !matches!(b, b'\t' | b'\n' | b'\r' | 0x0C | 0x1B)).count();
+    control * 100 <= head.len() * 2
+}
+
 pub fn convert_office_to_pdf(
     input: &Path,
     output: &Path,
@@ -293,6 +339,19 @@ pub fn convert_office_to_pdf(
     let meta = std::fs::metadata(input).map_err(|e| PwError::from_io(&e, "file"))?;
     if meta.len() > MAX_INPUT_BYTES {
         return Err(PwError::invalid("office.too_large", "The file is larger than 512 MB."));
+    }
+    if meta.len() == 0 {
+        return Err(PwError::new(ErrorCategory::UnsupportedFormat, "office.empty", "The file is empty."));
+    }
+    let ext = input.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    let head = read_head(input).map_err(|e| PwError::from_io(&e, "file"))?;
+    if !content_matches(&ext, &head) {
+        return Err(PwError::new(
+            ErrorCategory::UnsupportedFormat,
+            "office.mismatch",
+            format!("This file is not a .{ext} document: its content does not match its name."),
+        )
+        .with_action("Check that it is the right file; a renamed picture or download error can look like this."));
     }
     let engine_info = find_office().ok_or_else(not_installed)?;
     let started = Instant::now();
@@ -417,6 +476,41 @@ mod tests {
         assert!(!is_office_file(Path::new("x.pdf")));
         assert!(!is_office_file(Path::new("x")));
         assert!(!is_office_file(Path::new("x.exe")));
+    }
+
+    #[test]
+    fn content_must_match_the_name() {
+        let zip = b"PK\x03\x04rest".as_slice();
+        let ole = [0xD0u8, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, 0, 0];
+        let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".as_slice();
+        assert!(content_matches("docx", zip) && content_matches("odp", zip));
+        assert!(!content_matches("docx", png) && !content_matches("xlsx", &ole));
+        assert!(content_matches("doc", &ole) && content_matches("ppt", &ole));
+        // Old .doc/.xls files are sometimes RTF, HTML or XML.
+        assert!(content_matches("doc", b"{\\rtf1\\ansi") && content_matches("xls", b"\xEF\xBB\xBF<?xml version"));
+        assert!(!content_matches("ppt", b"{\\rtf1"));
+        assert!(content_matches("rtf", b"{\\rtf1\\ansi") && !content_matches("rtf", b"hello"));
+        // Text: plain, Latin-1, UTF-16 with its mark; binary is not.
+        assert!(content_matches("csv", b"a,b\r\n1,2\r\n") && content_matches("txt", b"caf\xe9\n"));
+        assert!(content_matches("txt", &[0xFF, 0xFE, b'a', 0, b'b', 0]));
+        assert!(!content_matches("txt", &[0u8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0]) && !content_matches("html", png));
+    }
+
+    #[test]
+    fn empty_and_mislabelled_files_are_refused_before_libreoffice_runs() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let refuse = |name: &str, bytes: &[u8]| {
+            let input = dir.path().join(name);
+            std::fs::write(&input, bytes).expect("write");
+            let out = dir.path().join(format!("{name}.pdf"));
+            let e = convert_office_to_pdf(&input, &out, CollisionPolicy::Fail, &|| false, Duration::from_secs(5))
+                .expect_err("refused");
+            assert!(!out.exists());
+            e.code
+        };
+        assert_eq!(refuse("empty.docx", b""), "office.empty");
+        assert_eq!(refuse("picture.docx", b"\x89PNG\r\n\x1a\n"), "office.mismatch");
+        assert_eq!(refuse("noise.rtf", &[0u8, 7, 200, 13, 0, 0, 9]), "office.mismatch");
     }
 
     #[test]
