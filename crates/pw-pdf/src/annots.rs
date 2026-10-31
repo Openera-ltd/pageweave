@@ -133,8 +133,14 @@ fn describe(doc: &Document, page: u32, index: u32, d: &Dictionary) -> Option<Exi
 /// The annotations in `input` that are comments (read-only).
 pub fn list_annotations(input: &Path, opts: &OpenOptions) -> PwResult<AnnotationList> {
     let pdfium = engine()?;
-    let (_src, doc, _raw) =
-        load_plain(&pdfium, input, opts).map_err(|e| if e.code == "sanitize.protected" { protected() } else { e })?;
+    // Listing is read-only: a protected file is read with the password it was opened with.
+    let (_src, doc, _raw) = crate::sanitize::load_readable(&pdfium, input, opts).map_err(|e| {
+        if e.code == "sanitize.protected" {
+            protected()
+        } else {
+            e
+        }
+    })?;
     let mut out = Vec::new();
     for (n, pid) in doc.get_pages() {
         let (entries, _) = annots_of(&doc, pid);

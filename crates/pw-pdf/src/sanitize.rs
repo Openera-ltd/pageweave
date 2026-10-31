@@ -1085,10 +1085,35 @@ pub(crate) fn load_plain<'p>(
     Ok((src, doc, raw))
 }
 
+/// [`load_plain`] for reading only: a password-protected file is decrypted with the password it
+/// was opened with (or none, when only its permissions are protected). Nothing read this way is
+/// written back, so the file's permissions are not at stake.
+pub(crate) fn load_readable<'p>(
+    pdfium: &'p Pdfium,
+    input: &Path,
+    opts: &OpenOptions,
+) -> PwResult<(PdfDocument<'p>, Document, Vec<u8>)> {
+    let src = load(pdfium, input, opts)?;
+    if matches!(src.permissions().security_handler_revision(), Ok(PdfSecurityHandlerRevision::Unprotected)) {
+        drop(src);
+        return load_plain(pdfium, input, opts);
+    }
+    let raw = std::fs::read(input).map_err(|e| PwError::from_io(&e, "file"))?;
+    let doc = match Document::load_mem(&raw) {
+        Ok(d) if !d.is_encrypted() => d,
+        _ => opts
+            .password
+            .and_then(|p| Document::load_mem_with_options(&raw, lopdf::LoadOptions::with_password(p)).ok())
+            .filter(|d| !d.is_encrypted())
+            .ok_or_else(protected)?,
+    };
+    Ok((src, doc, raw))
+}
+
 /// What hidden information the file holds (read-only).
 pub fn sanitize_inspect(input: &Path, opts: &OpenOptions) -> PwResult<SanitizeFindings> {
     let pdfium = engine()?;
-    let (_src, doc, raw) = load_plain(&pdfium, input, opts)?;
+    let (_src, doc, raw) = load_readable(&pdfium, input, opts)?;
     Ok(survey(&doc, &raw))
 }
 

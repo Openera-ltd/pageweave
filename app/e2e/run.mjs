@@ -2551,7 +2551,7 @@ await test("combine: open files added with one button, reordered, combined; firs
   }
 });
 
-await test("pages taken out of a password-protected PDF stay protected with the same password", async () => {
+await test("password-protected PDF: comments listed; pages taken out stay protected with the same password", async () => {
   const src = join(FIX, "encrypted-rc4-user-password.pdf");
   const out = join(work, "protected-extract.pdf");
   const s = await Session.create(DRIVER, APP, appArgs([src]));
@@ -2560,6 +2560,9 @@ await test("pages taken out of a password-protected PDF stay protected with the 
     await s.type("#pdf-password", "pw-user-test");
     await s.keys(["Enter"]);
     await pageLoaded(s, 0);
+    // Read-only views work with the password it was opened with (they used to refuse).
+    await s.click("#sb-tab-comments");
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('#sb-panel')?.innerText ?? ''")).includes("No comments or markup."), "Comments panel lists (none) instead of an error");
     await s.click('[data-testid="viewer"]');
     await s.keys(["Control", "Shift", "E"]);
     await s.waitFor("#pages");

@@ -282,3 +282,31 @@ fn shapes_resize_into_a_new_box_and_other_kinds_are_refused() {
     assert_eq!(e.code, "annotation.rect");
     assert!(!other.exists());
 }
+
+#[test]
+fn comments_of_a_password_protected_file_are_listed_with_its_password() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let protected = dir.path().join("p.pdf");
+    let mut req = OperationRequest::new(Operation::Protect {
+        input: fixture("hidden-info.pdf"),
+        permissions: Default::default(),
+        output: protected.clone(),
+    });
+    req.new_password = Some("list-pw".into());
+    execute(&req, None).expect("protect");
+    let plain = list_annotations(&fixture("hidden-info.pdf"), &OpenOptions::default()).expect("plain");
+    let listed =
+        list_annotations(&protected, &OpenOptions { password: Some("list-pw") }).expect("listed with the password");
+    let texts = |l: &pw_pdf::AnnotationList| {
+        l.annotations.iter().map(|a| (a.subtype.clone(), a.text.clone())).collect::<Vec<_>>()
+    };
+    assert_eq!(texts(&listed), texts(&plain));
+    // Inspecting hidden information is read-only too.
+    let found = pw_pdf::sanitize_inspect(&protected, &OpenOptions { password: Some("list-pw") }).expect("inspect");
+    assert_eq!(
+        found.comments,
+        pw_pdf::sanitize_inspect(&fixture("hidden-info.pdf"), &OpenOptions::default()).expect("plain").comments
+    );
+    // Without the password the file does not open at all.
+    assert_eq!(list_annotations(&protected, &OpenOptions::default()).expect_err("password").code, "pdf.password");
+}
