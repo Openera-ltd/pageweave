@@ -182,6 +182,22 @@ export function applyLayerTransform(rotation: PageInfo["rotation"], W: number, H
  * Inverse of `pdfRectToScreen`: CSS pixels inside the displayed page box (origin top-left) back to
  * unrotated PDF user space (origin bottom-left), honouring the page's clockwise /Rotate.
  */
+/** A move on screen by (dxPx, dyPx) as a move in PDF points [dx, dy] (unrotated page space, +y up). */
+export function screenMoveToPdf(dxPx: number, dyPx: number, page: Pick<PageInfo, "rotation">, zoom: number): [number, number] {
+  const k = zoom * CSS_PX_PER_PT;
+  const [x, y] = [dxPx / k, dyPx / k];
+  switch (page.rotation) {
+    case 90:
+      return [y, x];
+    case 180:
+      return [-x, y];
+    case 270:
+      return [-y, -x];
+    default:
+      return [x, -y];
+  }
+}
+
 export function screenRectToPdf(
   s: ScreenRect,
   page: Pick<PageInfo, "width_pt" | "height_pt" | "rotation" | "origin_x" | "origin_y">,

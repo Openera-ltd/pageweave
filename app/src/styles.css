@@ -874,6 +874,33 @@ textarea {
   z-index: 3;
 }
 
+.movelayer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.annot-frame {
+  position: absolute;
+  border: 1.5px dashed var(--accent);
+  border-radius: 2px;
+}
+
+.annot-frame.active {
+  border-style: solid;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: 0 0 0 1px var(--surface);
+  cursor: move;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.annot-frame.active:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
 .markdraft {
   position: absolute;
   border: 2px dashed var(--danger);

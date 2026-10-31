@@ -11,6 +11,7 @@ import {
   wheelZoom,
   pdfRectToScreen,
   screenRectToPdf,
+  screenMoveToPdf,
   renderScalePermille,
   unrotatedLayer,
   applyLayerTransform,
@@ -156,6 +157,22 @@ describe("pages whose box does not start at 0,0", () => {
       expect(back.bottom).toBeCloseTo(100);
       expect(back.right).toBeCloseTo(110);
       expect(back.top).toBeCloseTo(120);
+    });
+  }
+});
+
+describe("screen moves → PDF moves", () => {
+  for (const rotation of [0, 90, 180, 270] as const) {
+    it(`agrees with moving the mapped rectangle at ${rotation}°`, () => {
+      const page: PageInfo = { index: 0, width_pt: 612, height_pt: 792, rotation, label: null };
+      const r = { left: 100, bottom: 500, right: 220, top: 530 };
+      for (const zoom of [0.5, 1, 1.75]) {
+        const s = pdfRectToScreen(r, page, zoom);
+        const moved = screenRectToPdf({ ...s, left: s.left + 30, top: s.top - 12 }, page, zoom);
+        const [dx, dy] = screenMoveToPdf(30, -12, page, zoom);
+        expect(dx).toBeCloseTo(moved.left - r.left, 6);
+        expect(dy).toBeCloseTo(moved.bottom - r.bottom, 6);
+      }
     });
   }
 });

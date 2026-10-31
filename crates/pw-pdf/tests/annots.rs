@@ -14,7 +14,15 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 fn change(index: u32, subtype: &str, delete: bool, text: Option<&str>) -> AnnotationChange {
-    AnnotationChange { page: 0, index, subtype: subtype.into(), delete, text: text.map(str::to_string), color: None }
+    AnnotationChange {
+        page: 0,
+        index,
+        subtype: subtype.into(),
+        delete,
+        text: text.map(str::to_string),
+        color: None,
+        offset: None,
+    }
 }
 
 fn apply(
@@ -165,5 +173,69 @@ fn colours_of_markup_and_shapes_change_and_are_drawn_in_the_new_colour() {
     let e = apply(fixture("hidden-info.pdf"), vec![recolour(2, "Highlight", "green")], vec![], &other)
         .expect_err("refused");
     assert_eq!(e.code, "annotation.color");
+    assert!(!other.exists());
+}
+
+#[test]
+fn annotations_move_with_their_appearance_and_bad_moves_are_refused() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("moved.pdf");
+    let shift = |index, subtype: &str, dx: f32, dy: f32| AnnotationChange {
+        offset: Some([dx, dy]),
+        ..change(index, subtype, false, None)
+    };
+    let before = list_annotations(&fixture("hidden-info.pdf"), &OpenOptions::default()).expect("list");
+    apply(
+        fixture("hidden-info.pdf"),
+        vec![shift(2, "Highlight", 0.0, -100.0), shift(7, "Square", 50.0, 50.0)],
+        vec![],
+        &out,
+    )
+    .expect("move");
+    let after = list_annotations(&out, &OpenOptions::default()).expect("list");
+    let rect = |l: &pw_pdf::AnnotationList, i: u32| {
+        l.annotations.iter().find(|a| a.index == i).map(|a| a.rect).expect("annotation")
+    };
+    let (h0, h1) = (rect(&before, 2), rect(&after, 2));
+    assert!((h1.bottom - (h0.bottom - 100.0)).abs() < 0.01 && (h1.left - h0.left).abs() < 0.01, "{h0:?} → {h1:?}");
+    let (s0, s1) = (rect(&before, 7), rect(&after, 7));
+    assert!((s1.left - (s0.left + 50.0)).abs() < 0.01 && (s1.top - (s0.top + 50.0)).abs() < 0.01, "{s0:?} → {s1:?}");
+    // Drawn at the new place only: the highlight's yellow is 100 pt lower, none left where it was.
+    let (png, _, h) = pw_pdf::render_page_png(&out, &OpenOptions::default(), 0, 1.0).expect("render");
+    let img = image::load_from_memory(&png).expect("png").to_rgb8();
+    let yellow = |y0: u32| {
+        let mut n = 0;
+        for y in (h - y0 - 16)..(h - y0 - 2) {
+            for x in 76..196 {
+                let p = img.get_pixel(x, y);
+                n += (p[0] > 200 && p[1] > 180 && p[2] < 120) as u32;
+            }
+        }
+        n
+    };
+    assert!(yellow(636) > 300 && yellow(736) == 0, "yellow at new place {}, at old place {}", yellow(636), yellow(736));
+    let (mut red_new, mut red_old) = (0, 0);
+    for y in 0..h {
+        for x in 0..img.width() {
+            let p = img.get_pixel(x, y);
+            if p[0] > 150 && p[1] < 100 && p[2] < 100 {
+                let py = (h - y) as f32;
+                let fx = x as f32;
+                red_new += ((348.0..=412.0).contains(&fx) && (548.0..=592.0).contains(&py)) as u32;
+                red_old += ((298.0..348.0).contains(&fx) && (498.0..548.0).contains(&py)) as u32;
+            }
+        }
+    }
+    assert!(
+        red_new > 100 && red_old == 0,
+        "square drawn at its new place ({red_new} px) and not the old ({red_old} px)"
+    );
+    // Nothing to move, or too far: refused before anything is written.
+    let other = dir.path().join("other.pdf");
+    for (dx, dy) in [(0.0, 0.0), (f32::NAN, 1.0), (20_000.0, 0.0)] {
+        let e = apply(fixture("hidden-info.pdf"), vec![shift(2, "Highlight", dx, dy)], vec![], &other)
+            .expect_err("refused");
+        assert_eq!(e.code, "annotation.offset");
+    }
     assert!(!other.exists());
 }

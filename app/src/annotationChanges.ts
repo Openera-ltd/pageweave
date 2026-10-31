@@ -1,5 +1,5 @@
-// Pending changes to annotations already in the file: delete or new comment text, keyed by
-// page and position. Saved with the other edits into one copy (apply_edits.annotation_changes).
+// Pending changes to annotations already in the file: delete, new comment text, colour or
+// position, keyed by page and position. Saved with the other edits into one copy (apply_edits.annotation_changes).
 
 import type { AnnotationChange, ExistingAnnotation } from "./types";
 
@@ -14,15 +14,32 @@ export function markDeleted(changes: AnnotChanges, a: ExistingAnnotation): Annot
 /** Kinds whose colour can be changed (pw-core `RECOLOURABLE`): drawn from their colour. */
 export const RECOLOURABLE = new Set(["Highlight", "Underline", "StrikeOut", "Squiggly", "Square", "Circle", "Ink", "Line", "Polygon", "PolyLine", "Text"]);
 
-/** Text and colour changes of one annotation together; back to the original drops the change. */
-function withChange(changes: AnnotChanges, a: ExistingAnnotation, patch: { text?: string; color?: string }): AnnotChanges {
+/** Text, colour and position changes of one annotation together; back to the original drops the change. */
+function withChange(changes: AnnotChanges, a: ExistingAnnotation, patch: { text?: string; color?: string; offset?: [number, number] }): AnnotChanges {
   const { [keyOf(a)]: old, ...rest } = changes;
-  const text = patch.text !== undefined ? patch.text : old && !old.delete ? old.text : null;
-  const color = patch.color !== undefined ? patch.color : old && !old.delete ? (old.color ?? null) : null;
+  const live = old && !old.delete ? old : null;
+  const text = patch.text !== undefined ? patch.text : (live?.text ?? null);
+  const color = patch.color !== undefined ? patch.color : (live?.color ?? null);
+  const offset = patch.offset !== undefined ? patch.offset : (live?.offset ?? null);
   const textChanged = text !== null && text.trim() !== (a.text ?? "").trim();
   const colorChanged = color !== null && color.toLowerCase() !== (a.color ?? "").toLowerCase();
-  if (!textChanged && !colorChanged) return rest;
-  return { ...rest, [keyOf(a)]: { page: a.page, index: a.index, subtype: a.subtype, delete: false, text: textChanged ? text : null, color: colorChanged ? color : null } };
+  // Moves are kept to 0.01 pt; a move back to where it was is no move.
+  const moved = offset && (Math.abs(offset[0]) >= 0.01 || Math.abs(offset[1]) >= 0.01) ? ([round2(offset[0]), round2(offset[1])] as [number, number]) : null;
+  if (!textChanged && !colorChanged && !moved) return rest;
+  return { ...rest, [keyOf(a)]: { page: a.page, index: a.index, subtype: a.subtype, delete: false, text: textChanged ? text : null, color: colorChanged ? color : null, ...(moved ? { offset: moved } : {}) } };
+}
+
+const round2 = (v: number) => Math.round(v * 100) / 100;
+
+/** Pending move of an annotation, [dx, dy] PDF points ([0, 0] when it is not moved). */
+export function offsetOf(changes: AnnotChanges, a: { page: number; index: number }): [number, number] {
+  const c = changes[keyOf(a)];
+  return c && !c.delete && c.offset ? c.offset : [0, 0];
+}
+
+/** Move to `offset` from where it is in the file; [0, 0] drops the move. */
+export function setOffset(changes: AnnotChanges, a: ExistingAnnotation, offset: [number, number]): AnnotChanges {
+  return withChange(changes, a, { offset });
 }
 
 /** New comment text; going back to the original text drops that part of the change. */

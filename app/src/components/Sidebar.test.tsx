@@ -85,6 +85,33 @@ describe("Comments panel", () => {
     expect(onSelect).toHaveBeenCalledWith(0);
   });
 
+  it("Move hands the annotation to the page; while it moves, Done and Cancel finish it", async () => {
+    const onMove = vi.fn();
+    const onMoveDone = vi.fn();
+    const onMoveCancel = vi.fn();
+    const api = { listAnnotations: vi.fn(async () => ({ annotations: [note, box], truncated: false })), pageUrl: () => "" } as unknown as Api;
+    const props = { doc, view: "comments" as const, onView: () => undefined, currentPage: 0, onSelectPage: () => undefined, onPageContextMenu: () => undefined, onSaveAttachment: () => undefined, onAttachFiles: () => undefined, onEditBookmarks: () => undefined, annotChanges: {}, onAnnotChanges: () => undefined, onMove, onMoveDone, onMoveCancel };
+    const r = render(
+      <ApiContext.Provider value={api}>
+        <Sidebar {...props} moving={null} />
+      </ApiContext.Provider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Move Note on page 1" }));
+    expect(onMove).toHaveBeenCalledWith(note);
+    r.rerender(
+      <ApiContext.Provider value={api}>
+        <Sidebar {...props} moving="0:0" />
+      </ApiContext.Provider>,
+    );
+    expect(screen.queryByRole("button", { name: "Move Note on page 1" })).toBeNull();
+    fireEvent.click(screen.getByTestId("move-done"));
+    expect(onMoveDone).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onMoveCancel).toHaveBeenCalled();
+    // The other annotation can still be moved.
+    expect(screen.getByRole("button", { name: "Move Text box on page 1" })).toBeTruthy();
+  });
+
   it("shows pending deletes and lets them be undone", async () => {
     const { onChanges } = setupComments({ "0:0": { page: 0, index: 0, subtype: "Text", delete: true, text: null } });
     await screen.findByText("Removed when you save a copy");

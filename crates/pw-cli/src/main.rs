@@ -68,7 +68,8 @@ enum Command {
     /// List the comments and markup already in a file, or change them in a new file (-o):
     /// --delete PAGE:INDEX:TYPE removes one (with its pop-up); --set-text PAGE:INDEX:TYPE=TEXT
     /// changes its comment; --set-color PAGE:INDEX:TYPE=#rrggbb its colour (markup, shapes, ink,
-    /// notes). PAGE is 1-based; INDEX and TYPE are as the listing prints them.
+    /// notes); --move PAGE:INDEX:TYPE=DX,DY moves it by DX,DY points (right and up). PAGE is
+    /// 1-based; INDEX and TYPE are as the listing prints them.
     Annotations {
         file: PathBuf,
         #[arg(long, value_name = "PAGE:INDEX:TYPE")]
@@ -77,6 +78,8 @@ enum Command {
         set_text: Vec<String>,
         #[arg(long, value_name = "PAGE:INDEX:TYPE=#RRGGBB")]
         set_color: Vec<String>,
+        #[arg(long = "move", value_name = "PAGE:INDEX:TYPE=DX,DY", allow_hyphen_values = true)]
+        move_by: Vec<String>,
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
@@ -703,8 +706,8 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
         }
         Command::Inspect { file } => Operation::Inspect { input: file.clone() },
         Command::Fields { file } => Operation::FormFields { input: file.clone() },
-        Command::Annotations { file, delete, set_text, set_color, output } => {
-            if delete.is_empty() && set_text.is_empty() && set_color.is_empty() {
+        Command::Annotations { file, delete, set_text, set_color, move_by, output } => {
+            if delete.is_empty() && set_text.is_empty() && set_color.is_empty() && move_by.is_empty() {
                 Operation::ListAnnotations { input: file.clone() }
             } else {
                 let out = output
@@ -720,6 +723,7 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
                         delete: true,
                         text: None,
                         color: None,
+                        offset: None,
                     });
                 }
                 for t in set_text {
@@ -734,6 +738,7 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
                         delete: false,
                         text: Some(text.to_string()),
                         color: None,
+                        offset: None,
                     });
                 }
                 for t in set_color {
@@ -751,6 +756,31 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
                             delete: false,
                             text: None,
                             color: Some(color.to_string()),
+                            offset: None,
+                        }),
+                    }
+                }
+                for t in move_by {
+                    let syntax = || {
+                        PwError::invalid("annotations.syntax", format!("“{t}”: use PAGE:INDEX:TYPE=DX,DY (points)."))
+                    };
+                    let (r, by) = t.split_once('=').ok_or_else(syntax)?;
+                    let (page, index, subtype) = parse_annot_ref(r)?;
+                    let (dx, dy) = by.split_once(',').ok_or_else(syntax)?;
+                    let offset = [
+                        dx.trim().parse::<f32>().map_err(|_| syntax())?,
+                        dy.trim().parse::<f32>().map_err(|_| syntax())?,
+                    ];
+                    match changes.iter_mut().find(|c| c.page == page && c.index == index) {
+                        Some(c) => c.offset = Some(offset),
+                        None => changes.push(pw_core::ops::AnnotationChange {
+                            page,
+                            index,
+                            subtype,
+                            delete: false,
+                            text: None,
+                            color: None,
+                            offset: Some(offset),
                         }),
                     }
                 }

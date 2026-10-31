@@ -5,7 +5,7 @@ import type { ObjEntry } from "../objectEdits";
 import { EditLayer } from "./EditLayer";
 import { KIND_LABEL, type PendingAnnotation } from "../annotations";
 import { currentValue, fieldLabel, isFillable, type FormEdits } from "../forms";
-import { CSS_PX_PER_PT, displaySizePt, displaySizePx, mostVisiblePage, pageOrigin, pdfRectToScreen, renderScalePermille, screenRectToPdf, unrotatedLayer, wheelZoom } from "../geometry";
+import { CSS_PX_PER_PT, displaySizePt, displaySizePx, mostVisiblePage, pageOrigin, pdfRectToScreen, renderScalePermille, screenMoveToPdf, screenRectToPdf, unrotatedLayer, wheelZoom } from "../geometry";
 import type { FormField, FormInfo, FormValue, FormWidget, OpenedDoc, PageInfo, PageText, SearchHit, SearchRect } from "../types";
 
 export interface ScrollRequest {
@@ -44,6 +44,26 @@ interface ViewerProps {
   onMarkArea?: (page: number, rect: SearchRect) => void;
   /** Edit mode: boxes over editable text and pictures, with the pending edits previewed. */
   edit?: EditProps;
+  /** Annotations of the file being moved: where they will be, and the one being moved now. */
+  moves?: MoveProps;
+}
+
+export interface MoveFrame {
+  key: string;
+  page: number;
+  /** Where it will be (PDF points, the pending move applied). */
+  rect: SearchRect;
+  label: string;
+  /** Being moved now (dragged or nudged with the arrow keys). */
+  active: boolean;
+}
+
+export interface MoveProps {
+  frames: MoveFrame[];
+  /** Move the active annotation by [dx, dy] more PDF points. */
+  onMove: (key: string, dx: number, dy: number) => void;
+  onDone: () => void;
+  onCancel: () => void;
 }
 
 export interface EditProps {
@@ -58,6 +78,7 @@ const NO_ANNOTATIONS: PendingAnnotation[] = [];
 const NO_WIDGETS: PageWidget[] = [];
 const NO_EDITS: FormEdits = {};
 const NO_RECTS: SearchRect[] = [];
+const NO_FRAMES: MoveFrame[] = [];
 
 interface PageWidget {
   field: FormField;
@@ -66,7 +87,7 @@ interface PageWidget {
 }
 let firstPageReported = false;
 
-export function Viewer({ doc, zoom, onZoomStep, onZoomTo, onCurrentPage, scrollRequest, hits, currentHit, reading, onReadingInterrupted, onPageContextMenu, annotations, form, formEdits, onFormEdit, onMeasured, markMode, onMarkArea, edit }: ViewerProps) {
+export function Viewer({ doc, zoom, onZoomStep, onZoomTo, onCurrentPage, scrollRequest, hits, currentHit, reading, onReadingInterrupted, onPageContextMenu, annotations, form, formEdits, onFormEdit, onMeasured, markMode, onMarkArea, edit, moves }: ViewerProps) {
   const ref = useRef<HTMLDivElement>(null);
   // Per-page lists with stable identity, so adding an annotation re-renders only its page.
   const byPage = useMemo(() => {
@@ -289,6 +310,8 @@ export function Viewer({ doc, zoom, onZoomStep, onZoomTo, onCurrentPage, scrollR
             onFormEdit={onFormEdit}
             onMarkArea={markMode ? onMarkArea : undefined}
             edit={edit}
+            frames={moves?.frames.some((f) => f.page === p.index) ? moves.frames.filter((f) => f.page === p.index) : NO_FRAMES}
+            moves={moves}
           />
         ))}
       </div>
@@ -312,9 +335,11 @@ interface PageProps {
   /** Set while marking areas for redaction. */
   onMarkArea?: (page: number, rect: SearchRect) => void;
   edit?: EditProps;
+  frames: MoveFrame[];
+  moves?: MoveProps;
 }
 
-const Page = memo(function Page({ docId, page, zoom, root, hits, currentHit, readingRects, onContextMenu, annotations, widgets, formEdits, onFormEdit, onMarkArea, edit }: PageProps) {
+const Page = memo(function Page({ docId, page, zoom, root, hits, currentHit, readingRects, onContextMenu, annotations, widgets, formEdits, onFormEdit, onMarkArea, edit, frames, moves }: PageProps) {
   const api = useApi();
   const ref = useRef<HTMLDivElement>(null);
   const [near, setNear] = useState(false);
@@ -393,6 +418,7 @@ const Page = memo(function Page({ docId, page, zoom, root, hits, currentHit, rea
       {near && edit && <EditLayer docId={docId} page={page} zoom={zoom} items={edit.items} onEdit={edit.onEdit} addText={edit.addText} onAddTextDone={edit.onAddTextDone} />}
       {near && widgets.length > 0 && onFormEdit && <FormLayer docId={docId} page={page} zoom={zoom} widgets={widgets} edits={formEdits} onEdit={onFormEdit} />}
       {onMarkArea && <MarkCapture page={page} onMark={onMarkArea} />}
+      {frames.length > 0 && moves && <MoveLayer page={page} zoom={zoom} frames={frames} moves={moves} />}
       {readingRects.map((r, j) => {
         const s = pdfRectToScreen(r, page, zoom);
         return <div key={`read-${j}`} className="reading-mark" data-reading={page.index} style={{ left: s.left - 1, top: s.top - 1, width: Math.max(2, s.width) + 2, height: Math.max(2, s.height) + 2 }} />;
@@ -456,6 +482,83 @@ function MarkCapture({ page, onMark }: { page: PageInfo; onMark: (page: number, 
       onPointerCancel={() => setDraft(null)}
     >
       {box && <div className="markdraft" style={{ left: box.left, top: box.top, width: box.width, height: box.height }} />}
+    </div>
+  );
+}
+
+/**
+ * Frames of the file's annotations that are being moved. The page image still shows them where
+ * they are in the file until the copy is saved, so the new place is drawn as a dashed frame. The
+ * active one takes the pointer (drag) and the keyboard (arrows 1 pt, Shift 10 pt, Enter keeps,
+ * Escape cancels); a drag is applied at the release point.
+ */
+function MoveLayer({ page, zoom, frames, moves }: { page: PageInfo; zoom: number; frames: MoveFrame[]; moves: MoveProps }) {
+  const [drag, setDrag] = useState<{ key: string; x0: number; y0: number; dx: number; dy: number } | null>(null);
+  const activeRef = useRef<HTMLDivElement>(null);
+  const activeKey = frames.find((f) => f.active)?.key;
+  useEffect(() => {
+    activeRef.current?.focus({ preventScroll: false });
+    activeRef.current?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [activeKey]);
+  // Pointer pixels → PDF points with the page's measured size (UI scaling cannot skew the move).
+  const measured = (el: HTMLElement) => (el.parentElement?.getBoundingClientRect().width ?? 0) / (displaySizePt(page).w * CSS_PX_PER_PT) || zoom;
+  const onKeyDown = (e: React.KeyboardEvent, key: string) => {
+    const step = (e.shiftKey ? 10 : 1) * zoom * CSS_PX_PER_PT;
+    const arrows: Record<string, [number, number]> = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] };
+    const a = arrows[e.key];
+    if (a) {
+      moves.onMove(key, ...screenMoveToPdf(a[0], a[1], page, zoom));
+    } else if (e.key === "Enter") {
+      moves.onDone();
+    } else if (e.key === "Escape") {
+      moves.onCancel();
+    } else {
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+  };
+  return (
+    <div className="movelayer">
+      {frames.map((f) => {
+        const s = pdfRectToScreen(f.rect, page, zoom);
+        const d = drag && drag.key === f.key ? drag : null;
+        const style = { left: s.left + (d?.dx ?? 0), top: s.top + (d?.dy ?? 0), width: Math.max(6, s.width), height: Math.max(6, s.height) };
+        if (!f.active) return <div key={f.key} className="annot-frame" data-move-frame={f.key} aria-hidden="true" title={`${f.label} — moved here when you save a copy`} style={style} />;
+        return (
+          <div
+            key={f.key}
+            ref={activeRef}
+            className="annot-frame active"
+            data-move-frame={f.key}
+            role="button"
+            tabIndex={0}
+            aria-label={`Move ${f.label}: drag it, or use the arrow keys (Shift for bigger steps); Enter to finish, Escape to cancel`}
+            style={style}
+            onKeyDown={(e) => onKeyDown(e, f.key)}
+            onPointerDown={(e) => {
+              if (e.button !== 0) return;
+              e.preventDefault();
+              e.stopPropagation();
+              e.currentTarget.setPointerCapture?.(e.pointerId);
+              e.currentTarget.focus();
+              setDrag({ key: f.key, x0: e.clientX, y0: e.clientY, dx: 0, dy: 0 });
+            }}
+            onPointerMove={(e) => {
+              if (!drag) return;
+              const k = zoom / measured(e.currentTarget);
+              setDrag({ ...drag, dx: (e.clientX - drag.x0) * k, dy: (e.clientY - drag.y0) * k });
+            }}
+            onPointerUp={(e) => {
+              if (!drag) return;
+              setDrag(null);
+              const [dx, dy] = screenMoveToPdf(e.clientX - drag.x0, e.clientY - drag.y0, page, measured(e.currentTarget));
+              if (dx !== 0 || dy !== 0) moves.onMove(f.key, dx, dy);
+            }}
+            onPointerCancel={() => setDrag(null)}
+          />
+        );
+      })}
     </div>
   );
 }

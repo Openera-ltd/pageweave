@@ -3396,6 +3396,62 @@ await test("page labels: roman front matter then prefixed numbers; preview; save
   }
 });
 
+await test("comments panel: move a highlight with the keyboard and by dragging; Escape cancels a move; saved copy has it moved", async () => {
+  const src = join(FIX, "hidden-info.pdf");
+  const before = sha(src);
+  const out = join(work, "comments-moved.pdf");
+  const frame = (s) => s.exec("const f=document.querySelector('.annot-frame.active'); if (!f) return null; const r=f.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height, focused: document.activeElement === f }");
+  let k = 1;
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click("#sb-tab-comments");
+    await s.waitFor('[aria-label="Move Highlight on page 1"]');
+    // Pixels per point of the page as drawn.
+    k = await s.exec("return document.querySelector('.page[data-page=\"0\"]').getBoundingClientRect().width / 612");
+    await s.click('[aria-label="Move Highlight on page 1"]');
+    await s.waitUntil(async () => (await frame(s))?.focused === true, "the frame is on the page and has the focus");
+    const f0 = await frame(s);
+    assert((await unsavedText(s)) === "", "picking it up changes nothing yet");
+    // Keyboard: Shift+Down twice = 20 pt down.
+    await s.keys(["Shift", "ArrowDown"]);
+    await s.keys(["Shift", "ArrowDown"]);
+    await s.waitUntil(async () => Math.abs((await frame(s)).y - (f0.y + 20 * k)) < 1.5, "moved 20 pt down by keyboard");
+    // Drag 60 px to the right (released there).
+    const f1 = await frame(s);
+    await s.dragAt(f1.x + f1.w / 2, f1.y + f1.h / 2, f1.x + f1.w / 2 + 60, f1.y + f1.h / 2);
+    await s.waitUntil(async () => Math.abs((await frame(s)).x - (f1.x + 60)) < 1.5, "dragged 60 px right");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('.annot-frame.active, [data-testid=move-actions]')")), "Enter keeps the move");
+    assert(await s.exec("return !!document.querySelector('.annot-frame:not(.active)')"), "the new place stays marked until saved");
+    await s.waitUntil(async () => (await unsavedText(s)) === "1 unsaved change", "one unsaved change");
+    // Escape puts a move back.
+    await s.click('[aria-label="Move Rectangle on page 1"]');
+    await s.waitUntil(async () => (await frame(s))?.focused === true, "rectangle picked up");
+    await s.keys(["ArrowRight"]);
+    await s.waitUntil(async () => (await unsavedText(s)) === "2 unsaved changes", "nudge recorded");
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => (await unsavedText(s)) === "1 unsaved change", "Escape cancelled the rectangle's move");
+    assert(await s.exec("return !document.querySelector('[role=dialog]')"), "Escape did not open or close anything else");
+    await axeCheck(s, "comments-moving");
+    writeFileSync(join(ART, "comments-moved.png"), await s.screenshot());
+    await s.keys(["Control", "s"]);
+    await s.waitFor("#output");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved comments-moved.pdf")), "saved notice");
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('.annot-frame')")), "frames gone after saving");
+  });
+  assert(sha(src) === before, "source unchanged");
+  if (CLI) {
+    const rects = (f) => Object.fromEntries(JSON.parse(execFileSync(CLI, ["--json", "annotations", f], { encoding: "utf8" })).result.data.annotations.map((a) => [a.subtype, a.rect]));
+    const [a, b] = [rects(src), rects(out)];
+    const dx = b.Highlight.left - a.Highlight.left;
+    const dy = b.Highlight.bottom - a.Highlight.bottom;
+    assert(Math.abs(dy + 20) < 0.05 && Math.abs(dx - 60 / k) < 0.6, `highlight moved by (${dx}, ${dy})`);
+    assert(JSON.stringify(b.Square) === JSON.stringify(a.Square), "rectangle not moved");
+  }
+});
+
 await test("comments panel: delete a note and change a highlight's comment; closing asks; saved copy verified", async () => {
   const src = join(FIX, "hidden-info.pdf");
   const before = sha(src);

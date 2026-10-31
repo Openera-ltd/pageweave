@@ -1007,6 +1007,43 @@ fn annotations_list_delete_and_retext() {
 }
 
 #[test]
+fn annotations_move_with_negative_offsets_and_bad_syntax_is_invalid() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let copy = dir.path().join("m.pdf");
+    let r = bin()
+        .args(["annotations", "--move", "1:2:Highlight=-10,-100.5", "--set-color", "1:2:Highlight=#00ff00", "-o"])
+        .arg(&copy)
+        .arg(fixture("hidden-info.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let rect = |f: &std::path::Path| {
+        let v = json(&bin().args(["--json", "annotations"]).arg(f).output().expect("run"));
+        let a = v["result"]["data"]["annotations"]
+            .as_array()
+            .expect("list")
+            .iter()
+            .find(|a| a["index"] == 2)
+            .cloned()
+            .expect("highlight");
+        (a["rect"]["left"].as_f64().unwrap_or(0.0), a["rect"]["bottom"].as_f64().unwrap_or(0.0), a["color"].clone())
+    };
+    let (l0, b0, _) = rect(&fixture("hidden-info.pdf"));
+    let (l1, b1, c1) = rect(&copy);
+    assert!((l1 - (l0 - 10.0)).abs() < 0.01 && (b1 - (b0 - 100.5)).abs() < 0.01, "({l0},{b0}) → ({l1},{b1})");
+    assert_eq!(c1, "#00ff00", "move and colour in one change");
+    for bad in ["1:2:Highlight=10", "1:2:Highlight=a,b", "1:2:Highlight"] {
+        let r = bin()
+            .args(["annotations", "--move", bad, "-o"])
+            .arg(dir.path().join("x.pdf"))
+            .arg(fixture("hidden-info.pdf"))
+            .output()
+            .expect("run");
+        assert_eq!(r.status.code(), Some(2), "{bad} is invalid input");
+    }
+}
+
+#[test]
 fn resources_reports_each_capability() {
     let r = bin().args(["--json", "resources"]).output().expect("run");
     let v = json(&r);

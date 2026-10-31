@@ -96,7 +96,8 @@ Maintain a single documented shortcut registry. Include common system convention
 ## Comments panel (existing annotations)
 
 - Sidebar ▸ Comments lists every comment and markup in the file (kind, author, colour, comment, page); a click goes to its page. Per item: Edit comment (not for text boxes: their text is drawn on the page — disabled with that reason), Colour (a swatch, only for kinds drawn from their colour: highlights, underlines, strike-outs, squiggles, rectangles, ellipses, lines, polygons, drawings, notes) and Delete (with its pop-up).
-- Every change is pending: marked in the list ("Changed — save a copy to keep", "Removed when you save a copy"), undoable per item, counted as unsaved, and saved with Ctrl+S into a new verified copy together with other edits. A text and a colour change of one annotation are one change; going back to the original value drops it.
+- Move: puts a frame over the annotation on the page and gives it the focus; drag it (applied where the pointer is released), or Arrow keys 1 pt / Shift+Arrow 10 pt in the direction shown on screen (page rotation included). Enter or Done keeps the move, Escape or Cancel returns it to where it was when Move was pressed. Until the copy is saved, the page image still shows it in the old place and a dashed frame marks the new one. Its pop-up moves with it.
+- Every change is pending: marked in the list ("Changed — save a copy to keep", "Removed when you save a copy"), undoable per item, counted as unsaved, and saved with Ctrl+S into a new verified copy together with other edits. A text, colour and position change of one annotation are one change; going back to the original value drops it.
 
 ## Tabs, windows, dialogs, and unsaved work
 

@@ -280,6 +280,8 @@ export interface AnnotationChange {
   text: string | null;
   /** New colour "#rrggbb" (markup, shapes, ink and notes). */
   color?: string | null;
+  /** Move by [dx, dy] PDF points in unrotated page space (+y up); its pop-up moves with it. */
+  offset?: [number, number] | null;
 }
 
 export type Operation =

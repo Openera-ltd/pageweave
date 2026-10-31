@@ -47,7 +47,13 @@ pub struct AnnotationChange {
     /// New colour `#rrggbb` (markup, shapes, ink and notes; viewers redraw it in the new colour).
     #[serde(default)]
     pub color: Option<String>,
+    /// Move by `[dx, dy]` PDF points in unrotated page space (+y is up); its pop-up moves with it.
+    #[serde(default)]
+    pub offset: Option<[f32; 2]>,
 }
+
+/// Largest move of one annotation, in points (the largest page side PDF allows).
+pub const MAX_ANNOTATION_MOVE: f32 = 14_400.0;
 
 /// Annotation types whose colour can be changed: their look follows the colour (/C) when the stored
 /// appearance is dropped, in PDFium and in other viewers.
@@ -1740,7 +1746,7 @@ impl Operation {
                 }
                 let mut seen = std::collections::HashSet::new();
                 for c in annotation_changes {
-                    if !c.delete && c.text.is_none() && c.color.is_none() {
+                    if !c.delete && c.text.is_none() && c.color.is_none() && c.offset.is_none() {
                         return Err(PwError::invalid(
                             "annotation.no_change",
                             "An annotation change has nothing to change.",
@@ -1759,6 +1765,19 @@ impl Operation {
                             return Err(PwError::invalid(
                                 "annotation.color_kind",
                                 format!("The colour of a {} annotation can't be changed here.", c.subtype),
+                            ));
+                        }
+                    }
+                    if let Some([dx, dy]) = c.offset {
+                        let ok = dx.is_finite()
+                            && dy.is_finite()
+                            && dx.abs() <= MAX_ANNOTATION_MOVE
+                            && dy.abs() <= MAX_ANNOTATION_MOVE
+                            && (dx != 0.0 || dy != 0.0);
+                        if !ok {
+                            return Err(PwError::invalid(
+                                "annotation.offset",
+                                "Give the move as two numbers of points, not both zero and at most 14400 each.",
                             ));
                         }
                     }

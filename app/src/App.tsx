@@ -32,9 +32,9 @@ import { signatureSummary } from "./signatures";
 import { EMPTY_HISTORY as NO_OBJ_EDITS, push as pushObjEdit, redoLast, toPageEdits, undoLast, type ObjEntry, type ObjHistory } from "./objectEdits";
 import { eventToShortcut, isTextEntry } from "./shortcuts";
 import { applyAppearance } from "./theme";
-import { toPwError, type AppInfo, type AttachmentInfo, type AvailableUpdate, type CollisionPolicy, type FormField, type FormInfo, type FormValue, type JobSnapshot, type OpenedDoc, type Operation, type PwError, type RecoveredJob, type RedactArea, type SearchHit, type SearchRect, type Settings, type SignatureReport } from "./types";
+import { toPwError, type AppInfo, type AttachmentInfo, type AvailableUpdate, type CollisionPolicy, type ExistingAnnotation, type FormField, type FormInfo, type FormValue, type JobSnapshot, type OpenedDoc, type Operation, type PwError, type RecoveredJob, type RedactArea, type SearchHit, type SearchRect, type Settings, type SignatureReport } from "./types";
 import { CommandButton, Menu, type MenuEntry, type MenuItemOrSeparator } from "./components/ui";
-import { Viewer, type ScrollRequest } from "./components/Viewer";
+import { Viewer, type MoveFrame, type ScrollRequest } from "./components/Viewer";
 import { ToolsPanel } from "./components/ToolsPanel";
 import { MENU_ICONS, TopBar, barGroups } from "./components/TopBar";
 import { ReadAloudBar, type ReadStart } from "./components/ReadAloudBar";
@@ -53,7 +53,7 @@ import { TrustSignerDialog, TrustedCertificatesDialog } from "./components/Trust
 import { UnprotectDialog } from "./components/UnprotectDialog";
 import { ExportFormDataDialog, ImportFormDataDialog } from "./components/FormDataDialogs";
 import { RedactPatternsDialog } from "./components/RedactPatternsDialog";
-import { toChanges, type AnnotChanges } from "./annotationChanges";
+import { keyOf, kindName, offsetOf, setOffset, toChanges, type AnnotChanges } from "./annotationChanges";
 import { AccessibilityDialog } from "./components/AccessibilityDialog";
 import { PageLabelsDialog } from "./components/PageLabelsDialog";
 import { BatchDialog } from "./components/BatchDialog";
@@ -238,6 +238,10 @@ export function App() {
   const [objHist, setObjHist] = useState<Record<number, ObjHistory>>({});
   /** Pending deletes / text changes of annotations already in each file. */
   const [annotChanges, setAnnotChanges] = useState<Record<number, AnnotChanges>>({});
+  /** The file's annotations that were picked up to move, by document and key (where each is in the file). */
+  const [movable, setMovable] = useState<Record<number, Record<string, ExistingAnnotation>>>({});
+  /** The annotation being moved now and its pending move when it was picked up (Escape returns there). */
+  const [moving, setMoving] = useState<{ docId: number; key: string; before: [number, number] } | null>(null);
   const annGroup = useRef(1);
   /** Form fields per document (null: none, or still loading) and the user's unsaved field edits. */
   const [forms, setForms] = useState<Record<number, FormInfo | null>>({});
@@ -464,6 +468,8 @@ export function App() {
       setForms(({ [id]: _f, ...rest }) => rest);
       setFormEdits(({ [id]: _e, ...rest }) => rest);
       setAnnotChanges(({ [id]: _c, ...rest }) => rest);
+      setMovable(({ [id]: _m, ...rest }) => rest);
+      setMoving((m) => (m?.docId === id ? null : m));
       if (id === activeId) {
         setSearchOpen(false);
         setHits([]);
@@ -677,6 +683,39 @@ export function App() {
   const updateObjEdits = (docId: number, f: (h: ObjHistory) => ObjHistory) =>
     setObjHist((o) => ({ ...o, [docId]: f(o[docId] ?? NO_OBJ_EDITS) }));
 
+  const startMove = (docId: number, a: ExistingAnnotation) => {
+    const key = keyOf(a);
+    setMovable((m) => ({ ...m, [docId]: { ...m[docId], [key]: a } }));
+    setMoving({ docId, key, before: offsetOf(annotChanges[docId] ?? NO_ANNOT_CHANGES, a) });
+    goToPage(a.page);
+  };
+  const moveBy = (docId: number, key: string, dx: number, dy: number) => {
+    const a = movable[docId]?.[key];
+    if (!a) return;
+    setAnnotChanges((all) => {
+      const c = all[docId] ?? NO_ANNOT_CHANGES;
+      const [x, y] = offsetOf(c, a);
+      return { ...all, [docId]: setOffset(c, a, [x + dx, y + dy]) };
+    });
+  };
+  const cancelMove = () => {
+    const a = moving && movable[moving.docId]?.[moving.key];
+    if (moving && a) setAnnotChanges((all) => ({ ...all, [moving.docId]: setOffset(all[moving.docId] ?? NO_ANNOT_CHANGES, a, moving.before) }));
+    setMoving(null);
+  };
+  /** Where the active document's moved annotations will be, and the one being moved now. */
+  const moveFrames = (docId: number): MoveFrame[] => {
+    const changes = annotChanges[docId] ?? NO_ANNOT_CHANGES;
+    return Object.entries(movable[docId] ?? {}).flatMap(([key, a]) => {
+      const [dx, dy] = offsetOf(changes, a);
+      const active = moving?.docId === docId && moving.key === key;
+      if (changes[key]?.delete || (!active && dx === 0 && dy === 0)) return [];
+      const r = a.rect;
+      const rect = { left: r.left + dx, bottom: r.bottom + dy, right: r.right + dx, top: r.top + dy };
+      return [{ key, page: a.page, rect, label: `${kindName(a.subtype)} on page ${a.page + 1}`, active }];
+    });
+  };
+
   const annotateSelection = (kind: Exclude<PendingKind, "note">, snapshot?: Map<number, SearchRect[]>) => {
     if (!active) return;
     const rects = snapshot ?? selectionRects();
@@ -771,6 +810,7 @@ export function App() {
     setFormEdits(({ [docId]: _gone, ...rest }) => rest);
     setObjHist(({ [docId]: _gone, ...rest }) => rest);
     setAnnotChanges(({ [docId]: _gone, ...rest }) => rest);
+    setMoving((m) => (m?.docId === docId ? null : m));
     notify({
       kind: "info",
       title: `Discarded ${n} change${n === 1 ? "" : "s"}`,
@@ -1389,6 +1429,8 @@ export function App() {
     setFormEdits(({ [docId]: _saved, ...rest }) => rest);
     setObjHist(({ [docId]: _saved, ...rest }) => rest);
     setAnnotChanges(({ [docId]: _saved, ...rest }) => rest);
+    setMovable(({ [docId]: _moved, ...rest }) => rest);
+    setMoving((m) => (m?.docId === docId ? null : m));
     const next = afterSave.current;
     afterSave.current = null;
     if (next?.kind === "close") return closeTabNow(next.docId);
@@ -1538,6 +1580,10 @@ export function App() {
               onManageTrust={() => setDialog((d) => d ?? { kind: "trustedCertificates" })}
               annotChanges={annotChangesOf(active.doc_id)}
               onAnnotChanges={(c) => setAnnotChanges((all) => ({ ...all, [active.doc_id]: c }))}
+              moving={moving?.docId === active.doc_id ? moving.key : null}
+              onMove={(a) => startMove(active.doc_id, a)}
+              onMoveDone={() => setMoving(null)}
+              onMoveCancel={cancelMove}
             />
           )}
           <div ref={viewerHost} style={{ display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0, minWidth: 0, position: "relative" }}>
@@ -1633,6 +1679,7 @@ export function App() {
                   : undefined
               }
               onMarkArea={(page, rect) => addMarks([[page, [rect]]])}
+              moves={{ frames: moveFrames(active.doc_id), onMove: (key, dx, dy) => moveBy(active.doc_id, key, dx, dy), onDone: () => setMoving(null), onCancel: cancelMove }}
               onMeasured={(width) => {
                 if (view.fitPending) setView({ zoom: Math.min(1.5, fitWidthZoom(active.info.pages, width)), fitPending: false });
               }}
