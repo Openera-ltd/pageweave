@@ -135,6 +135,7 @@ fn table_of(rows: &[Row], channels: &[(f32, f32)]) -> Option<Table> {
     let mut fill: Vec<Vec<f32>> = vec![Vec::new(); cols];
     let mut words = 0usize;
     let mut segs = 0usize;
+    let mut col_words = vec![0usize; cols];
     for r in rows {
         let mut used = vec![false; cols];
         for s in &r.segs {
@@ -142,6 +143,7 @@ fn table_of(rows: &[Row], channels: &[(f32, f32)]) -> Option<Table> {
             used[c] = true;
             fill[c].push((s.right - s.left) / (xs[c + 1] - xs[c]).max(1.0));
             words += s.words;
+            col_words[c] += s.words;
             segs += 1;
         }
         filled += used.iter().filter(|u| **u).count();
@@ -149,9 +151,20 @@ fn table_of(rows: &[Row], channels: &[(f32, f32)]) -> Option<Table> {
     if filled * 2 < rows.len() * cols {
         return None;
     }
-    // Prose in columns: every column's lines fill it and hold many words.
-    let full = fill.iter().all(|f| median(f.clone()) >= 0.75);
-    if full && words as f32 / segs.max(1) as f32 >= 5.0 {
+    // Prose in columns: the columns' lines fill them and hold many words. Every column full, or
+    // full on average (a column of short paragraphs ends many lines early: IRS Publication 15's
+    // two columns measured 0.64 and 0.96 with 7 words per line).
+    let medians: Vec<f32> = fill.iter().map(|f| median(f.clone())).collect();
+    let full = medians.iter().all(|m| *m >= 0.75);
+    let mostly_full = medians.iter().sum::<f32>() / medians.len().max(1) as f32 >= 0.7;
+    if (full || mostly_full) && words as f32 / segs.max(1) as f32 >= 5.0 {
+        return None;
+    }
+    // One column of running text is enough: nearly full lines of many words each (the detector
+    // also tries shorter runs of rows, which can leave the other column looking sparse).
+    let prose_column =
+        (0..cols).any(|c| medians[c] >= 0.85 && col_words[c] as f32 / fill[c].len().max(1) as f32 >= 5.0);
+    if prose_column {
         return None;
     }
     let mut ys = vec![rows[0].top + 1.0];
@@ -298,6 +311,35 @@ mod tests {
             p.extend(text("a single column of ordinary running text here", 72.0, 700.0 - k as f32 * 13.0));
         }
         assert!(find_borderless(&p, &[]).is_empty());
+    }
+
+    #[test]
+    fn a_column_of_running_text_beside_short_items_is_not_a_table() {
+        // A bullet list (as on NIST SP 800-63-3), or a short paragraph column beside a full one
+        // (IRS Publication 15): the right column is nearly full with many words per line.
+        let mut g = Vec::new();
+        for k in 0..8 {
+            let y = 700.0 - k as f32 * 13.0;
+            if k % 2 == 0 {
+                g.extend(text("*", 72.0, y));
+            }
+            g.extend(text("data minimization as agencies need not pay for", 100.0, y));
+        }
+        assert!(find_borderless(&g, &[]).is_empty(), "{:?}", find_borderless(&g, &[]));
+        // A table whose last column holds a few words per cell is still a table.
+        let mut t = Vec::new();
+        for (k, (a, b)) in [
+            ("Apples", "kept cool and dry"),
+            ("Pears", "ripen at room"),
+            ("Plums", "eat soon"),
+            ("Figs", "handle with care"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            t.extend(row(&[(a, 72.0), ("12", 160.0), (b, 220.0)], 700.0 - k as f32 * 13.0));
+        }
+        assert_eq!(find_borderless(&t, &[]).len(), 1);
     }
 
     #[test]
