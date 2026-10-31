@@ -50,17 +50,17 @@ between the picture and the design's PNG export.
 
 | Page | Words | Recall | Text / shapes / pictures | Export diff |
 |---|---|---|---|---|
-| Chromium web page | 402 | 0.980 | 22 / 9 / 30 | 12.2 |
+| Chromium web page | 402 | 0.980 | 22 / 9 / 8 (was 30) | 12.2 |
 | LibreOffice slides | 3 | 1.000 | 2 / 0 / 0 | 1.1 |
 | LibreOffice report | 506 | 0.988 | 20 / 0 / 4 | 10.5 |
 | W3C table | 42 | 1.000 | 35 / 0 / 1 | 2.0 |
 | NIST SP 800-63-3 cover | 171 | 0.994 | 30 / 1 / 2 | 8.6 |
-| IRS Publication 15 cover | 302 | 0.815* | 45 / 3 / 495 | 8.7 |
+| IRS Publication 15 cover | 302 | 0.815* | 45 / 3 / 28 (was 495) | 8.7 |
 
 \* includes an invisible proof slug that is not on the page. Fixed while measuring: wording on page
 background inside a picture's box showed twice (it stayed opaque in the picture); paragraph glyph
 scale from the median let lines run past their original width (now the smallest ratio); a line in
 another script inflated its paragraph's size (now the median); table rules inside a line's box
 counted as glyphs (taller lines, false serifs) and darkened the background painted behind text on
-shaded bands. Known: the photo on the IRS cover is split into many small pictures; some sans lines
+shaded bands. Pictures that touch (within 3 px, small pieces within 4× their size) are merged — the IRS cover's dot leaders made 466 one-dot pictures. Known: some sans lines
 are still read as serif; text-dense pages differ mostly by font metrics (built-in fonts).

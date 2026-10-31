@@ -838,7 +838,7 @@ fn regions(img: &Rgb, mask: &[bool], bg: [i32; 3], under_text: &[bool], as_text:
         }
         found.push(merged);
     }
-    found
+    let objects = found
         .into_iter()
         .map(|(x0, y0, x1, y1, pixels)| {
             let (rw, rh) = (x1 - x0, y1 - y0);
@@ -908,30 +908,66 @@ fn regions(img: &Rgb, mask: &[bool], bg: [i32; 3], under_text: &[bool], as_text:
                     ..base
                 }
             } else {
-                // A picture: the region's own pixels; background around it is transparent.
-                let mut rgba = image::RgbaImage::new(rw as u32, rh as u32);
-                for y in y0..y1 {
-                    for x in x0..x1 {
-                        let c = img.at(x, y);
-                        let i = y * w + x;
-                        let a = if mask[i] || (dist(c, bg) > SAME && !as_text[i]) { 255 } else { 0 };
-                        rgba.put_pixel(
-                            (x - x0) as u32,
-                            (y - y0) as u32,
-                            image::Rgba([c[0] as u8, c[1] as u8, c[2] as u8, a]),
-                        );
-                    }
-                }
+                // A picture: its image is made below, once pictures that touch are merged.
                 DesignObject {
                     kind: ObjectKind::Image,
                     confidence: 0.0,
                     note: Some("Kept as a picture: not recognised as text or a plain shape.".into()),
-                    png: Some(png_base64(&image::DynamicImage::ImageRgba8(rgba))),
                     ..base
                 }
             }
         })
-        .collect()
+        .collect::<Vec<_>>();
+    // Pictures whose boxes overlap or nearly touch are one picture: a photograph falls apart into
+    // many pieces (bright patches are background-coloured), which would fill the layer list.
+    let (mut pictures, mut out): (Vec<DesignObject>, Vec<DesignObject>) =
+        objects.into_iter().partition(|o| o.kind == ObjectKind::Image);
+    const NEAR: f32 = 3.0;
+    loop {
+        let mut merged = false;
+        'outer: for i in 0..pictures.len() {
+            for j in i + 1..pictures.len() {
+                let (a, b) = (&pictures[i], &pictures[j]);
+                // Small pieces (the dots of a leader line, specks of a photo) join from further
+                // away: four times the smaller piece's size (leader dots are about 3 px, 9 px apart).
+                let small = a.w.max(a.h).min(b.w.max(b.h));
+                let near = if small <= 12.0 { NEAR.max(4.0 * small) } else { NEAR };
+                let apart = b.x > a.x + a.w + near
+                    || a.x > b.x + b.w + near
+                    || b.y > a.y + a.h + near
+                    || a.y > b.y + b.h + near;
+                if !apart {
+                    let b = pictures.swap_remove(j);
+                    let a = &mut pictures[i];
+                    let (x1, y1) = ((a.x + a.w).max(b.x + b.w), (a.y + a.h).max(b.y + b.h));
+                    (a.x, a.y) = (a.x.min(b.x), a.y.min(b.y));
+                    (a.w, a.h) = (x1 - a.x, y1 - a.y);
+                    merged = true;
+                    break 'outer;
+                }
+            }
+        }
+        if !merged {
+            break;
+        }
+    }
+    for mut p in pictures {
+        // The picture's box with its own pixels; background around them is transparent.
+        let (x0, y0) = (p.x as usize, p.y as usize);
+        let (x1, y1) = ((p.x + p.w) as usize, (p.y + p.h) as usize);
+        let mut rgba = image::RgbaImage::new((x1 - x0) as u32, (y1 - y0) as u32);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let c = img.at(x, y);
+                let i = y * w + x;
+                let a = if mask[i] || (dist(c, bg) > SAME && !as_text[i]) { 255 } else { 0 };
+                rgba.put_pixel((x - x0) as u32, (y - y0) as u32, image::Rgba([c[0] as u8, c[1] as u8, c[2] as u8, a]));
+            }
+        }
+        p.png = Some(png_base64(&image::DynamicImage::ImageRgba8(rgba)));
+        out.push(p);
+    }
+    out
 }
 
 /// The vector form that matches a one-colour region best: (ellipse, corner radius, overlap), when
@@ -2177,6 +2213,30 @@ mod tests {
         let est = behind_box(&img, (20, 20, 100, 40), (18, 18, 102, 42));
         let worst = est.iter().map(|c| dist(*c, [200, 200, 200])).max().expect("pixels");
         assert!(worst <= 2, "background estimate stays the band's grey (off by {worst})");
+    }
+
+    #[test]
+    fn a_dotted_leader_and_touching_picture_pieces_are_one_picture_each() {
+        let mut img = canvas(300, 120, [255, 255, 255]);
+        // A leader: anti-aliased dots (a 3 × 2 px core with grey edges), 12 px apart.
+        for k in 0..15 {
+            fill(&mut img, 19 + k * 12, 29, 24 + k * 12, 33, [150, 150, 150]);
+            fill(&mut img, 20 + k * 12, 30, 23 + k * 12, 32, [0, 0, 0]);
+        }
+        // Two picture pieces (two-coloured noise) 2 px apart, far from the leader.
+        for (x0, x1) in [(40, 90), (92, 140)] {
+            for y in 60..110 {
+                for x in x0..x1 {
+                    img.set(x, y, if (x * 7 + y * 13) % 5 < 2 { [200, 30, 30] } else { [30, 30, 200] });
+                }
+            }
+        }
+        let (objects, _, s) = reconstruct(&img, &[], &chars);
+        assert_eq!(s.images, 2, "{:?}", objects.iter().map(|o| (o.kind, o.x, o.y, o.w, o.h)).collect::<Vec<_>>());
+        let leader = objects.iter().find(|o| o.kind == ObjectKind::Image && o.y < 40.0).expect("leader");
+        assert_eq!((leader.x, leader.w), (19.0, 173.0));
+        let photo = objects.iter().find(|o| o.kind == ObjectKind::Image && o.y >= 60.0).expect("pieces");
+        assert_eq!((photo.x, photo.w), (40.0, 100.0));
     }
 
     #[test]
