@@ -89,6 +89,10 @@ Maintain a single documented shortcut registry. Include common system convention
 - Uncertain objects (pictures, confidence under 80 %) carry a warning icon and a note in the properties panel; nothing is drawn over the canvas. Compare: Design, Original, Overlay (opacity slider), Differences (difference blend).
 - Export SVG/PDF saves first, asks where (the system dialog confirms replacing), runs the engine's verified export and offers Show in folder.
 
+## Edit mode: pictures
+
+- A selected picture shows its toolbar (turn 90°, replace, delete) and four corner handles. Drag a handle to resize (the opposite corner stays; at least 8 px; applied at release; the picture stretches to the box, aspect not locked). Ctrl+Arrow moves the bottom-right corner as shown by 1 pt (Ctrl+Shift 10 pt); plain arrows move the picture. A resize and later moves combine; undo removes the last action. The engine preview shows the result before saving.
+
 ## Markup colours
 
 - Settings ▸ Appearance ▸ Markup colors: one colour swatch per kind (Highlight, Underline, Strikethrough, Note), previewed live like the other appearance settings, saved with Save and discarded with Cancel. New markup made afterwards uses them (the pending overlay and the saved copy); markup already made keeps its colour. Default returns all four to the built-in colours (disabled when they already are). Restore default appearance does not change them. Invalid stored values are dropped on load and reported as repaired settings.

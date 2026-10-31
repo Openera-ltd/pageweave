@@ -325,3 +325,69 @@ fn colours_in_calibrated_colour_spaces_survive_an_edit() {
             && !text.texts.iter().any(|t| t.text == "Remove this line")
     );
 }
+
+#[test]
+fn pictures_resize_into_a_new_box_also_after_a_move_and_bad_boxes_are_refused() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let src = fixture("embedded-font.pdf");
+    let l = list(&src);
+    let (img, r0) = (l.images[0].object, l.images[0].rect);
+    // Twice as wide, half as high, with the bottom-left corner kept.
+    let to = pw_core::ops::RectPt {
+        left: r0.left,
+        bottom: r0.bottom,
+        right: r0.left + 2.0 * (r0.right - r0.left),
+        top: r0.bottom + (r0.top - r0.bottom) / 2.0,
+    };
+    let out = dir.path().join("resized.pdf");
+    edit(&src, vec![PageEdit::ResizeImage { object: img, rect: to }], &out).expect("resize");
+    let r = list(&out).images[0].rect;
+    for (a, b) in [(r.left, to.left), (r.bottom, to.bottom), (r.right, to.right), (r.top, to.top)] {
+        assert!((a - b).abs() < 0.5, "{r:?} vs {to:?}");
+    }
+    // The picture is drawn over the whole new box: its pixels reach the new right edge.
+    let (png, _, h) = pw_pdf::render_page_png(&out, &OpenOptions::default(), 0, 1.0).expect("render");
+    let page = image::load_from_memory(&png).expect("png").to_rgb8();
+    let px = page.get_pixel((to.right - 3.0) as u32, h - ((to.bottom + to.top) / 2.0) as u32);
+    assert!(px.0.iter().any(|&c| c < 230), "picture drawn at the new right edge: {px:?}");
+    // A move and a resize in one save: the box is before the move, and the move still applies.
+    let both = dir.path().join("both.pdf");
+    let moved = pw_core::ops::RectPt {
+        left: to.left + 30.0,
+        bottom: to.bottom + 20.0,
+        right: to.right + 30.0,
+        top: to.top + 20.0,
+    };
+    edit(
+        &src,
+        vec![
+            PageEdit::MoveObjects { objects: vec![img], dx: 30.0, dy: 20.0 },
+            PageEdit::ResizeImage { object: img, rect: to },
+        ],
+        &both,
+    )
+    .expect("move + resize");
+    let b = list(&both).images[0].rect;
+    assert!((b.left - moved.left).abs() < 0.5 && (b.top - moved.top).abs() < 0.5, "{b:?}");
+    let code = |r: pw_core::PwResult<OperationResult>| r.expect_err("refused").code;
+    let tiny = pw_core::ops::RectPt { right: to.left + 0.5, ..to };
+    assert_eq!(
+        code(edit(&src, vec![PageEdit::ResizeImage { object: img, rect: tiny }], &dir.path().join("x.pdf"))),
+        "edit.invalid"
+    );
+    assert_eq!(
+        code(edit(&src, vec![PageEdit::ResizeImage { object: 9999, rect: to }], &dir.path().join("y.pdf"))),
+        "edit.stale"
+    );
+    // Resized and turned in one save: the turned picture fills the resized box.
+    let turned = dir.path().join("turned.pdf");
+    edit(
+        &src,
+        vec![PageEdit::RotateImage { object: img, degrees: 90 }, PageEdit::ResizeImage { object: img, rect: to }],
+        &turned,
+    )
+    .expect("turn + resize");
+    let t = list(&turned).images[0].clone();
+    assert_eq!((t.width_px, t.height_px), (80, 120), "pixels turned");
+    assert!((t.rect.right - to.right).abs() < 0.5 && (t.rect.top - to.top).abs() < 0.5, "{:?}", t.rect);
+}

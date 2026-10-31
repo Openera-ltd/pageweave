@@ -1,6 +1,7 @@
 // Pending edits to existing page content (Edit mode). The UI records each user action as an entry;
 // `normalize` turns a page's entries into the engine's request: the last wording per text run, moves
-// added up, turns added up, the last replacement picture, and deletions winning. Pure (unit tested).
+// added up, turns added up, the last replacement picture and size, and deletions winning. Pure (unit
+// tested).
 
 import type { PageEdit } from "./types";
 
@@ -38,6 +39,7 @@ export function normalize(items: ObjEntry[], page: number): PageEdit[] {
   const moves = new Map<number, { dx: number; dy: number }>();
   const turns = new Map<number, number>();
   const replaced = new Map<number, string>();
+  const sizes = new Map<number, Extract<PageEdit, { kind: "resize_image" }>["rect"]>();
   const deleted = new Set<number>();
   const added: PageEdit[] = [];
   for (const { page: p, edit: e } of items) {
@@ -63,6 +65,9 @@ export function normalize(items: ObjEntry[], page: number): PageEdit[] {
         // A new picture starts upright: earlier turns applied to the old one.
         turns.delete(e.object);
         break;
+      case "resize_image":
+        sizes.set(e.object, e.rect);
+        break;
       case "delete_objects":
         e.objects.forEach((o) => deleted.add(o));
         break;
@@ -79,6 +84,7 @@ export function normalize(items: ObjEntry[], page: number): PageEdit[] {
   for (const [o, m] of moves) if (!deleted.has(o) && (m.dx || m.dy)) out.push({ kind: "move_objects", objects: [o], dx: m.dx, dy: m.dy });
   for (const [o, path] of replaced) if (!deleted.has(o)) out.push({ kind: "replace_image", object: o, path });
   for (const [o, deg] of turns) if (!deleted.has(o) && deg) out.push({ kind: "rotate_image", object: o, degrees: deg as 90 | 180 | 270 });
+  for (const [o, rect] of sizes) if (!deleted.has(o)) out.push({ kind: "resize_image", object: o, rect });
   if (deleted.size) out.push({ kind: "delete_objects", objects: [...deleted].sort((a, b) => a - b) });
   out.push(...added);
   return out;
@@ -111,4 +117,11 @@ export function netMove(items: ObjEntry[], page: number, object: number): { dx: 
     }
   }
   return { dx, dy };
+}
+
+/** The latest pending box of a picture (before moves), or null when it keeps its size. */
+export function netSize(items: ObjEntry[], page: number, object: number): Extract<PageEdit, { kind: "resize_image" }>["rect"] | null {
+  let r = null;
+  for (const { page: p, edit: e } of items) if (p === page && e.kind === "resize_image" && e.object === object) r = e.rect;
+  return r;
 }

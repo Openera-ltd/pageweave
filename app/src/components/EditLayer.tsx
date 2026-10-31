@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { ImageUp, RotateCw, Trash2 } from "lucide-react";
 import { useApi } from "../api";
-import { CSS_PX_PER_PT, pdfRectToScreen, renderScalePermille, screenRectToPdf } from "../geometry";
-import { netMove, normalize, type ObjEntry } from "../objectEdits";
+import { CSS_PX_PER_PT, pdfRectToScreen, renderScalePermille, screenMoveToPdf, screenRectToPdf, type ScreenRect } from "../geometry";
+import { netMove, netSize, normalize, type ObjEntry } from "../objectEdits";
 import { toPwError, type EditableObjects, type PageEdit, type PageInfo } from "../types";
 
 interface Props {
@@ -21,6 +21,18 @@ interface Props {
 const DRAG_PX = 4;
 
 type Target = { kind: "text"; index: number } | { kind: "image"; index: number };
+type Corner = "nw" | "ne" | "sw" | "se";
+
+/** A box on screen with one corner dragged by (dx, dy); the opposite corner stays (at least 8 px). */
+function withCorner(b: ScreenRect, corner: Corner, dx: number, dy: number): ScreenRect {
+  const min = 8;
+  let [l, t, r, bt] = [b.left, b.top, b.left + b.width, b.top + b.height];
+  if (corner.includes("w")) l = Math.min(l + dx, r - min);
+  else r = Math.max(r + dx, l + min);
+  if (corner.includes("n")) t = Math.min(t + dy, bt - min);
+  else bt = Math.max(bt + dy, t + min);
+  return { left: l, top: t, width: r - l, height: bt - t };
+}
 
 /** Edit mode for one page: boxes over editable text runs and pictures, and an exact preview. */
 export function EditLayer({ docId, page, zoom, items, onEdit, addText, onAddTextDone }: Props) {
@@ -33,6 +45,8 @@ export function EditLayer({ docId, page, zoom, items, onEdit, addText, onAddText
   const [adding, setAdding] = useState<{ left: number; top: number; value: string } | null>(null);
   const [selected, setSelected] = useState<Target | null>(null);
   const [drag, setDrag] = useState<{ target: Target; x0: number; y0: number; dx: number; dy: number; moved: boolean } | null>(null);
+  /** A picture corner being dragged (screen px so far). */
+  const [sizing, setSizing] = useState<{ index: number; corner: Corner; x0: number; y0: number; dx: number; dy: number } | null>(null);
   const k = zoom * CSS_PX_PER_PT;
   /** Set when a press ended a drag, so the click that follows does not also open the box. */
   const dragged = useRef(false);
@@ -100,9 +114,19 @@ export function EditLayer({ docId, page, zoom, items, onEdit, addText, onAddText
   };
 
   const boxOf = (rect: { left: number; bottom: number; right: number; top: number }, object: number) => {
-    const s = pdfRectToScreen(rect, page, zoom);
+    const s = pdfRectToScreen(netSize(items, page.index, object) ?? rect, page, zoom);
     const m = netMove(items, page.index, object);
     return { left: s.left + m.dx * k, top: s.top - m.dy * k, width: Math.max(6, s.width), height: Math.max(6, s.height) };
+  };
+  /** Record a picture's new box from where it is shown (moves included) on screen. */
+  const resizeImage = (object: number, shown: ScreenRect) => {
+    const r = screenRectToPdf(shown, page, zoom);
+    const m = netMove(items, page.index, object);
+    // The engine takes the box before the moves (they still apply after it).
+    const [mx, my] = screenMoveToPdf(m.dx * k, -m.dy * k, page, zoom);
+    const round = (v: number) => Math.round(v * 100) / 100;
+    const rect = { left: round(r.left - mx), bottom: round(r.bottom - my), right: round(r.right - mx), top: round(r.top - my) };
+    if (rect.right - rect.left >= 1 && rect.top - rect.bottom >= 1) record({ kind: "resize_image", object, rect });
   };
 
   /** Mouse click, Enter or Space; the click that ends a drag is not an activation. */
@@ -143,7 +167,14 @@ export function EditLayer({ docId, page, zoom, items, onEdit, addText, onAddText
     onKeyDown: (e: React.KeyboardEvent) => {
       const step = e.shiftKey ? 10 : 1;
       const arrows: Record<string, [number, number]> = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] };
-      if (arrows[e.key]) {
+      if (arrows[e.key] && (e.ctrlKey || e.metaKey)) {
+        // Ctrl+arrows resize a picture by its bottom-right corner as shown (1 pt, Shift 10 pt).
+        if (t.kind !== "image" || !listing) return;
+        e.preventDefault();
+        const img = listing.images[t.index]!;
+        const [ax, ay] = arrows[e.key]!;
+        resizeImage(img.object, withCorner(boxOf(img.rect, img.object), "se", ax * k, -ay * k));
+      } else if (arrows[e.key]) {
         e.preventDefault();
         moveTarget(t, ...arrows[e.key]!);
       } else if (e.key === "Delete" || e.key === "Backspace") {
@@ -257,7 +288,9 @@ export function EditLayer({ docId, page, zoom, items, onEdit, addText, onAddText
       })}
       {listing?.images.map((img, i) => {
         if (deleted.has(img.object)) return null;
-        const b = boxOf(img.rect, img.object);
+        const shown = boxOf(img.rect, img.object);
+        const sz = sizing?.index === i ? sizing : null;
+        const b = sz ? withCorner(shown, sz.corner, sz.dx, sz.dy) : shown;
         const t: Target = { kind: "image", index: i };
         const isSel = selected?.kind === "image" && selected.index === i;
         return (
@@ -267,12 +300,38 @@ export function EditLayer({ docId, page, zoom, items, onEdit, addText, onAddText
               className={`edit-box image${isSel ? " selected" : ""}`}
               data-edit-image={i}
               style={{ ...b, ...dragOffset(t) }}
-              aria-label={`Picture ${img.width_px} × ${img.height_px} pixels`}
+              aria-label={`Picture ${img.width_px} × ${img.height_px} pixels (drag to move, corners or Ctrl+arrow keys to resize)`}
               aria-pressed={isSel}
               onFocus={() => setSelected(t)}
               onClick={activate(() => setSelected(t))}
               {...pointerHandlers(t)}
             />
+            {isSel &&
+              (["nw", "ne", "sw", "se"] as const).map((c) => (
+                <span
+                  key={c}
+                  className="edit-handle"
+                  data-corner={c}
+                  aria-hidden="true"
+                  style={{ left: b.left + (c.includes("w") ? 0 : b.width), top: b.top + (c.includes("n") ? 0 : b.height) }}
+                  onPointerDown={(e) => {
+                    if (e.button !== 0) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.currentTarget.setPointerCapture(e.pointerId);
+                    setSizing({ index: i, corner: c, x0: e.clientX, y0: e.clientY, dx: 0, dy: 0 });
+                  }}
+                  onPointerMove={(e) => sizing && setSizing({ ...sizing, dx: e.clientX - sizing.x0, dy: e.clientY - sizing.y0 })}
+                  onPointerUp={(e) => {
+                    if (!sizing) return;
+                    setSizing(null);
+                    // Applied at the release point.
+                    const [dx, dy] = [e.clientX - sizing.x0, e.clientY - sizing.y0];
+                    if (dx || dy) resizeImage(img.object, withCorner(shown, sizing.corner, dx, dy));
+                  }}
+                  onPointerCancel={() => setSizing(null)}
+                />
+              ))}
             {isSel && (
               <div className="edit-toolbar" role="toolbar" aria-label="Picture" style={{ left: b.left, top: Math.max(0, b.top - 36) }}>
                 <button type="button" className="btn icon" title="Turn 90° clockwise" aria-label="Turn picture 90° clockwise" onClick={() => record({ kind: "rotate_image", object: img.object, degrees: 90 })}>

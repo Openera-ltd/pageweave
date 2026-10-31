@@ -901,6 +901,28 @@ textarea {
   touch-action: none;
 }
 
+.edit-handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  background: var(--surface);
+  z-index: 2;
+  touch-action: none;
+}
+
+.edit-handle[data-corner="nw"],
+.edit-handle[data-corner="se"] {
+  cursor: nwse-resize;
+}
+
+.edit-handle[data-corner="ne"],
+.edit-handle[data-corner="sw"] {
+  cursor: nesw-resize;
+}
+
 .annot-handle {
   position: absolute;
   width: 9px;

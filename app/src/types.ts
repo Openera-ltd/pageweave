@@ -543,6 +543,8 @@ export type PageEdit =
   | { kind: "move_objects"; objects: number[]; dx: number; dy: number }
   | { kind: "replace_image"; object: number; path: string }
   | { kind: "rotate_image"; object: number; degrees: 90 | 180 | 270 }
+  /** New box (unrotated page space) as before this request's moves, which still apply. */
+  | { kind: "resize_image"; object: number; rect: SearchRect }
   | { kind: "add_text"; x: number; y: number; text: string; size: number; color: string };
 
 export interface PdfRect {

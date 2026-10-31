@@ -238,6 +238,8 @@ struct Expectation {
     page: u32,
     texts: Vec<String>,
     images: usize,
+    /// Boxes resized pictures must have (any picture on the page, within 0.5 pt).
+    boxes: Vec<RectPt>,
 }
 
 /// Apply `pages` of edits to a copy of `input`.
@@ -308,14 +310,31 @@ pub(crate) fn apply_object_edits(input: &Path, opts: &OpenOptions, pages: &[Page
             let page = doc.pages().get(pe.page as PdfPageIndex).map_err(err)?;
             rotation_of(&page)
         };
-        // Moves first: a picture that is also replaced or turned takes its (moved) placement from
-        // the original object, which those edits then remove.
+        // Resizes, then moves, then the rest: a picture that is also replaced or turned takes its
+        // (resized, moved) placement from the original object, which those edits then remove. A
+        // resize box is given before the moves, so moves recorded after it still apply.
         let mut ordered: Vec<(usize, &PageEdit)> = pe.edits.iter().enumerate().collect();
-        ordered.sort_by_key(|(_, e)| !matches!(e, PageEdit::MoveObjects { .. }));
+        ordered.sort_by_key(|(_, e)| match e {
+            PageEdit::ResizeImage { .. } => 0,
+            PageEdit::MoveObjects { .. } => 1,
+            _ => 2,
+        });
+        // Each object's total move in unrotated page space (where a resized picture ends up).
+        let mut moved_by: HashMap<u32, (f32, f32)> = HashMap::new();
+        for e in &pe.edits {
+            if let PageEdit::MoveObjects { objects, dx, dy } = e {
+                let (tx, ty) = unrotate(rot, *dx, *dy);
+                for &o in objects {
+                    let m = moved_by.entry(o).or_default();
+                    *m = (m.0 + tx, m.1 + ty);
+                }
+            }
+        }
         let mut remove: BTreeSet<u32> = BTreeSet::new();
         let mut expect_texts = Vec::new();
         let mut images_removed = 0usize;
         let mut images_added = 0usize;
+        let mut boxes = Vec::new();
         for (k, e) in ordered {
             match e {
                 PageEdit::Text { objects, text, size, color: c, dx, dy } => {
@@ -500,6 +519,30 @@ pub(crate) fn apply_object_edits(input: &Path, opts: &OpenOptions, pages: &[Page
                     images_added += 1;
                     images_removed += 1;
                 }
+                PageEdit::ResizeImage { object, rect: to } => {
+                    if !image_ids.contains(object) {
+                        return Err(PwError::invalid("edit.stale", "The picture was not found."));
+                    }
+                    let mut page = doc.pages().get(pe.page as PdfPageIndex).map_err(err)?;
+                    {
+                        let mut obj = page.objects().get(*object as PdfPageObjectIndex).map_err(err)?;
+                        let from =
+                            rect_of(&obj).ok_or_else(|| PwError::internal("edit.image", "The picture has no box."))?;
+                        // Map the current box onto the new one (keeps any turn of the picture inside it).
+                        let sx = (to.right - to.left) / (from.right - from.left).max(0.01);
+                        let sy = (to.top - to.bottom) / (from.top - from.bottom).max(0.01);
+                        obj.transform(sx, 0.0, 0.0, sy, to.left - from.left * sx, to.bottom - from.bottom * sy)
+                            .map_err(err)?;
+                    }
+                    crate::edit::regenerate_keeping_colours(&mut page).map_err(err)?;
+                    let (mx, my) = moved_by.get(object).copied().unwrap_or_default();
+                    boxes.push(RectPt {
+                        left: to.left + mx,
+                        bottom: to.bottom + my,
+                        right: to.right + mx,
+                        top: to.top + my,
+                    });
+                }
                 PageEdit::AddText { x, y, text, size, color: c } => {
                     let t = text.trim_end_matches(['\r', '\n']);
                     if t.trim().is_empty() || t.chars().any(|ch| (ch as u32) > 255 || ch.is_control()) {
@@ -530,6 +573,7 @@ pub(crate) fn apply_object_edits(input: &Path, opts: &OpenOptions, pages: &[Page
             page: pe.page,
             texts: expect_texts,
             images: listing.images.len() + images_added - images_removed,
+            boxes,
         });
     }
     let bytes = save_bytes(&doc)?;
@@ -558,6 +602,16 @@ pub(crate) fn apply_object_edits(input: &Path, opts: &OpenOptions, pages: &[Page
             for t in &ex.texts {
                 if !all.contains(&squash(t)) {
                     return Err(fail(format!("\"{t}\" is missing on page {}", ex.page + 1)));
+                }
+            }
+            for b in &ex.boxes {
+                let near = |r: &RectPt| {
+                    [(r.left, b.left), (r.bottom, b.bottom), (r.right, b.right), (r.top, b.top)]
+                        .iter()
+                        .all(|(x, y)| (x - y).abs() < 0.5)
+                };
+                if !listing.images.iter().any(|i| near(&i.rect)) {
+                    return Err(fail(format!("a resized picture on page {} is not where intended", ex.page + 1)));
                 }
             }
             if listing.images.len() != ex.images {

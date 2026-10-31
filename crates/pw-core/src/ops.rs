@@ -466,6 +466,12 @@ pub enum PageEdit {
         object: u32,
         degrees: u32,
     },
+    /// Fit a picture into a new box (points, unrotated page space, as the listing gives boxes).
+    /// The box is where the picture is before this request's moves, which then still apply.
+    ResizeImage {
+        object: u32,
+        rect: RectPt,
+    },
     /// New text at (x, y) in unrotated page space (baseline start), upright as displayed.
     AddText {
         x: f32,
@@ -2024,6 +2030,11 @@ fn validate_page_edits(pages: &[PageEdits]) -> PwResult<()> {
             PageEdit::MoveObjects { objects, dx, dy } => !objects.is_empty() && finite(*dx) && finite(*dy),
             PageEdit::ReplaceImage { .. } => true,
             PageEdit::RotateImage { degrees, .. } => matches!(degrees, 90 | 180 | 270),
+            PageEdit::ResizeImage { rect: r, .. } => {
+                [r.left, r.bottom, r.right, r.top].into_iter().all(finite)
+                    && r.right - r.left >= 1.0
+                    && r.top - r.bottom >= 1.0
+            }
             PageEdit::AddText { x, y, text, size, .. } => {
                 finite(*x) && finite(*y) && text.chars().count() <= 2000 && (4.0..=200.0).contains(size)
             }

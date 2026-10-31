@@ -2397,6 +2397,51 @@ await test("edit text and pictures: inline text edit, drag and turn a picture, a
   }
 });
 
+await test("edit pictures: resize by a corner and with Ctrl+arrows, then move; the saved copy has the new box", async () => {
+  const src = join(FIX, "embedded-font.pdf");
+  const out = join(work, "picture-resized.pdf");
+  const box = (s) => s.exec("const b = document.querySelector('[data-edit-image=\"0\"]').getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height }");
+  const before = CLI ? JSON.parse(execFileSync(CLI, ["--json", "objects", "--page", "1", src], { encoding: "utf8" })).result.data.images[0].rect : null;
+  let k = 1;
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "e"]);
+    await s.waitFor('[data-edit-image="0"]');
+    await s.click('[data-edit-image="0"]');
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.edit-handle').length")) === 4, "four corner handles on the selected picture");
+    const b0 = await box(s);
+    if (before) k = b0.w / (before.right - before.left);
+    // Bottom-right corner 60 px right and 30 px down; the top-left corner stays.
+    const se = await s.exec("const r = document.querySelector('.edit-handle[data-corner=se]').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]");
+    await s.dragAt(se[0], se[1], se[0] + 60, se[1] + 30);
+    await s.waitUntil(async () => { const b = await box(s); return Math.abs(b.w - (b0.w + 60)) < 1.5 && Math.abs(b.h - (b0.h + 30)) < 1.5 && Math.abs(b.x - b0.x) < 1; }, "corner drag resized the box");
+    await s.waitUntil(async () => (await unsavedText(s)) === "1 unsaved change", "resize recorded");
+    // Ctrl+Shift+Right: 10 pt wider (the picture keeps the focus).
+    await s.click('[data-edit-image="0"]');
+    await s.keys(["Control", "Shift", "ArrowRight"]);
+    await s.waitUntil(async () => Math.abs((await box(s)).w - (b0.w + 60 + 10 * k)) < 1.5, "10 pt wider from the keyboard");
+    // A move after the resize still applies.
+    const b1 = await box(s);
+    await s.dragAt(b1.x + b1.w / 2, b1.y + b1.h / 2, b1.x + b1.w / 2 + 50, b1.y + b1.h / 2, 10);
+    await s.waitUntil(async () => Math.abs((await box(s)).x - (b1.x + 50)) < 1.5 && Math.abs((await box(s)).w - b1.w) < 1, "moved, size kept");
+    await s.waitFor('[data-testid="edit-preview"]');
+    await axeCheck(s, "edit-picture-resize");
+    writeFileSync(join(ART, "edit-picture-resized.png"), await s.screenshot());
+    await s.keys(["Escape"]);
+    await s.keys(["Control", "s"]);
+    await s.waitFor("#output");
+    await s.replaceText("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved picture-resized.pdf")), "saved notice");
+  });
+  if (CLI) {
+    const r = JSON.parse(execFileSync(CLI, ["--json", "objects", "--page", "1", out], { encoding: "utf8" })).result.data.images[0].rect;
+    const near = (a, b) => Math.abs(a - b) < 0.8;
+    const ok = near(r.left, before.left + 50 / k) && near(r.top, before.top) && near(r.right - r.left, before.right - before.left + 60 / k + 10) && near(r.top - r.bottom, before.top - before.bottom + 30 / k);
+    assert(ok, `picture ${JSON.stringify(before)} → ${JSON.stringify(r)} (k ${k})`);
+  }
+});
+
 await test("protect with password: AES-256 copy needs the password; wrong password refused; content intact", async () => {
   const src = join(FIX, "five-pages.pdf");
   const before = sha(src);
