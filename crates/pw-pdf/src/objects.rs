@@ -294,7 +294,7 @@ pub fn edit_objects(
 
 /// The source parsed by lopdf (decrypted with the open password when protected), for reading its
 /// content streams; `None` when it cannot be parsed.
-fn lopdf_source(input: &Path, opts: &OpenOptions) -> Option<lopdf::Document> {
+pub(crate) fn lopdf_source(input: &Path, opts: &OpenOptions) -> Option<lopdf::Document> {
     let raw = std::fs::read(input).ok()?;
     match lopdf::Document::load_mem(&raw) {
         Ok(d) if !d.is_encrypted() => Some(d),
@@ -306,7 +306,7 @@ fn lopdf_source(input: &Path, opts: &OpenOptions) -> Option<lopdf::Document> {
 
 /// For each top-level image a page draws, in drawing order, whether it is an inline image. `None`
 /// when the content cannot be read or an XObject name cannot be resolved (then nothing is changed).
-fn inline_image_slots(doc: &lopdf::Document, page: u32) -> Option<Vec<bool>> {
+pub(crate) fn inline_image_slots(doc: &lopdf::Document, page: u32) -> Option<Vec<bool>> {
     let id = *doc.get_pages().get(&(page + 1))?;
     let content = lopdf::content::Content::decode(&doc.get_page_content(id)).ok()?;
     let (resources, ids) = doc.get_page_resources(id).ok()?;
@@ -350,7 +350,11 @@ fn inline_image_slots(doc: &lopdf::Document, page: u32) -> Option<Vec<bool>> {
 /// Replace the page's inline images (`slots`, in drawing order of its image objects) with equal
 /// image objects at the same index and placement, so object numbers stay the same. Skipped when
 /// the page's image objects do not line up with `slots`.
-fn materialize_inline_images<'a>(doc: &PdfDocument<'a>, page: &mut PdfPage<'a>, slots: &[bool]) -> PwResult<()> {
+pub(crate) fn materialize_inline_images<'a>(
+    doc: &PdfDocument<'a>,
+    page: &mut PdfPage<'a>,
+    slots: &[bool],
+) -> PwResult<()> {
     let err = |e: PdfiumError| map_pdfium_error(&e, "inline image");
     let images: Vec<PdfPageObjectIndex> =
         page.objects().iter().enumerate().filter(|(_, o)| o.as_image_object().is_some()).map(|(i, _)| i).collect();

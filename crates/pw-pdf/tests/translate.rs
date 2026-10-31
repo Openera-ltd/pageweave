@@ -210,3 +210,19 @@ fn glossary_terms_are_translated_one_fixed_way() {
     }
     assert_eq!(execute(&bad, None).expect_err("refused").code, "translate.glossary");
 }
+
+#[test]
+fn a_page_with_an_inline_image_keeps_its_pictures_when_translated() {
+    // redaction-hard.pdf page 1 draws an inline image and an image XObject; the translated page
+    // used to lose the inline one.
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("t.pdf");
+    translate("redaction-hard.pdf", Some("1"), Some("en"), "de", &out).expect("translate");
+    let o = pw_pdf::OpenOptions::default();
+    let before = pw_pdf::objects::editable_objects(&fixture("redaction-hard.pdf"), &o, 0).expect("source");
+    let after = pw_pdf::objects::editable_objects(&out, &o, 0).expect("translated");
+    assert_eq!(after.images.len(), before.images.len(), "{:?}", after.images);
+    for (a, b) in before.images.iter().zip(&after.images) {
+        assert_eq!((a.width_px, a.height_px), (b.width_px, b.height_px));
+    }
+}

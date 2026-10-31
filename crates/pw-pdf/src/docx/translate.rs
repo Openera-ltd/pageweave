@@ -470,6 +470,19 @@ fn write_pdf(
     if placed.len() != styled.len() {
         return Err(PwError::internal("translate.layout", "The page layout changed while translating."));
     }
+    // PDFium's page rewrite drops inline images: make them ordinary image objects first.
+    let parsed = crate::objects::lopdf_source(input, opts);
+    let mut touched: Vec<u32> = placed.iter().map(|p| p.page).collect();
+    touched.sort_unstable();
+    touched.dedup();
+    for p in touched {
+        if let Some(slots) = parsed.as_ref().and_then(|d| crate::objects::inline_image_slots(d, p)) {
+            if slots.contains(&true) {
+                let mut page = doc.pages().get(p as PdfPageIndex).map_err(|e| crate::map_pdfium_error(&e, "page"))?;
+                crate::objects::materialize_inline_images(&doc, &mut page, &slots)?;
+            }
+        }
+    }
     let mut written = super::translate_pdf::write_in_place(&mut doc, placed, styled, cancelled)?;
     let (bytes, pages) = match spread {
         None => (crate::edit::save_bytes(&doc)?, doc.pages().len().max(0) as u32),
