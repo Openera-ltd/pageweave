@@ -132,6 +132,20 @@ def page_count(cli: Path, f: Path) -> int:
         return 1
 
 
+def private_copy(cli: Path) -> Path:
+    """The CLI copied to a temporary folder, with links to what it loads from beside itself (PDF
+    engine library, models). A sweep runs for hours; rebuilding the original meanwhile rewrote the
+    running program and killed runs with SIGBUS, which looked like crashes."""
+    d = Path(tempfile.mkdtemp(prefix="sweep-cli-"))
+    exe = d / cli.name
+    shutil.copy2(cli, exe)
+    for sib in ["libpdfium.so", "pdfium.dll", "libpdfium.dylib", "ocr", "translate", "resources"]:
+        src = cli.resolve().parent / sib
+        if src.exists():
+            (d / sib).symlink_to(src)
+    return exe
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--cli", type=Path, required=True)
@@ -141,6 +155,7 @@ def main() -> int:
     ap.add_argument("--timeout", type=int, default=600)
     ap.add_argument("--report", type=Path, default=ROOT / "target" / "corpus-sweep.json")
     a = ap.parse_args()
+    a.cli = private_copy(a.cli)
     pdfs = sorted((ROOT / "fixtures" / "pdf").glob("*.pdf")) + sorted(a.corpus.rglob("*.pdf"))
     pdfs = [p for p in pdfs if "lo-src" not in p.parts]
     images = sorted((a.corpus / "images").iterdir()) if (a.corpus / "images").exists() else []
