@@ -3388,6 +3388,42 @@ await test("comments panel: delete a note and change a highlight's comment; clos
   }
 });
 
+await test("batch translation: two English files into German, each named -de.pdf, German text inside", async () => {
+  const dir = mkdtempSync(join(work, "batch-tr-"));
+  const outDir = join(dir, "out");
+  mkdirSync(outDir);
+  await withApp([join(FIX, "article.pdf"), join(FIX, "five-pages.pdf")], async (s) => {
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label').length")) === 2, "two tabs");
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Process several");
+    await s.click('[role="option"][data-command="file.batch"]');
+    await s.waitFor('[data-testid="batch-start"]');
+    await s.click('[data-testid="batch-add-open"]');
+    await s.type("#batch-folder", outDir);
+    await s.exec("const el = document.querySelector('#batch-action'); el.value = 'translate'; el.dispatchEvent(new Event('change', { bubbles: true })); return 1");
+    await s.waitFor("#batch-target");
+    await s.waitUntil(async () => !(await s.exec("return document.querySelector('#batch-target').disabled")), "languages read");
+    await s.exec("const el = document.querySelector('#batch-target'); el.value = 'de'; el.dispatchEvent(new Event('change', { bubbles: true })); return 1");
+    const blocked = await s.attr('[data-testid="batch-start"]', "title");
+    if (blocked) throw new Skip(`translation models not installed here: ${blocked}`);
+    await axeCheck(s, "batch-translate");
+    await s.click('[data-testid="batch-start"]');
+    await s.waitUntil(async () => /2 done|failed/.test(await s.text('[data-testid="batch-summary"]')), "results", 600000);
+    const rows = await s.exec("return [...document.querySelectorAll('[data-testid=batch-results] li')].map(l => l.dataset.state + '|' + l.textContent)");
+    assert(rows.every((r) => r.startsWith("done|")), `rows: ${JSON.stringify(rows)}`);
+  });
+  for (const name of ["article-de.pdf", "five-pages-de.pdf"]) {
+    const out = join(outDir, name);
+    assert(existsSync(out), `${name} written`);
+    if (CLI) {
+      const text = JSON.parse(execFileSync(CLI, ["--json", "text", out], { encoding: "utf8" })).result.data.pages.map((p) => p.text).join(" ");
+      assert(/\b(der|die|das|und|ist)\b/i.test(text), `${name} is German: ${text.slice(0, 160)}`);
+    }
+  }
+});
+
 await test("batch: reduce size of the open files into a folder, again with existing results kept, then an OCR batch stopped part-way", async () => {
   const dir = mkdtempSync(join(work, "batch-"));
   const scans = [1, 2, 3].map((i) => {
