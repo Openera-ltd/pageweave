@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useApi } from "../api";
 import { displaySizePt, renderScalePermille } from "../geometry";
 import type { OpenedDoc, PageInfo } from "../types";
@@ -15,6 +15,12 @@ const THUMB_WIDTH = 120;
 /** Page thumbnails. Images load lazily as they scroll into view; arrow keys move between pages. */
 export function Thumbnails({ doc, currentPage, onSelect, onContextMenu }: Props) {
   const ref = useRef<HTMLElement>(null);
+  // Stable handlers for the (memoised) thumbnails: the caller's functions may change identity on
+  // every render, which re-rendered every thumbnail whenever the current page changed.
+  const handlers = useRef({ onSelect, onContextMenu });
+  handlers.current = { onSelect, onContextMenu };
+  const select = useCallback((page: number) => handlers.current.onSelect(page), []);
+  const contextMenu = useCallback((page: number, x: number, y: number) => handlers.current.onContextMenu(page, x, y), []);
 
   useEffect(() => {
     const el = ref.current?.querySelector<HTMLElement>(`[data-thumb="${currentPage}"]`);
@@ -49,8 +55,8 @@ export function Thumbnails({ doc, currentPage, onSelect, onContextMenu }: Props)
           page={p}
           current={p.index === currentPage}
           root={ref}
-          onSelect={onSelect}
-          onContextMenu={onContextMenu}
+          onSelect={select}
+          onContextMenu={contextMenu}
         />
       ))}
     </nav>
@@ -107,7 +113,7 @@ const Thumb = memo(function Thumb({ docId, page, current, root, onSelect, onCont
       }}
     >
       <span className="frame" style={{ width: w, height: h }}>
-        {near && !failed && <img src={api.pageUrl(docId, page.index, scale)} alt="" draggable={false} onError={() => setFailed(true)} />}
+        {near && !failed && <img src={api.pageUrl(docId, page.index, scale)} alt="" draggable={false} decoding="async" onError={() => setFailed(true)} />}
       </span>
       <span className="num">{page.label ?? page.index + 1}</span>
     </button>

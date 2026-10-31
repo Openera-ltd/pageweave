@@ -286,6 +286,14 @@ export function Viewer({ doc, zoom, onZoomStep, onZoomTo, onCurrentPage, scrollR
     }
   };
 
+  // A stable handler for every page: the caller's function changes identity on each of its renders,
+  // which re-rendered all pages (hundreds on long documents) on every scroll-driven page change.
+  const contextMenuRef = useRef(onPageContextMenu);
+  contextMenuRef.current = onPageContextMenu;
+  const pageContextMenu = useCallback((page: number, x: number, y: number) => contextMenuRef.current(page, x, y), []);
+  const framesByPage = new Map<number, MoveFrame[]>();
+  for (const f of moves?.frames ?? []) framesByPage.set(f.page, [...(framesByPage.get(f.page) ?? []), f]);
+
   return (
     <div
       ref={ref}
@@ -307,15 +315,16 @@ export function Viewer({ doc, zoom, onZoomStep, onZoomTo, onCurrentPage, scrollR
             hits={hits}
             currentHit={currentHit}
             readingRects={reading && reading.page === p.index && reading.rects.length ? reading.rects : NO_RECTS}
-            onContextMenu={onPageContextMenu}
+            onContextMenu={pageContextMenu}
             annotations={byPage.get(p.index) ?? NO_ANNOTATIONS}
             widgets={widgetsByPage.get(p.index) ?? NO_WIDGETS}
             formEdits={formEdits ?? NO_EDITS}
             onFormEdit={onFormEdit}
             onMarkArea={markMode ? onMarkArea : undefined}
             edit={edit}
-            frames={moves?.frames.some((f) => f.page === p.index) ? moves.frames.filter((f) => f.page === p.index) : NO_FRAMES}
-            moves={moves}
+            frames={framesByPage.get(p.index) ?? NO_FRAMES}
+            // Only pages with frames get the handlers (a new object each render would re-render every page).
+            moves={framesByPage.has(p.index) ? moves : undefined}
           />
         ))}
       </div>
@@ -395,6 +404,8 @@ const Page = memo(function Page({ docId, page, zoom, root, hits, currentHit, rea
           src={src}
           alt=""
           draggable={false}
+          // Decode off the main thread: large page pictures decoded synchronously stalled scrolling.
+          decoding="async"
           onLoad={() => {
             setStatus("loaded");
             if (!firstPageReported) {
