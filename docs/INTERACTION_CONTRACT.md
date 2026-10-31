@@ -89,6 +89,11 @@ Maintain a single documented shortcut registry. Include common system convention
 - Uncertain objects (pictures, confidence under 80 %) carry a warning icon and a note in the properties panel; nothing is drawn over the canvas. Compare: Design, Original, Overlay (opacity slider), Differences (difference blend).
 - Export SVG/PDF saves first, asks where (the system dialog confirms replacing), runs the engine's verified export and offers Show in folder.
 
+## Comments panel (existing annotations)
+
+- Sidebar ▸ Comments lists every comment and markup in the file (kind, author, colour, comment, page); a click goes to its page. Per item: Edit comment (not for text boxes: their text is drawn on the page — disabled with that reason), Colour (a swatch, only for kinds drawn from their colour: highlights, underlines, strike-outs, squiggles, rectangles, ellipses, lines, polygons, drawings, notes) and Delete (with its pop-up).
+- Every change is pending: marked in the list ("Changed — save a copy to keep", "Removed when you save a copy"), undoable per item, counted as unsaved, and saved with Ctrl+S into a new verified copy together with other edits. A text and a colour change of one annotation are one change; going back to the original value drops it.
+
 ## Tabs, windows, dialogs, and unsaved work
 
 - Preserve open documents, scroll positions, relevant selections, panel/workspace preferences, and active tab where reasonable.
