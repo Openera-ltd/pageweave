@@ -97,6 +97,7 @@ These were made by Claude Code under the owner's standing instruction to "start 
 - **Decision:** "Remove password" and re-protecting a protected file are refused (`pdf.owner_restricted`, category permission) unless PDFium reports full rights — i.e. the file has no restrictions, or it was opened with the permissions password. Decryption uses PDFium's own save with `FPDF_REMOVE_SECURITY`, which keeps bookmarks, properties and forms.
 - **Consequences:** A user with only the open password of a restricted file cannot remove its protection; the error says what is needed.
 - **Open question (needs a product decision):** page operations (extract, delete, split, combine, organize, redact, OCR) on a restricted file still produce unprotected outputs (existing behaviour, disclosed by a warning). Whether they should also require full rights, or check the specific permission (e.g. assemble for page operations), is not yet decided.
+- **Update 2026-10-31:** new PDFs made in the app from a protected document now keep its open password (D-042), so outputs are no longer unprotected by default; the original's restrictions are still not carried over. Operations that change a protected file through lopdf (properties, page labels, bookmarks, reduce size, sanitize, comment changes, straighten, turn upright) refuse it, while read-only ones (comment listing, hidden-information inspection) decrypt with the open password. Whether those changes should be allowed with the open password when PDFium reports the matching permission (modify, annotate) is part of this open question.
 
 ### D-011 — Signature verification with RustCrypto parsers and local RSA verification
 - **Status:** Accepted
@@ -317,3 +318,13 @@ These were made by Claude Code under the owner's standing instruction to "start 
 - **Context:** Translating the W3C table turned its blue header black. PDFium writes regenerated page content with device colours only; fills and strokes set through other colour spaces (ICC-based in Word files, CalRGB) came out as `0 0 0 rg`. Every operation that removes or changes objects and regenerates the page was affected: translation into a PDF, Edit text and pictures, and redaction.
 - **Decision:** Before regenerating, each path and text object's fill and stroke is set again as the RGB the engine renders it with (`edit::regenerate_keeping_colours`); colours it cannot give (patterns) are left untouched.
 - **Consequences:** Fixture `calibrated-colour.pdf`: deleting a line kept the shading blue (old code: black); the translated W3C table keeps its header colour. The colour is stored as device RGB afterwards, so a print workflow relying on the original ICC profile sees converted values for rewritten pages.
+
+### D-042 — New PDFs from a protected document keep its open password
+- **Status:** Proposed (implemented as the app's default; needs the owner's confirmation)
+- **Date:** 2026-10-31
+- **Context:** Extract, delete, split, combine, edits, redaction and similar operations wrote unprotected outputs from password-protected documents, with a warning ("Protect it again before sharing"). People who take pages out of a protected file usually expect them to stay protected.
+- **Options considered:** keep the warning only; offer a "Protect again" action; protect outputs with the same open password automatically.
+- **Decision (proposed):** `OperationRequest.keep_protection`; the desktop host sets it for documents opened with a password. When an operation reports an unprotected output, each PDF output is protected in place with the same open password (AES-256, verified like Protect). The original's restrictions and permissions password are not carried over (the notice says so). CLI `--keep-protection`; API default off. Remove password stays the way to an unprotected copy.
+- **Evidence:** engine test (extract and split from the RC4 fixture: outputs need the password, open with it, no staged files left); E2E (extract in the app; the CLI refuses the copy without the password and opens it with it); protected-form fill/clear tests.
+- **Consequences:** Outputs are larger and slower by one protect pass; a failure to protect leaves the output unprotected with a warning (the operation is not failed after its output was written).
+
