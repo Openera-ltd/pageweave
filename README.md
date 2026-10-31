@@ -117,7 +117,7 @@ PageWeave checks before it is kept.
 
 <br>
 
-- Combining PDFs does not carry over bookmarks or document metadata (the app says so).
+- Combining PDFs keeps each file's bookmarks (opening their whole page) but not document properties (the app says so).
 - Outputs made by extract/delete/split/combine from a password-protected PDF are **not** protected (the app warns); rotate keeps the protection.
 - Editing text: each line is edited on its own (no paragraph reflow); letters missing from an embedded subset font switch the line to a standard font (the app warns); text in scripts the font cannot draw is refused; turned or slanted text cannot be edited yet; pictures have no resize handles.
 - Annotations: fixed colours for new ones; existing comments and markup can be deleted or have their comment text changed (Comments panel), not moved, resized or recoloured yet; text boxes' own text can't be edited; a deleted annotation stays visible on the page until the saved copy is opened; changes are never saved back into the original file by design.

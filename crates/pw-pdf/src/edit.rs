@@ -4,6 +4,7 @@
 use crate::document::{load, OpenOptions};
 use crate::{engine, map_pdfium_error};
 use pdfium_render::prelude::*;
+use pw_core::ops::BookmarkSpec;
 use pw_core::output::{write_atomic_bytes, CollisionPolicy, CommittedOutput};
 use pw_core::range::parse_page_ranges;
 use pw_core::{ErrorCategory, PwError, PwResult};
@@ -216,6 +217,33 @@ pub fn rotate_pages(
 
 /// Combine `inputs` in order. Bookmarks and document metadata of the inputs are not carried over
 /// by the engine's page import; this is reported as a warning.
+/// The merged document with `bookmarks` as its outline, checked: PDFium reads back exactly the
+/// titles, pages and nesting written.
+fn with_outline(pdfium: &Pdfium, bytes: Vec<u8>, bookmarks: &[BookmarkSpec]) -> PwResult<Vec<u8>> {
+    let fail = || PwError::internal("merge.bookmarks", "The combined file's bookmarks could not be written.");
+    let mut doc = lopdf::Document::load_mem(&bytes).map_err(|_| fail())?;
+    crate::outline::write_outline(&mut doc, bookmarks)?;
+    doc.prune_objects();
+    let mut out = Vec::new();
+    doc.save_to(&mut out).map_err(|_| fail())?;
+    let back = pdfium.load_pdf_from_byte_slice(&out, None).map_err(|_| fail())?;
+    let mut got = Vec::new();
+    let mut cut = false;
+    if let Some(root) = back.bookmarks().root() {
+        crate::document::collect_bookmarks(&root, 0, &mut got, &mut cut);
+    }
+    let same = got.len() == bookmarks.len()
+        && got
+            .iter()
+            .zip(bookmarks)
+            .all(|(g, b)| g.title.trim() == b.title && g.page == Some(b.page) && g.depth == b.depth);
+    if !same {
+        return Err(fail());
+    }
+    drop(back);
+    Ok(out)
+}
+
 pub fn merge(
     inputs: &[PathBuf],
     opts: &OpenOptions,
@@ -230,24 +258,41 @@ pub fn merge(
     let pdfium = engine()?;
     let mut out = pdfium.create_new_pdf().map_err(|e| map_pdfium_error(&e, "create"))?;
     let mut warnings = Vec::new();
-    let mut had_bookmarks = false;
     let mut any_encrypted = false;
+    // Each file's bookmarks, pointed at its pages in the combined document. A bookmark without a
+    // page in its file (an action, another document) opens that file's first page.
+    let mut bookmarks: Vec<BookmarkSpec> = Vec::new();
+    let mut truncated = false;
+    let mut offset = 0u32;
     for (n, input) in inputs.iter().enumerate() {
         if cancelled() {
             return Err(PwError::cancelled());
         }
         let src = load(&pdfium, input, opts)
             .map_err(|e| PwError { message: format!("File {} of {}: {}", n + 1, inputs.len(), e.message), ..e })?;
-        had_bookmarks |= src.bookmarks().root().is_some();
+        if let Some(root) = src.bookmarks().root() {
+            let mut found = Vec::new();
+            crate::document::collect_bookmarks(&root, 0, &mut found, &mut truncated);
+            bookmarks.extend(found.into_iter().filter(|b| !b.title.trim().is_empty()).map(|b| BookmarkSpec {
+                title: b.title.trim().to_string(),
+                page: offset + b.page.unwrap_or(0),
+                depth: b.depth,
+            }));
+        }
         any_encrypted |= source_encrypted(&src);
+        offset += src.pages().len().max(0) as u32;
         out.pages_mut().append(&src).map_err(|e| map_pdfium_error(&e, "append"))?;
         progress(n as u64 + 1, inputs.len() as u64);
     }
-    if had_bookmarks {
-        warnings.push("Bookmarks from the combined files are not included in the output.".into());
-    }
     let total = out.pages().len().max(0) as u32;
-    let bytes = save_bytes(&out)?;
+    let mut bytes = save_bytes(&out)?;
+    if !bookmarks.is_empty() {
+        bytes = with_outline(&pdfium, bytes, &bookmarks)?;
+        warnings.push("Bookmarks of the combined files are kept; each opens its whole page.".into());
+        if truncated {
+            warnings.push("Some files had more bookmarks than PageWeave reads; the rest were left out.".into());
+        }
+    }
     let expect = Expect { page_count: total, password: opts.password, rotations: None };
     let (c, enc) = commit(&pdfium, &bytes, output, policy, inputs, &expect)?;
     warnings.extend(protection_warnings(any_encrypted, enc));

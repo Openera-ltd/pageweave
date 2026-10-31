@@ -200,7 +200,13 @@ fn merge_in_order_with_progress() {
     })
     .expect("merge");
     assert_eq!(r.outputs[0].pages, Some(9));
-    assert!(r.warnings.iter().any(|w| w.contains("Bookmarks")), "bookmark loss must be disclosed");
+    // five-pages.pdf's bookmarks ("Chapter 1"–"Chapter 5" on its pages 1–5) come along, pointing at
+    // pages 2–6 of the combined file (after single-page.pdf).
+    let info = pw_pdf::open_document(&out, &opts()).expect("reopen");
+    let got: Vec<(String, Option<u32>)> = info.bookmarks.iter().map(|b| (b.title.clone(), b.page)).collect();
+    let want: Vec<(String, Option<u32>)> = (1..=5).map(|i| (format!("Chapter {i}"), Some(i))).collect();
+    assert_eq!(got, want);
+    assert!(r.warnings.iter().any(|w| w.contains("Bookmarks of the combined files are kept")), "{:?}", r.warnings);
     let (n, texts, rots) = independent(&out);
     assert_eq!(n, 9);
     assert!(texts[1].contains("PWMARK001") && texts[5].contains("PWMARK005"));

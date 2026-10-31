@@ -68,7 +68,6 @@ pub fn set_bookmarks(
         ));
     }
     let had_outline = catalog(&doc).is_some_and(|c| c.has(b"Outlines"));
-    let pages: Vec<ObjectId> = doc.get_pages().values().copied().collect();
     let root_id = doc.trailer.get(b"Root").and_then(Object::as_reference).map_err(|_| fail("no catalog"))?;
 
     if specs.is_empty() {
@@ -78,50 +77,7 @@ pub fn set_bookmarks(
             root.remove(b"PageMode");
         }
     } else {
-        let outlines_id = doc.new_object_id();
-        let ids: Vec<ObjectId> = specs.iter().map(|_| doc.new_object_id()).collect();
-        let parent = parents(specs);
-        let children = |p: Option<usize>| -> Vec<usize> { (0..specs.len()).filter(|&i| parent[i] == p).collect() };
-        // Descendant counts (all items open).
-        let mut descendants = vec![0i64; specs.len()];
-        for i in (0..specs.len()).rev() {
-            if let Some(p) = parent[i] {
-                descendants[p] += 1 + descendants[i];
-            }
-        }
-        for (i, b) in specs.iter().enumerate() {
-            let siblings = children(parent[i]);
-            let pos = siblings.iter().position(|&s| s == i).expect("own sibling list");
-            let mut d = Dictionary::new();
-            d.set("Title", lopdf::text_string(b.title.trim()));
-            d.set("Parent", Object::Reference(parent[i].map_or(outlines_id, |p| ids[p])));
-            if pos > 0 {
-                d.set("Prev", Object::Reference(ids[siblings[pos - 1]]));
-            }
-            if pos + 1 < siblings.len() {
-                d.set("Next", Object::Reference(ids[siblings[pos + 1]]));
-            }
-            let kids = children(Some(i));
-            if let (Some(&first), Some(&last)) = (kids.first(), kids.last()) {
-                d.set("First", Object::Reference(ids[first]));
-                d.set("Last", Object::Reference(ids[last]));
-                d.set("Count", Object::Integer(descendants[i]));
-            }
-            d.set(
-                "Dest",
-                Object::Array(vec![Object::Reference(pages[b.page as usize]), Object::Name(b"Fit".to_vec())]),
-            );
-            doc.objects.insert(ids[i], Object::Dictionary(d));
-        }
-        let top = children(None);
-        let mut outlines = Dictionary::new();
-        outlines.set("Type", Object::Name(b"Outlines".to_vec()));
-        outlines.set("First", Object::Reference(ids[top[0]]));
-        outlines.set("Last", Object::Reference(ids[*top.last().expect("non-empty")]));
-        outlines.set("Count", Object::Integer(specs.len() as i64));
-        doc.objects.insert(outlines_id, Object::Dictionary(outlines));
-        let root = doc.get_dictionary_mut(root_id).map_err(|_| fail("no catalog"))?;
-        root.set("Outlines", Object::Reference(outlines_id));
+        write_outline(&mut doc, specs)?;
     }
     doc.trailer.remove(b"Prev");
     doc.trailer.remove(b"XRefStm");
@@ -153,6 +109,59 @@ pub fn set_bookmarks(
         );
     }
     Ok((c, count, warnings))
+}
+
+/// Replace the outline of `doc` with `specs` (non-empty; pages are 0-based indices into `doc`):
+/// every bookmark opens its page, fit to the window. Also used by merge to keep the combined
+/// files' bookmarks.
+pub(crate) fn write_outline(doc: &mut lopdf::Document, specs: &[BookmarkSpec]) -> PwResult<()> {
+    let pages: Vec<ObjectId> = doc.get_pages().values().copied().collect();
+    if specs.is_empty() || specs.iter().any(|b| b.page as usize >= pages.len()) {
+        return Err(fail("a bookmark points to a missing page"));
+    }
+    let root_id = doc.trailer.get(b"Root").and_then(Object::as_reference).map_err(|_| fail("no catalog"))?;
+    let outlines_id = doc.new_object_id();
+    let ids: Vec<ObjectId> = specs.iter().map(|_| doc.new_object_id()).collect();
+    let parent = parents(specs);
+    let children = |p: Option<usize>| -> Vec<usize> { (0..specs.len()).filter(|&i| parent[i] == p).collect() };
+    // Descendant counts (all items open).
+    let mut descendants = vec![0i64; specs.len()];
+    for i in (0..specs.len()).rev() {
+        if let Some(p) = parent[i] {
+            descendants[p] += 1 + descendants[i];
+        }
+    }
+    for (i, b) in specs.iter().enumerate() {
+        let siblings = children(parent[i]);
+        let pos = siblings.iter().position(|&s| s == i).expect("own sibling list");
+        let mut d = Dictionary::new();
+        d.set("Title", lopdf::text_string(b.title.trim()));
+        d.set("Parent", Object::Reference(parent[i].map_or(outlines_id, |p| ids[p])));
+        if pos > 0 {
+            d.set("Prev", Object::Reference(ids[siblings[pos - 1]]));
+        }
+        if pos + 1 < siblings.len() {
+            d.set("Next", Object::Reference(ids[siblings[pos + 1]]));
+        }
+        let kids = children(Some(i));
+        if let (Some(&first), Some(&last)) = (kids.first(), kids.last()) {
+            d.set("First", Object::Reference(ids[first]));
+            d.set("Last", Object::Reference(ids[last]));
+            d.set("Count", Object::Integer(descendants[i]));
+        }
+        d.set("Dest", Object::Array(vec![Object::Reference(pages[b.page as usize]), Object::Name(b"Fit".to_vec())]));
+        doc.objects.insert(ids[i], Object::Dictionary(d));
+    }
+    let top = children(None);
+    let mut outlines = Dictionary::new();
+    outlines.set("Type", Object::Name(b"Outlines".to_vec()));
+    outlines.set("First", Object::Reference(ids[top[0]]));
+    outlines.set("Last", Object::Reference(ids[*top.last().expect("non-empty")]));
+    outlines.set("Count", Object::Integer(specs.len() as i64));
+    doc.objects.insert(outlines_id, Object::Dictionary(outlines));
+    let root = doc.get_dictionary_mut(root_id).map_err(|_| fail("no catalog"))?;
+    root.set("Outlines", Object::Reference(outlines_id));
+    Ok(())
 }
 
 #[cfg(test)]
