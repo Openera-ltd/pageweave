@@ -115,6 +115,10 @@ async function withApp(args, fn) {
   launchFailuresInARow = 0;
   phase.create += Date.now() - t0;
   try {
+    // E2E_WINDOW=WIDTHxHEIGHT runs every scenario at that window size (e.g. 1024x768, the Windows
+    // runner's size, where some toolbar groups move into "More tools").
+    const size = /^(\d+)x(\d+)$/.exec(process.env.E2E_WINDOW ?? "");
+    if (size) await s.setWindowRect(Number(size[1]), Number(size[2]));
     // PDFs open as tabs; Office files open the convert dialog, pictures Create PDF from images and design projects the Design
     // Studio, over the start screen.
     const pdfArgs = args.filter((a) => !/\.(docx|doc|odt|rtf|txt|xlsx|xls|ods|csv|pptx|ppt|odp|html?|pwdesign|png|jpe?g)$/i.test(a));
@@ -662,6 +666,22 @@ await test("text layer is aligned on a 90°-rotated page", async () => {
 
 // Accessibility (Gate 3): axe-core is injected only into the test session; it is not part of the app.
 const AXE = (await import("node:fs")).readFileSync(new URL("../node_modules/axe-core/axe.min.js", import.meta.url), "utf8");
+// A main-toolbar command: its button when its group fits the window, otherwise the same command
+// in "More tools" (groups move there by priority at narrower widths, e.g. the Windows runner's
+// window). Returns the element's selector for further checks.
+async function toolbarCommand(s, id, { click = true } = {}) {
+  const button = `.toolbar [data-command="${id}"]`;
+  if (await s.exec(`return !!document.querySelector('${button}')`)) {
+    if (click) await s.click(button);
+    return button;
+  }
+  await s.click('[data-testid="toolbar-more"]');
+  const item = `[role="menu"] [role="menuitem"][data-command="${id}"]`;
+  await s.waitFor(item);
+  if (click) await s.click(item);
+  return item;
+}
+
 async function axeCheck(s, name) {
   // Measure the settled UI: colours sampled mid-fade (dialogs animate opacity) are not what users see.
   // Two consecutive checks, each after two animation frames, so an animation that has not started
@@ -1684,6 +1704,21 @@ await test("convert to PowerPoint: one slide per page with text boxes, table and
   assert(s2.includes("<a:tbl>") && s2.includes("Station"), "slide 2: table");
 });
 
+// Installed copies have no models until first use (D-023): the Translate dialog offers the
+// one-time download, which runs for real on a clean machine (Windows CI); development builds use
+// the fetched models. Whichever translation scenario runs first downloads it.
+async function downloadLanguageIfOffered(s) {
+  await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=tool-start]').title")) !== "Recognizing the document's language…", "language recognized", 60000);
+  if (await s.exec("return !!document.querySelector('[data-testid=translate-download]')")) {
+    assert(/one-time download/.test(await s.text('[data-testid="translate-download"]')), "download offered with its size");
+    assert((await s.exec("return document.querySelector('[data-testid=tool-start]').title")) === "Download the language first.", "start waits for the download");
+    await s.click('[data-testid="translate-download-start"]');
+    await s.waitFor('[data-testid="translate-download-cancel"]');
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=translate-download]')")), "language downloaded", 600000);
+    console.log("  note: the English → German model was downloaded and verified in the app");
+  }
+}
+
 await test("translate side by side: page 1 into German as a PDF with the original next to its translation, with a glossary; option only for PDF", async () => {
   const src = join(FIX, "five-pages.pdf");
   const out = join(work, "five-pages-de-side.pdf");
@@ -1705,6 +1740,7 @@ await test("translate side by side: page 1 into German as a PDF with the origina
     await s.type("#pages", "1");
     await s.waitUntil(async () => (await s.text("#pages-msg")) === "1 page selected", "page 1 chosen");
     await s.replaceText("#output", out);
+    await downloadLanguageIfOffered(s);
     // Glossary: a line without "=" blocks Translate with its reason; then a valid term.
     await s.type("#translate-glossary", "fox");
     await s.waitUntil(async () => (await s.text('[data-testid="translate-glossary-msg"]')).includes("Glossary line 1"), "glossary line refused");
@@ -1762,17 +1798,7 @@ await test("translate: page to German as Word (layout kept), language detected; 
     await s.waitUntil(async () => (await s.text("#pages-msg")) === "1 page selected", "page 1 chosen");
     await s.type("#output", out);
     await axeCheck(s, "translate-dialog");
-    // Installed copies have no models until first use (D-023): the dialog offers the one-time
-    // download, which runs for real here (Windows CI); development builds use the fetched models.
-    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=tool-start]').title")) !== "Recognizing the document's language…", "language recognized", 60000);
-    if (await s.exec("return !!document.querySelector('[data-testid=translate-download]')")) {
-      assert(/one-time download/.test(await s.text('[data-testid="translate-download"]')), "download offered with its size");
-      assert((await s.exec("return document.querySelector('[data-testid=tool-start]').title")) === "Download the language first.", "start waits for the download");
-      await s.click('[data-testid="translate-download-start"]');
-      await s.waitFor('[data-testid="translate-download-cancel"]');
-      await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=translate-download]')")), "language downloaded", 600000);
-      console.log("  note: the English → German model was downloaded and verified in the app");
-    }
+    await downloadLanguageIfOffered(s);
     await s.click('[data-testid="tool-start"]');
     await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved five-pages-de.docx")), "saved notice", 180000);
     await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Machine translation from English to German")), "review note");
@@ -1820,7 +1846,7 @@ await test("read aloud: words highlighted as heard, pause/resume, next sentence,
     await s.click('[data-testid="read-follow"]');
     await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=read-follow]')")), "following again");
     // Stop from the toolbar button.
-    await s.click('[data-command="read.stop"]');
+    await toolbarCommand(s, "read.stop");
     await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=readbar]')")), "bar closed");
     assert(!(await s.exec("return !!document.querySelector('.reading-mark')")), "highlight removed");
     // Read from a page's context menu, then stop with the palette command.
@@ -1858,7 +1884,7 @@ await test("read aloud: words highlighted as heard, pause/resume, next sentence,
   // The speed is kept across a restart.
   await withApp([src], async (s) => {
     await pageLoaded(s, 0);
-    await s.click('[data-command="read.aloud"]');
+    await toolbarCommand(s, "read.aloud");
     await s.waitFor('[data-testid="readbar"]');
     assert((await s.exec("return document.querySelector('#read-rate').value")) === "1.5", "speed restored");
     await s.click('[data-testid="read-stop"]');
@@ -2712,8 +2738,9 @@ await test("design studio: rebuild a page, edit text with undo, nudge, drag, loc
   await withApp([src], async (s) => {
     await pageLoaded(s, 0);
     // Disabled reasons are explained elsewhere; here it is available with a document.
-    assert((await s.attr('.toolbar [data-command="studio.rebuildPage"]', "aria-disabled")) === null, "rebuild available");
-    await s.click('.toolbar [data-command="studio.rebuildPage"]');
+    const rebuild = await toolbarCommand(s, "studio.rebuildPage", { click: false });
+    assert((await s.attr(rebuild, "aria-disabled")) === null, "rebuild available");
+    await s.click(rebuild);
     await s.waitFor('[data-testid="studio"]');
     await s.waitFor('[data-testid="studio-layers"] [data-layer]', { timeout: 60000 });
     const layers = await s.exec("return [...document.querySelectorAll('[data-layer]')].map(b => b.dataset.layer)");
@@ -2880,7 +2907,7 @@ await test("design studio: circles, ellipses and rounded boxes come back as shap
   const project = join(work, "studio-badges-page1.pwdesign");
   await withApp([src], async (s) => {
     await pageLoaded(s, 0);
-    await s.click('.toolbar [data-command="studio.rebuildPage"]');
+    await toolbarCommand(s, "studio.rebuildPage");
     await s.waitFor('[data-testid="studio-layers"] [data-layer]', { timeout: 60000 });
     const forms = () =>
       s.exec("return [...document.querySelectorAll('[data-testid=studio-stage] [data-object]')].map(e => [e.dataset.object, e.tagName.toLowerCase(), Number(e.getAttribute('rx') || 0)])");
@@ -2928,7 +2955,7 @@ await test("design studio: words over a picture become text and are painted out 
   copyFileSync(join(FIX, "caption.pdf"), src);
   await withApp([src], async (s) => {
     await pageLoaded(s, 0);
-    await s.click('.toolbar [data-command="studio.rebuildPage"]');
+    await toolbarCommand(s, "studio.rebuildPage");
     await s.waitFor('[data-testid="studio-layers"] [data-layer]', { timeout: 60000 });
     assert((await s.text('[data-testid="studio-summary"]')).includes("2 text · 0 shapes · 1 pictures"), "summary counts");
     const words = await s.exec("return [...document.querySelectorAll('[data-testid=studio-stage] text')].map(t => t.textContent)");
@@ -2983,13 +3010,28 @@ await test("design studio: borders and rings come back as outlined shapes; outli
   const project = join(work, "studio-frames-page1.pwdesign");
   await withApp([src], async (s) => {
     await pageLoaded(s, 0);
-    await s.click('.toolbar [data-command="studio.rebuildPage"]');
+    await toolbarCommand(s, "studio.rebuildPage");
     await s.waitFor('[data-testid="studio-layers"] [data-layer]', { timeout: 60000 });
     const shapes = () => s.exec("return [...document.querySelectorAll('[data-testid=studio-stage] [data-object^=shape]')].map(e => [e.dataset.object, e.tagName.toLowerCase(), e.getAttribute('fill'), Number(e.getAttribute('stroke-width'))])");
     const f = await shapes();
     assert(f.length === 2 && f.every((x) => x[2] === "none" && x[3] > 3) && f.some((x) => x[1] === "ellipse"), `frames ${JSON.stringify(f)}`);
     await axeCheck(s, "design-studio-frames");
     writeFileSync(join(ART, "design-studio-frames.png"), await s.screenshot());
+    // At the smallest window (720 px) every Studio control stays on the bar, uncovered: only the
+    // title gives way (seen at 1024 px on Windows: the compare buttons covered the title and Save
+    // and Close were pushed off the window at 720 px).
+    const before = await s.cmd("GET", "/window/rect");
+    await s.setWindowRect(720, 600);
+    await s.waitUntil(async () => (await s.exec("return innerWidth")) <= 720, "window at its minimum width");
+    const bar = await s.exec(`const b = document.querySelector('.studio-bar');
+      const kids = [...b.children].filter((k) => k.getBoundingClientRect().width > 0).map((k) => k.getBoundingClientRect());
+      const overlap = kids.slice(1).some((r, i) => r.left < kids[i].right - 0.5);
+      const clipped = [...b.querySelectorAll('button')].some((x) => { const r = x.getBoundingClientRect(); return r.right > innerWidth || r.left < 0 || x.scrollWidth > x.clientWidth + 1; });
+      return [b.scrollWidth <= b.clientWidth, overlap, clipped, document.querySelector('[data-testid=studio-save] .studio-save-label')?.textContent];`);
+    assert(bar[0] && !bar[1] && !bar[2], `Studio bar fits at 720 px (fits ${bar[0]}, overlap ${bar[1]}, clipped ${bar[2]})`);
+    assert(bar[3] === "Save", "Save keeps its name for screen readers");
+    writeFileSync(join(ART, "design-studio-720.png"), await s.screenshot());
+    await s.setWindowRect(before.width, before.height);
     // Zoom in from the keyboard: the page grows and its top-left corner stays reachable by scrolling.
     await s.exec("document.querySelector('[data-testid=studio-stage]').focus()");
     const stageW = () => s.exec("return document.querySelector('[data-testid=studio-stage]').getBoundingClientRect().width");

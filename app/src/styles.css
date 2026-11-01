@@ -2661,6 +2661,12 @@ kbd,
   min-width: 0;
 }
 
+.studio-bar .studio-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .studio-bar .hint {
   font-weight: 400;
   color: var(--text-muted);
@@ -2678,6 +2684,13 @@ kbd,
   display: flex;
   gap: var(--space-1);
   align-items: center;
+}
+
+/* Only the title gives way when the window is narrow; the controls keep their size. */
+.studio-bar > .group,
+.studio-bar > .segmented,
+.studio-bar > .studio-opacity {
+  flex: none;
 }
 
 .studio-bar .spacer {
@@ -3061,6 +3074,27 @@ kbd,
   color: var(--text);
   font-size: inherit;
   text-decoration: underline;
+}
+
+/* Narrow windows (down to the 720 px minimum): every Studio control stays on the bar. The export
+   buttons keep their format names, Save keeps its icon and its name for screen readers. */
+@media (max-width: 880px) {
+  .studio-bar {
+    gap: var(--space-2);
+    padding: 0 var(--space-2);
+  }
+  .studio-export-icon {
+    display: none;
+  }
+  .studio-save-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
 }
 
 @media (max-width: 900px) {

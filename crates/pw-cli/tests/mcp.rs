@@ -468,8 +468,12 @@ fn design_tools_rebuild_and_export_inside_the_approved_folder() {
         c.err("reconstruct_design", json!({ "path": "poster.pdf", "page": 0, "output": "y.pwdesign" })),
         "mcp.arguments"
     );
+    // A real file outside the approved folder (an absolute path like /etc/hostname does not exist
+    // on Windows and would be refused as not found first).
+    let outside = tempfile::tempdir().expect("tmp");
+    copy_fixtures(outside.path(), &["single-page.pdf"]);
     assert_eq!(
-        c.err("reconstruct_design", json!({ "path": "/etc/hostname", "output": "z.pwdesign" })),
+        c.err("reconstruct_design", json!({ "path": outside.path().join("single-page.pdf"), "output": "z.pwdesign" })),
         "mcp.path_denied"
     );
 }

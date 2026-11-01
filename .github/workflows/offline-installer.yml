@@ -3,8 +3,8 @@ name: Offline installer
 # Builds the complete Windows installer for offline use and proves it works from a clean install:
 #   PageWeave_<v>_x64-offline-setup.exe — the app and the command-line tool (pageweave.exe), the PDF
 #   engine, text recognition, every translation language (30 directions), LibreOffice for Office
-#   files and the WebView2 runtime (offline installer), so nothing is downloaded at install or first
-#   use. Unlike Release (release.yml) it needs no signing secrets: the build is NOT code-signed and
+#   files (its pinned package, unpacked on the user's machine by the installer) and the WebView2
+#   runtime (offline installer), so nothing is downloaded at install or first use. Unlike Release (release.yml) it needs no signing secrets: the build is NOT code-signed and
 #   has no update key, so Windows SmartScreen warns on first run and the app cannot update itself.
 #
 # Runs when this file changes on a push, for tags offline-*, or from the Actions tab.
@@ -64,26 +64,26 @@ jobs:
         with:
           path: office-msi
           key: office-${{ hashFiles('resources/office.lock.json') }}
-      - name: Unpack the pinned LibreOffice (checksum verified)
+      - name: Stage the pinned LibreOffice package (checksum verified)
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $lock = Get-Content resources/office.lock.json | ConvertFrom-Json
           $w = $lock.windows_x64
           New-Item -ItemType Directory -Force office-msi | Out-Null
-          $msi = Join-Path (Resolve-Path office-msi) "LibreOffice_$($lock.version).msi"
+          $name = "LibreOffice_$($lock.version).msi"
+          $msi = Join-Path (Resolve-Path office-msi) $name
           if (-not (Test-Path $msi) -or (Get-FileHash $msi -Algorithm SHA256).Hash.ToLower() -ne $w.sha256) {
             for ($i = 1; $i -le 4; $i++) { try { Invoke-WebRequest $w.url -OutFile $msi -UseBasicParsing; break } catch { if ($i -eq 4) { throw }; Start-Sleep -Seconds (2 * $i) } }
           }
           if ((Get-FileHash $msi -Algorithm SHA256).Hash.ToLower() -ne $w.sha256) { throw "LibreOffice package checksum mismatch" }
-          $dest = Join-Path (Get-Location) "third_party\office"
+          # The installer carries the package itself (an unpacked copy would exceed the 2 GB an NSIS
+          # installer can hold); its post-install hook unpacks it with the bundled CLI (hooks.nsh).
+          $dest = Join-Path (Get-Location) "third_party\office-package"
           Remove-Item -Recurse -Force $dest -ErrorAction SilentlyContinue
-          $p = Start-Process msiexec.exe -ArgumentList "/a", "`"$msi`"", "/qn", "TARGETDIR=`"$dest`"" -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "msiexec /a exit $($p.ExitCode)" }
-          Get-ChildItem $dest -Filter *.msi | Remove-Item -Force
-          $soffice = Get-ChildItem $dest -Recurse -Filter soffice.exe | Select-Object -First 1
-          if (-not $soffice) { throw "no soffice.exe in the unpacked LibreOffice" }
-          "{0:N0} MB unpacked" -f ((Get-ChildItem $dest -Recurse | Measure-Object Length -Sum).Sum / 1MB)
+          New-Item -ItemType Directory -Force $dest | Out-Null
+          Copy-Item $msi (Join-Path $dest $name)
+          "{0:N0} MB package staged" -f ((Get-Item (Join-Path $dest $name)).Length / 1MB)
       - name: UI install and unit tests
         working-directory: app
         run: |
@@ -118,10 +118,13 @@ jobs:
           foreach ($f in @("pageweave-app.exe", "pageweave.exe", "pdfium.dll", "ocr/onnxruntime.dll", "ocr/det.onnx", "ocr/rec.onnx", "THIRD_PARTY_NOTICES.md")) {
             if (-not (Test-Path (Join-Path $dir $f))) { throw "installed package is missing $f" }
           }
-          # The languages and LibreOffice were moved to the user's data folder (D-023, D-026).
+          # The languages were moved to the user's data folder and LibreOffice was unpacked there from
+          # the bundled package by the installer (D-023, D-026); the package is gone afterwards.
           if (-not (Test-Path (Join-Path $data "translate"))) { throw "translation models not installed" }
-          $soffice = Get-ChildItem (Join-Path $data "office") -Recurse -Filter soffice.exe | Select-Object -First 1
-          if (-not $soffice) { throw "LibreOffice not installed" }
+          $soffice = Get-ChildItem (Join-Path $data "office") -Recurse -Filter soffice.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $soffice) { Get-ChildItem $data | Format-Table Name, Length | Out-String | Write-Host; throw "LibreOffice not unpacked by the installer" }
+          if (Get-ChildItem $data -Filter "LibreOffice_*.msi") { throw "the LibreOffice package was left in the data folder" }
+          if (Test-Path (Join-Path $dir "office-package")) { throw "the LibreOffice package was left in the program folder" }
           "{0:N0} MB in the data folder" -f ((Get-ChildItem $data -Recurse | Measure-Object Length -Sum).Sum / 1MB)
           $cli = Join-Path $dir "pageweave.exe"
           $work = Join-Path $env:RUNNER_TEMP "offline check"

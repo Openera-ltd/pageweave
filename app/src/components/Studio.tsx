@@ -475,7 +475,9 @@ export function Studio({ source, jobs, onClose }: Props) {
     <div className="studio" role="dialog" aria-modal="true" aria-label="Design Studio" ref={root} tabIndex={-1} onKeyDown={onKeyDown} onKeyUp={(e) => e.key === " " && setSpaceDown(false)} onBlur={(e) => !e.currentTarget.contains(e.relatedTarget as Node) && setSpaceDown(false)} data-testid="studio">
       <header className="studio-bar" role="toolbar" aria-label="Design Studio">
         <h2 title={design?.source_name}>
-          Design Studio{design && <span className="hint"> — {design.source_name}</span>}
+          <span className="studio-title">
+            Design Studio{design && <span className="hint"> — {design.source_name}</span>}
+          </span>
           {dirty && <span className="dirty" title="Unsaved changes" />}
         </h2>
         <div className="group">
@@ -518,16 +520,16 @@ export function Studio({ source, jobs, onClose }: Props) {
         </div>
         <div className="group">
           <button type="button" className="btn outline" data-testid="studio-export-svg" aria-disabled={!hist || !!exportJob || undefined} title="Export as editable SVG" onClick={() => exportAs("svg")}>
-            <FileDown /> SVG
+            <FileDown className="studio-export-icon" /> SVG
           </button>
           <button type="button" className="btn outline" data-testid="studio-export-pdf" aria-disabled={!hist || !!exportJob || undefined} title="Export as PDF with real text" onClick={() => exportAs("pdf")}>
-            <FileDown /> PDF
+            <FileDown className="studio-export-icon" /> PDF
           </button>
           <button type="button" className="btn outline" data-testid="studio-export-png" aria-disabled={!hist || !!exportJob || undefined} title="Export as a PNG picture at the design's size" onClick={() => exportAs("png")}>
-            <FileDown /> PNG
+            <FileDown className="studio-export-icon" /> PNG
           </button>
           <button type="button" className="btn primary" data-testid="studio-save" aria-disabled={!dirty || undefined} title={dirty ? "Save the design (Ctrl+S)" : "No unsaved changes"} onClick={() => dirty && save()}>
-            <Save /> Save
+            <Save /> <span className="studio-save-label">Save</span>
           </button>
           <button type="button" className="btn icon" aria-label="Close the Design Studio" title="Close (Esc)" data-testid="studio-close" onClick={close}>
             <X />
