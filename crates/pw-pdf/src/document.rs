@@ -60,6 +60,10 @@ pub struct DocumentInfo {
     pub creator: Option<String>,
     pub producer: Option<String>,
     pub encrypted: bool,
+    /// What the file's owner allows with the password it was opened with (always true when it is
+    /// not protected): changing it (properties, bookmarks, cleaning…) and changing its comments.
+    pub can_modify: bool,
+    pub can_annotate: bool,
     pub form_type: String,
     /// XFA forms are not supported by the pinned engine (no XFA support built in).
     pub has_xfa: bool,
@@ -214,6 +218,8 @@ pub fn open_document(path: &Path, opts: &OpenOptions) -> PwResult<DocumentInfo> 
     let encrypted =
         !matches!(doc.permissions().security_handler_revision(), Ok(PdfSecurityHandlerRevision::Unprotected));
 
+    let bits = if encrypted { crate::forms::permission_bits(path, opts.password).unwrap_or(0) } else { u32::MAX };
+    let (can_modify, can_annotate) = (bits & 0x8 != 0, bits & 0x20 != 0);
     Ok(DocumentInfo {
         page_count: count,
         file_bytes,
@@ -226,6 +232,8 @@ pub fn open_document(path: &Path, opts: &OpenOptions) -> PwResult<DocumentInfo> 
         creator: tag(PdfDocumentMetadataTagType::Creator),
         producer: tag(PdfDocumentMetadataTagType::Producer),
         encrypted,
+        can_modify,
+        can_annotate,
         form_type: format!("{form_type:?}").to_lowercase(),
         has_xfa,
         signature_count: doc.signatures().len() as u32,

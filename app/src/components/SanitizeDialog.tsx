@@ -89,10 +89,10 @@ export function SanitizeDialog({ doc, jobs, onClose, onFinished }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job?.state]);
 
-  // Findings can be read with the open password, but cleaning rewrites the file and is refused
-  // for protected files (D-010): say so before anything starts.
-  const blocker = doc.info.encrypted
-    ? "Password-protected files cannot be cleaned yet. Remove the password first (Remove password…), then clean that copy."
+  // Cleaning a protected file needs its owner's permission to change it (D-010): say so before
+  // anything starts. The cleaned copy keeps the open password (D-042).
+  const blocker = doc.info.can_modify === false
+    ? "The owner of this file does not allow changing it. Open it with its permissions password, or ask its owner for an unrestricted copy."
     : inspectError
     ? inspectError.message
     : !findings

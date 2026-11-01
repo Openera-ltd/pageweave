@@ -112,16 +112,16 @@ describe("Comments panel", () => {
     expect(screen.getByRole("button", { name: "Move Text box on page 1" })).toBeTruthy();
   });
 
-  it("lists the comments of a password-protected file read-only, saying why", async () => {
+  it("lists the comments of a file whose owner does not allow changing them read-only, saying why", async () => {
     const api = { listAnnotations: vi.fn(async () => ({ annotations: [note], truncated: false })), pageUrl: () => "" } as unknown as Api;
-    const locked = { ...doc, info: { ...doc.info, encrypted: true } };
+    const locked = { ...doc, info: { ...doc.info, encrypted: true, can_annotate: false } };
     render(
       <ApiContext.Provider value={api}>
         <Sidebar doc={locked} view="comments" onView={() => undefined} currentPage={0} onSelectPage={() => undefined} onPageContextMenu={() => undefined} onSaveAttachment={() => undefined} onAttachFiles={() => undefined} onEditBookmarks={() => undefined} annotChanges={{}} onAnnotChanges={() => undefined} onMove={() => undefined} />
       </ApiContext.Provider>,
     );
     await screen.findByText("Fix this");
-    expect(screen.getByTestId("comments-locked").textContent).toContain("password protected");
+    expect(screen.getByTestId("comments-locked").textContent).toContain("does not allow");
     for (const name of ["Delete Note on page 1", "Move Note on page 1", "Edit comment of Note on page 1"]) {
       expect(screen.queryByRole("button", { name })).toBeNull();
     }

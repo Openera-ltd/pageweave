@@ -150,9 +150,9 @@ function Comments({ doc, changes, onChanges, onSelect, moving, onMove, onMoveDon
     );
   return (
     <div className="panel-scroll comments-pane">
-      {doc.info.encrypted && (
+      {doc.info.can_annotate === false && (
         <p className="hint comments-locked" data-testid="comments-locked">
-          This file is password protected: its comments are shown but can’t be changed here yet. Remove the password first (Remove password…) to change them in that copy.
+          The owner of this file does not allow changing its comments. Open it with its permissions password to change them.
         </p>
       )}
       <ul className="comments" aria-label="Comments">
@@ -211,7 +211,7 @@ function Comments({ doc, changes, onChanges, onSelect, moving, onMove, onMoveDon
                     Cancel
                   </button>
                 </div>
-              ) : doc.info.encrypted ? null : (
+              ) : doc.info.can_annotate === false ? null : (
                 <div className="row comment-actions">
                   {c ? (
                     <button type="button" className="btn icon" aria-label={`Undo change to ${kindName(a.subtype)} on page ${a.page + 1}`} title="Undo this change" onClick={() => onChanges(revert(changes, a))}>

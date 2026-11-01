@@ -97,7 +97,9 @@ fn invalid_outlines_write_nothing() {
         bookmarks: vec![bm("A", 0, 0)],
         output: out.clone(),
     });
+    // A protected file without restrictions is changed now (D-010 update); without keep_protection
+    // the copy is unprotected and says so. Restricted files: tests/protected_changes.rs.
     req.password = Some("pw-user-test".into());
-    assert_eq!(execute(&req, None).expect_err("protected").code, "bookmarks.protected");
-    assert!(!out.exists());
+    let r = execute(&req, None).expect("protected file without restrictions");
+    assert!(r.warnings.iter().any(|w| w.contains("not password protected")), "{:?}", r.warnings);
 }

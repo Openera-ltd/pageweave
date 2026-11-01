@@ -7,7 +7,7 @@
 use crate::document::OpenOptions;
 use crate::engine;
 use crate::properties::signature_warning;
-use crate::sanitize::{check_pages, dict_of, load_plain};
+use crate::sanitize::{check_pages, dict_of};
 use lopdf::{Dictionary, Document, Object, ObjectId};
 use pdfium_render::prelude::*;
 use pw_core::ops::{AnnotationChange, RectPt};
@@ -251,7 +251,13 @@ pub(crate) fn apply_annotation_changes(
 ) -> PwResult<(Vec<u8>, Vec<String>)> {
     let pdfium = engine()?;
     let (source, mut doc, _raw) =
-        load_plain(&pdfium, input, opts).map_err(|e| if e.code == "sanitize.protected" { protected() } else { e })?;
+        crate::sanitize::load_for_change(&pdfium, input, opts, crate::sanitize::Change::Annotate).map_err(|e| {
+            if e.code == "sanitize.protected" {
+                protected()
+            } else {
+                e
+            }
+        })?;
     let pages = doc.get_pages();
     let mut by_page: BTreeMap<u32, Vec<&AnnotationChange>> = BTreeMap::new();
     for c in changes {

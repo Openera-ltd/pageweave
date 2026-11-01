@@ -244,9 +244,12 @@ fn protected_corrupt_and_conflicting_requests_write_nothing() {
         options: SanitizeOptions::default(),
         output: out.clone(),
     });
+    // A protected file without restrictions is changed now (D-010 update); without keep_protection
+    // the copy is unprotected and says so. Restricted files: tests/protected_changes.rs.
     req.password = Some("pw-user-test".into());
-    let err = execute(&req, None).expect_err("protected");
-    assert_eq!(err.code, "sanitize.protected");
+    let r = execute(&req, None).expect("protected file without restrictions");
+    assert!(r.warnings.iter().any(|w| w.contains("not password protected")), "{:?}", r.warnings);
+    std::fs::remove_file(&out).expect("remove");
     let err = sanitize(&fixture("corrupt-truncated.pdf"), &out, SanitizeOptions::default()).expect_err("corrupt");
     assert_eq!(err.category, ErrorCategory::Corrupt);
     assert!(!out.exists());

@@ -1085,6 +1085,48 @@ pub(crate) fn load_plain<'p>(
     Ok((src, doc, raw))
 }
 
+/// What an operation changes in a file, for the permission it needs on a protected file.
+#[derive(Clone, Copy)]
+pub(crate) enum Change {
+    /// Content, properties, bookmarks, labels, size.
+    Modify,
+    /// Comments and markup.
+    Annotate,
+}
+
+/// [`load_plain`] for an operation that changes the file. A protected file is accepted when its
+/// permissions allow `change` (PDFium reports full rights when it was opened with its permissions
+/// password) and is decrypted with the open password; the new file is protected again by the
+/// caller of `execute` (keep_protection, D-042) with the source's permissions (D-010).
+pub(crate) fn load_for_change<'p>(
+    pdfium: &'p Pdfium,
+    input: &Path,
+    opts: &OpenOptions,
+    change: Change,
+) -> PwResult<(PdfDocument<'p>, Document, Vec<u8>)> {
+    let src = load(pdfium, input, opts)?;
+    if matches!(src.permissions().security_handler_revision(), Ok(PdfSecurityHandlerRevision::Unprotected)) {
+        drop(src);
+        return load_plain(pdfium, input, opts);
+    }
+    drop(src);
+    let bits = crate::forms::permission_bits(input, opts.password)?;
+    let allowed =
+        bits & match change {
+            Change::Modify => 0x8,
+            Change::Annotate => 0x20,
+        } != 0;
+    if !allowed {
+        return Err(PwError::new(
+            ErrorCategory::Permission,
+            "pdf.owner_restricted",
+            "The owner of this file does not allow this change.",
+        )
+        .with_action("Open the file with its permissions password, or ask its owner for an unrestricted copy."));
+    }
+    load_readable(pdfium, input, opts)
+}
+
 /// [`load_plain`] for reading only: a password-protected file is decrypted with the password it
 /// was opened with (or none, when only its permissions are protected). Nothing read this way is
 /// written back, so the file's permissions are not at stake.
@@ -1130,7 +1172,7 @@ pub fn sanitize(
     progress: &dyn Fn(u64, u64),
 ) -> PwResult<(CommittedOutput, u32, SanitizeFindings, Vec<String>)> {
     let pdfium = engine()?;
-    let (source, mut doc, raw) = load_plain(&pdfium, input, opts)?;
+    let (source, mut doc, raw) = load_for_change(&pdfium, input, opts, Change::Modify)?;
     let found = survey(&doc, &raw);
     let pdfa = options.metadata
         && doc.objects.values().any(|o| match o {

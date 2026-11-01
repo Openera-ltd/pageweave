@@ -11,7 +11,7 @@
 use crate::document::OpenOptions;
 use crate::engine;
 use crate::properties::signature_warning;
-use crate::sanitize::{has_earlier_versions, load_plain};
+use crate::sanitize::has_earlier_versions;
 use lopdf::{Dictionary, Document, Object, ObjectId, Stream};
 use pdfium_render::prelude::*;
 use pw_core::output::{write_atomic_bytes, CollisionPolicy, CommittedOutput};
@@ -308,14 +308,19 @@ pub fn optimize(
     progress: &dyn Fn(u64, u64),
 ) -> PwResult<(CommittedOutput, OptimizeSummary, Vec<String>)> {
     let pdfium = engine()?;
-    let (source, mut doc, raw) = load_plain(&pdfium, input, opts).map_err(|e| {
-        if e.code == "sanitize.protected" {
-            PwError::new(ErrorCategory::UnsupportedOperation, "optimize.protected", "This file is password protected.")
+    let (source, mut doc, raw) =
+        crate::sanitize::load_for_change(&pdfium, input, opts, crate::sanitize::Change::Modify).map_err(|e| {
+            if e.code == "sanitize.protected" {
+                PwError::new(
+                    ErrorCategory::UnsupportedOperation,
+                    "optimize.protected",
+                    "This file is password protected.",
+                )
                 .with_action("Remove the password first (Remove password…), then reduce the size of that copy.")
-        } else {
-            e
-        }
-    })?;
+            } else {
+                e
+            }
+        })?;
     let signatures = source.signatures().len();
     let earlier = has_earlier_versions(&raw);
 

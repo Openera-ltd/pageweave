@@ -4,7 +4,7 @@
 //! titles, pages and nesting, and every page renders as before.
 
 use crate::document::{open_document, OpenOptions};
-use crate::sanitize::{catalog, check_pages, load_plain};
+use crate::sanitize::{catalog, check_pages};
 use crate::{engine, properties::signature_warning};
 use lopdf::{Dictionary, Object, ObjectId};
 use pw_core::ops::BookmarkSpec;
@@ -48,18 +48,8 @@ pub fn set_bookmarks(
     progress: &dyn Fn(u64, u64),
 ) -> PwResult<(CommittedOutput, u32, Vec<String>)> {
     let pdfium = engine()?;
-    {
-        let src = crate::document::load(&pdfium, input, opts)?;
-        if crate::unprotect::is_protected(&src) {
-            return Err(PwError::new(
-                ErrorCategory::UnsupportedOperation,
-                "bookmarks.protected",
-                "The bookmarks of a password-protected file cannot be edited here.",
-            )
-            .with_action("Remove the password first (Remove password…), then edit the bookmarks of that copy."));
-        }
-    }
-    let (source, mut doc, _raw) = load_plain(&pdfium, input, opts)?;
+    let (source, mut doc, _raw) =
+        crate::sanitize::load_for_change(&pdfium, input, opts, crate::sanitize::Change::Modify)?;
     let count = source.pages().len().max(0) as u32;
     if let Some(b) = specs.iter().find(|b| b.page >= count) {
         return Err(PwError::invalid(

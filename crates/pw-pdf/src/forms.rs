@@ -274,6 +274,35 @@ fn fail(code: &str, msg: impl Into<String>) -> PwError {
     PwError::new(ErrorCategory::EngineFailure, code, msg)
 }
 
+/// The document's permission bits as PDFium grants them for `password` (PDF 32000 table 22: 0x4
+/// print, 0x8 modify, 0x10 copy, 0x20 annotate, 0x100 fill forms, 0x400 assemble, 0x800
+/// high-quality print). All bits when the file is unprotected or opened with its owner password.
+/// Read through the C API because pdfium-render 0.9 cannot read them for AES-256 (revision 6).
+pub(crate) fn permission_bits(path: &Path, password: Option<&str>) -> PwResult<u32> {
+    let (_guard, lib) = engine_exclusive()?;
+    let api = api(lib)?;
+    let bytes = std::fs::read(path).map_err(|e| PwError::from_io(&e, "file"))?;
+    let pw = password
+        .map(CString::new)
+        .transpose()
+        .map_err(|_| PwError::invalid("pdf.password_nul", "The password is not valid."))?;
+    // SAFETY: `bytes` outlives the document, which is closed below before they are dropped.
+    let doc = unsafe {
+        (api.FPDF_LoadMemDocument64)(
+            bytes.as_ptr().cast(),
+            bytes.len(),
+            pw.as_ref().map_or(std::ptr::null(), |p| p.as_ptr()),
+        )
+    };
+    if doc.is_null() {
+        return Err(open_error(api));
+    }
+    // SAFETY: valid document handle; not used after closing.
+    let bits = unsafe { (api.FPDF_GetDocPermissions)(doc) } as u32;
+    unsafe { (api.FPDF_CloseDocument)(doc) };
+    Ok(bits)
+}
+
 /// A document opened for form work: owns the bytes, the document, the form environment and the
 /// pages loaded so far, and tears them down in the required order on drop.
 struct FormDoc<'a> {

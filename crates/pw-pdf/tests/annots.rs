@@ -119,16 +119,26 @@ fn stale_or_impossible_changes_are_refused_and_write_nothing() {
     assert_eq!(code(vec![change(99, "Text", true, None)]), "annotation.changed", "index out of range");
     assert_eq!(code(vec![change(0, "Text", false, None)]), "annotation.no_change");
     assert_eq!(code(vec![change(0, "Text", true, None), change(0, "Text", true, None)]), "annotation.duplicate");
+    // A protected file whose owner does not allow annotating refuses comment changes (D-010).
+    let restricted = out.with_file_name("restricted.pdf");
+    let mut req = OperationRequest::new(Operation::Protect {
+        input: fixture("hidden-info.pdf"),
+        permissions: pw_core::ops::ProtectPermissions { annotate: false, ..Default::default() },
+        output: restricted.clone(),
+    });
+    req.new_password = Some("reader".into());
+    req.new_owner_password = Some("owner".into());
+    execute(&req, None).expect("protect");
     let mut req = OperationRequest::new(Operation::ApplyEdits {
-        input: fixture("encrypted-rc4-user-password.pdf"),
+        input: restricted,
         form_values: vec![],
         annotations: vec![],
         object_edits: vec![],
         annotation_changes: vec![change(0, "Text", true, None)],
         output: out.clone(),
     });
-    req.password = Some("pw-user-test".into());
-    assert_eq!(execute(&req, None).expect_err("protected").code, "annotation.protected");
+    req.password = Some("reader".into());
+    assert_eq!(execute(&req, None).expect_err("restricted").code, "pdf.owner_restricted");
     assert!(!out.exists());
 }
 

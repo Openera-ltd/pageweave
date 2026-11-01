@@ -5,7 +5,6 @@
 //! resampled and an existing text layer (for example from OCR) turns with them.
 
 use crate::document::OpenOptions;
-use crate::sanitize::load_plain;
 use crate::{engine, map_pdfium_error};
 use image::GrayImage;
 use lopdf::{Object, Stream};
@@ -188,14 +187,19 @@ pub fn deskew_pages(
     progress: &dyn Fn(u64, u64),
 ) -> PwResult<(CommittedOutput, Vec<DeskewPage>, Vec<String>)> {
     let pdfium = engine()?;
-    let (source, mut doc, _raw) = load_plain(&pdfium, input, opts).map_err(|e| {
-        if e.code == "sanitize.protected" {
-            PwError::new(ErrorCategory::UnsupportedOperation, "deskew.protected", "This file is password protected.")
+    let (source, mut doc, _raw) =
+        crate::sanitize::load_for_change(&pdfium, input, opts, crate::sanitize::Change::Modify).map_err(|e| {
+            if e.code == "sanitize.protected" {
+                PwError::new(
+                    ErrorCategory::UnsupportedOperation,
+                    "deskew.protected",
+                    "This file is password protected.",
+                )
                 .with_action("Remove the password first (Remove password…), then straighten that copy.")
-        } else {
-            e
-        }
-    })?;
+            } else {
+                e
+            }
+        })?;
     let n = source.pages().len().max(0) as u32;
     let chosen: Vec<u32> = match pages {
         Some(p) => p.to_vec(),

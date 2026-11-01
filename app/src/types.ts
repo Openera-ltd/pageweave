@@ -74,6 +74,9 @@ export interface DocumentInfo {
   producer?: string | null;
   signature_count?: number;
   encrypted: boolean;
+  /** What the file's owner allows with the password it was opened with (true when not protected). */
+  can_modify?: boolean;
+  can_annotate?: boolean;
   has_xfa: boolean;
   /** "none", "acrobat", "xfa_full", "xfa_foreground". */
   form_type?: string;

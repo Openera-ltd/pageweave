@@ -2589,6 +2589,41 @@ await test("password-protected PDF: comments listed; pages taken out stay protec
   }
 });
 
+await test("a protected file without restrictions: its title is changed in the app and the copy keeps the password", async () => {
+  const src = join(FIX, "encrypted-rc4-user-password.pdf");
+  const out = join(work, "protected-retitled.pdf");
+  const s = await Session.create(DRIVER, APP, appArgs([src]));
+  try {
+    await s.waitFor("#pdf-password", { timeout: 20000 });
+    await s.type("#pdf-password", "pw-user-test");
+    await s.keys(["Enter"]);
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "d"]);
+    await s.waitFor('[data-command="file.editProperties"]');
+    await s.click('[data-command="file.editProperties"]');
+    await s.waitFor("#prop-title");
+    await s.replaceText("#prop-title", "Protected and retitled");
+    await s.replaceText("#props-output", out);
+    await s.waitUntil(async () => (await s.attr('[data-testid="props-start"]', "aria-disabled")) === null, "ready");
+    await s.click('[data-testid="props-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("same open password")), "notice: the copy keeps the password", 30000);
+  } finally {
+    await s.delete();
+  }
+  if (CLI) {
+    let refused = false;
+    try {
+      execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8", stdio: "pipe" });
+    } catch (e) {
+      refused = JSON.parse(e.stdout || e.stderr).error.code === "pdf.password";
+    }
+    assert(refused, "the copy needs the password");
+    const info = JSON.parse(execFileSync(CLI, ["--json", "inspect", "--password-stdin", out], { encoding: "utf8", input: "pw-user-test\n" })).result.data;
+    assert(info.title === "Protected and retitled", `title: ${info.title}`);
+  }
+});
+
 await test("protect with password: AES-256 copy needs the password; wrong password refused; content intact", async () => {
   const src = join(FIX, "five-pages.pdf");
   const before = sha(src);
@@ -3294,23 +3329,29 @@ await test("remove password: copy opens without a password; unavailable with a r
   }
 });
 
-await test("remove hidden information: findings listed, verified copy has none, kept content stays; protected files refused with a reason", async () => {
+await test("remove hidden information: findings listed, verified copy has none, kept content stays; a file whose owner forbids changes refused with a reason", async () => {
   const src = join(FIX, "hidden-info.pdf");
   const before = sha(src);
   const out = join(work, "cleaned.pdf");
   // Null until the dialog has rendered (the palette closes first), so waitUntil keeps polling.
   const finding = (s, k) => s.exec(`return document.querySelector('[data-finding=${k}]')?.textContent ?? null`);
-  await withApp([src, join(FIX, "encrypted-rc4-user-password.pdf")], async (s) => {
-    // The protected file opens with its password first; the dialog refuses it with a reason.
+  // A protected copy whose owner forbids changes (made with the CLI): opened with its open
+  // password, the dialog refuses to clean it and says why. (Unrestricted protected files are
+  // cleaned and keep their password — engine tests.)
+  if (!CLI) throw new Skip("needs the CLI to make the restricted copy");
+  const restricted = join(work, "restricted-hidden.pdf");
+  rmSync(restricted, { force: true });
+  execFileSync(CLI, ["protect", "--owner-password-stdin", "--no-modify", src, "-o", restricted], { input: "reader\nowner\n" });
+  await withApp([src, restricted], async (s) => {
     await s.waitFor("#pdf-password");
-    await s.type("#pdf-password", "pw-user-test");
+    await s.type("#pdf-password", "reader");
     await s.keys(["Enter"]);
     await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label .name').length")) === 2, "both open");
     await pageLoaded(s, 0);
     await s.keys(["Control", "k"]);
     await s.type('[role="dialog"] input', "Remove hidden");
     await s.click('[role="option"][data-command="file.sanitize"]');
-    await s.waitUntil(async () => ((await s.attr('[data-testid="sanitize-start"]', "title")) ?? "").includes("Password-protected"), "protected file refused with a reason");
+    await s.waitUntil(async () => ((await s.attr('[data-testid="sanitize-start"]', "title")) ?? "").includes("does not allow"), "restricted file refused with a reason");
     await s.keys(["Escape"]);
     // Switch to the file with hidden information.
     await s.exec("[...document.querySelectorAll('.tab-label .name')].find(n => n.textContent === 'hidden-info.pdf').click(); return 1");
