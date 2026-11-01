@@ -180,9 +180,10 @@ jobs:
             }
           }
           Write-Host "all $($pairs.Count) language directions are in the user folder and match their checksums"
-          if (Test-Path (Join-Path $dir "office")) { throw "LibreOffice was left in the install folder" }
+          if (Test-Path (Join-Path $dir "office-package")) { throw "the LibreOffice package was left in the install folder" }
+          if (Get-ChildItem "$env:LOCALAPPDATA\io.github.kuyamcliff.pageweave" -Filter "LibreOffice_*.msi") { throw "the LibreOffice package was not unpacked (still in the user folder)" }
           $office = "$env:LOCALAPPDATA\io.github.kuyamcliff.pageweave\office"
-          if (-not (Get-ChildItem $office -Recurse -Filter soffice.exe | Select-Object -First 1)) { throw "LibreOffice is not in the user folder" }
+          if (-not (Get-ChildItem $office -Recurse -Filter soffice.exe -ErrorAction SilentlyContinue | Select-Object -First 1)) { throw "LibreOffice was not unpacked into the user folder by the installer" }
           # The release CLI finds PageWeave's own LibreOffice there and converts an Office file.
           Set-Content -Path (Join-Path $env:RUNNER_TEMP "office smoke.csv") -Value "Item,Amount`nPWOFFICE,42"
           ./target/release/pageweave.exe office

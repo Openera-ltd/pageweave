@@ -3378,7 +3378,7 @@ dependencies = [
 
 [[package]]
 name = "pageweave-app"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64 0.22.1",
  "dunce",
@@ -3825,7 +3825,7 @@ dependencies = [
 
 [[package]]
 name = "pw-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "clap",
  "lopdf",
@@ -3843,7 +3843,7 @@ dependencies = [
 
 [[package]]
 name = "pw-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "quick-xml",
  "serde",
@@ -3857,7 +3857,7 @@ dependencies = [
 
 [[package]]
 name = "pw-mcp"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "dunce",
  "pw-core",
@@ -3869,7 +3869,7 @@ dependencies = [
 
 [[package]]
 name = "pw-net"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "pw-core",
  "rustls",
@@ -3880,7 +3880,7 @@ dependencies = [
 
 [[package]]
 name = "pw-ocr"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "image",
  "ort",
@@ -3893,7 +3893,7 @@ dependencies = [
 
 [[package]]
 name = "pw-pdf"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64 0.22.1",
  "cms 0.2.3",
@@ -3933,7 +3933,7 @@ dependencies = [
 
 [[package]]
 name = "pw-speech"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "pw-core",
  "serde",
@@ -3943,7 +3943,7 @@ dependencies = [
 
 [[package]]
 name = "pw-translate"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "ort",
  "pw-core",
@@ -3958,7 +3958,7 @@ dependencies = [
 
 [[package]]
 name = "pw-update"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64 0.22.1",
  "minisign-verify",
