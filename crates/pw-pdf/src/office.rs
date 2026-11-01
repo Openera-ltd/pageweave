@@ -97,13 +97,76 @@ pub fn find_office() -> Option<OfficeEngine> {
         .find_map(|p| version_of(&p).map(|version| OfficeEngine { program: p, version }))
 }
 
-/// "LibreOffice 24.2.7.2" from `program --version`, or None when it is not a working LibreOffice.
-/// A candidate that does not start is skipped (it used to end the whole search).
+/// "LibreOffice 24.2.7.2", or None when `program` is not a LibreOffice. A candidate that does not
+/// qualify is skipped (it used to end the whole search).
+///
+/// Windows: read from `version.ini` beside the program, never by running it. `soffice.exe` is a
+/// windowed program: started without a console (the desktop app, the installer's post-install
+/// step) `--version` shows a message box and waits for a click, which blocked Office detection and
+/// conversion (found when the offline installer hung for 40 minutes, 2026-11-01).
 fn version_of(program: &Path) -> Option<String> {
-    let out = Command::new(program).arg("--version").stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    (out.status.success() && text.contains("LibreOffice"))
-        .then(|| text.split_whitespace().take(2).collect::<Vec<_>>().join(" "))
+    if cfg!(windows) {
+        if !program.is_file() {
+            return None;
+        }
+        let ini = std::fs::read(program.parent()?.join("version.ini")).ok()?;
+        return Some(version_from_ini(&ini));
+    }
+    let text = output_within(Command::new(program).arg("--version"), Duration::from_secs(30))?;
+    text.contains("LibreOffice").then(|| text.split_whitespace().take(2).collect::<Vec<_>>().join(" "))
+}
+
+/// "LibreOffice <MsiProductVersion>" from a Windows LibreOffice `program\version.ini` (UTF-8 or
+/// UTF-16), or plain "LibreOffice" when the file names no version.
+fn version_from_ini(bytes: &[u8]) -> String {
+    let text = if bytes.starts_with(&[0xFF, 0xFE]) {
+        let units: Vec<u16> =
+            bytes[2..].chunks(2).map(|c| u16::from_le_bytes([c[0], *c.get(1).unwrap_or(&0)])).collect();
+        String::from_utf16_lossy(&units)
+    } else {
+        String::from_utf8_lossy(bytes).into_owned()
+    };
+    let value = |key: &str| {
+        text.lines().find_map(|l| {
+            let (k, v) = l.split_once('=')?;
+            (k.trim().eq_ignore_ascii_case(key) && !v.trim().is_empty()).then(|| v.trim().to_string())
+        })
+    };
+    match value("MsiProductVersion").or_else(|| value("ProductVersion")) {
+        Some(v) if v.chars().all(|c| c.is_ascii_digit() || c == '.') => format!("LibreOffice {v}"),
+        _ => "LibreOffice".to_string(),
+    }
+}
+
+/// Standard output of `cmd` when it exits successfully within `limit`; a program that does not
+/// finish in time is stopped (None).
+fn output_within(cmd: &mut Command, limit: Duration) -> Option<String> {
+    let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+    let mut stdout = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut stdout, &mut buf);
+        buf
+    });
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() < limit => std::thread::sleep(Duration::from_millis(50)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    };
+    // A child of the program may still hold the pipe open; do not wait for it beyond the limit.
+    let deadline = started + limit;
+    while !reader.is_finished() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let out = if reader.is_finished() { reader.join().ok()? } else { Vec::new() };
+    status.success().then(|| String::from_utf8_lossy(&out).into_owned())
 }
 
 fn not_installed() -> PwError {
@@ -220,7 +283,8 @@ pub fn install_office(cancelled: &dyn Fn() -> bool, progress: &dyn Fn(u64, u64))
         }
         std::thread::sleep(Duration::from_millis(250));
     }
-    // The unpacked program must run before it replaces anything.
+    // The unpacked program must be a LibreOffice before it replaces anything (on Windows its
+    // version.ini is read; the first conversion starts it).
     let found = program_in(&staging).into_iter().find(|p| p.is_file()).ok_or_else(|| {
         PwError::new(ErrorCategory::CorruptResource, "office.unpack", "The unpacked LibreOffice has no program.")
     })?;
@@ -229,7 +293,7 @@ pub fn install_office(cancelled: &dyn Fn() -> bool, progress: &dyn Fn(u64, u64))
         return Err(PwError::new(
             ErrorCategory::CorruptResource,
             "office.unpack",
-            "The unpacked LibreOffice does not start.",
+            "The unpacked LibreOffice is incomplete.",
         ));
     }
     let _ = std::fs::remove_dir_all(&dir);
@@ -468,6 +532,33 @@ pub fn convert_office_to_pdf(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_version_ini_gives_the_version_without_running_libreoffice() {
+        let ini =
+            b"[Version]\r\nAllLanguages=en-US\r\nbuildid=abc\r\nMsiProductVersion=26.2.6.2\r\nProductCode={X}\r\n";
+        assert_eq!(version_from_ini(ini), "LibreOffice 26.2.6.2");
+        let utf16: Vec<u8> = [0xFF, 0xFE]
+            .into_iter()
+            .chain("[Version]\nMsiProductVersion=24.2.7.2\n".encode_utf16().flat_map(u16::to_le_bytes))
+            .collect();
+        assert_eq!(version_from_ini(&utf16), "LibreOffice 24.2.7.2");
+        assert_eq!(version_from_ini(b"[Version]\nbuildid=abc\n"), "LibreOffice");
+        assert_eq!(version_from_ini(b"MsiProductVersion=<script>\n"), "LibreOffice");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_program_that_does_not_finish_is_stopped() {
+        let started = Instant::now();
+        assert_eq!(output_within(Command::new("sleep").arg("30"), Duration::from_millis(300)), None);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(
+            output_within(Command::new("echo").arg("LibreOffice 1.2"), Duration::from_secs(5)).as_deref(),
+            Some("LibreOffice 1.2\n")
+        );
+        assert_eq!(output_within(&mut Command::new("false"), Duration::from_secs(5)), None);
+    }
 
     #[test]
     fn office_files_by_extension() {

@@ -124,6 +124,9 @@ jobs:
           $soffice = Get-ChildItem (Join-Path $data "office") -Recurse -Filter soffice.exe -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $soffice) { Get-ChildItem $data | Format-Table Name, Length | Out-String | Write-Host; throw "LibreOffice not unpacked by the installer" }
           if (Get-ChildItem $data -Filter "LibreOffice_*.msi") { throw "the LibreOffice package was left in the data folder" }
+          # PageWeave reads LibreOffice's version from this file instead of running soffice --version,
+          # which on Windows shows a message box when there is no console (the installer hung on it).
+          Get-Content (Join-Path $soffice.DirectoryName "version.ini") -TotalCount 15 | Write-Host
           if (Test-Path (Join-Path $dir "office-package")) { throw "the LibreOffice package was left in the program folder" }
           "{0:N0} MB in the data folder" -f ((Get-ChildItem $data -Recurse | Measure-Object Length -Sum).Sum / 1MB)
           $cli = Join-Path $dir "pageweave.exe"
