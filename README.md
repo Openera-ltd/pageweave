@@ -143,6 +143,13 @@ included) from the [latest release](https://github.com/Openera-ltd/pageweave/rel
 (installs for the current user, no administrator rights). The installer is not yet code-signed with a Windows certificate,
 so Windows SmartScreen may ask you to confirm ("More info" → "Run anyway").
 
+**Offline installer:** `PageWeave_<version>_x64-offline-setup.exe` holds everything — the app, the
+`pageweave` command-line tool, every translation language, LibreOffice for Office files and the WebView2
+runtime — so a computer without internet can install and use every feature. It is built and checked
+(silent install, resources, translation, text recognition, Office conversion, app start, uninstall on a
+clean Windows runner) by the *Offline installer* workflow and downloaded from that run's artifacts. It is
+not code-signed and has no update key, so it does not update itself.
+
 **Updates:** PageWeave checks for a new version when it starts (Settings ▸ Updates; can be switched off).
 An update downloads only the program (`…_x64-update-setup.exe`, about 40 MB), checks its signature
 against the key built into the app, and installs over the old version. Downloaded languages, settings and trusted certificates are kept, so

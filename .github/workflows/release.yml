@@ -125,10 +125,12 @@ jobs:
           npx tauri build --bundles nsis
           mkdir -p ../dist
           mv "../target/release/bundle/nsis/PageWeave_${VERSION}_x64-setup.exe" "../dist/PageWeave_${VERSION}_x64-update-setup.exe"
-      - name: Build the full installer (with every translation language)
+      - name: Build the full installer (every translation language, LibreOffice, the CLI, WebView2 offline)
         working-directory: app
         run: |
           set -euo pipefail
+          # The full installer carries the release CLI (tauri.full.conf.json): build it first.
+          cargo build --release -p pw-cli
           npx tauri build --bundles nsis --config src-tauri/tauri.full.conf.json
           mv "../target/release/bundle/nsis/PageWeave_${VERSION}_x64-setup.exe" "../dist/PageWeave_${VERSION}_x64-setup.exe"
           ls -la ../dist
