@@ -3017,9 +3017,9 @@ await test("design studio: borders and rings come back as outlined shapes; outli
     assert(f.length === 2 && f.every((x) => x[2] === "none" && x[3] > 3) && f.some((x) => x[1] === "ellipse"), `frames ${JSON.stringify(f)}`);
     await axeCheck(s, "design-studio-frames");
     writeFileSync(join(ART, "design-studio-frames.png"), await s.screenshot());
-    // At the smallest window (720 px) every Studio control stays on the bar, uncovered: only the
-    // title gives way (seen at 1024 px on Windows: the compare buttons covered the title and Save
-    // and Close were pushed off the window at 720 px).
+    // At the smallest window (720 px) every Studio control stays on the bar, uncovered: the title
+    // gives way and the bar turns compact (seen at 1024 px on Windows: the compare buttons covered
+    // the title; at 720 px Save and Close were pushed off the window).
     const before = await s.cmd("GET", "/window/rect");
     await s.setWindowRect(720, 600);
     await s.waitUntil(async () => (await s.exec("return innerWidth")) <= 720, "window at its minimum width");
@@ -3030,8 +3030,14 @@ await test("design studio: borders and rings come back as outlined shapes; outli
       return [b.scrollWidth <= b.clientWidth, overlap, clipped, document.querySelector('[data-testid=studio-save] .studio-save-label')?.textContent];`);
     assert(bar[0] && !bar[1] && !bar[2], `Studio bar fits at 720 px (fits ${bar[0]}, overlap ${bar[1]}, clipped ${bar[2]})`);
     assert(bar[3] === "Save", "Save keeps its name for screen readers");
+    // Compact bar: the compare buttons became one list, which still switches the view.
+    await s.exec("const c = document.querySelector('[data-testid=studio-compare-select]'); c.value = 'difference'; c.dispatchEvent(new Event('change', { bubbles: true })); return 1");
+    await s.waitUntil(async () => (await s.exec("return getComputedStyle(document.querySelector('.studio-source')).mixBlendMode")) === "difference", "compare list switches the view");
     writeFileSync(join(ART, "design-studio-720.png"), await s.screenshot());
     await s.setWindowRect(before.width, before.height);
+    // Wide again: the full bar comes back with the same choice.
+    await s.waitFor('[data-compare="difference"][aria-checked="true"]');
+    await s.click('[data-compare="design"]');
     // Zoom in from the keyboard: the page grows and its top-left corner stays reachable by scrolling.
     await s.exec("document.querySelector('[data-testid=studio-stage]').focus()");
     const stageW = () => s.exec("return document.querySelector('[data-testid=studio-stage]').getBoundingClientRect().width");

@@ -88,6 +88,8 @@ const FONT_CSS: Record<DesignFont, string> = {
 export type StudioSource = { kind: "rebuild"; input: string; page: number; docId?: number } | { kind: "open"; path: string };
 
 type Compare = "design" | "original" | "overlay" | "difference";
+const COMPARE_MODES: Compare[] = ["design", "original", "overlay", "difference"];
+const COMPARE_LABELS: Record<Compare, string> = { design: "Design", original: "Original", overlay: "Overlay", difference: "Differences" };
 /** A pointer drag: the moved objects (one for a resize) and their box when it started. */
 type Drag = { ids: string[]; corner: "move" | Corner; x0: number; y0: number; box: { x: number; y: number; w: number; h: number } };
 
@@ -121,6 +123,33 @@ export function Studio({ source, jobs, onClose }: Props) {
   useEffect(() => setCrop(null), [selId]);
   const [guides, setGuides] = useState<Guide[]>([]);
   const [compare, setCompare] = useState<Compare>("design");
+  // The bar switches to a compact layout when its controls do not fit (narrow window, comfortable
+  // density, larger text). Whenever the bar's width, the density or the text size changes, the full
+  // layout is tried again and kept if it fits. If even the compact bar does not fit, it scrolls
+  // sideways so every control stays reachable.
+  const barRef = useRef<HTMLElement>(null);
+  const [compactBar, setCompactBar] = useState(false);
+  const compactWhen = useRef("");
+  useLayoutEffect(() => {
+    const el = barRef.current;
+    if (!el) return;
+    const root = document.documentElement;
+    const conditions = () => `${el.clientWidth}|${root.dataset.density ?? ""}|${root.style.getPropertyValue("--ui-scale")}`;
+    const check = () => {
+      if (!compactBar) {
+        if (el.scrollWidth > el.clientWidth + 1) {
+          compactWhen.current = conditions();
+          setCompactBar(true);
+        }
+      } else if (conditions() !== compactWhen.current) setCompactBar(false);
+    };
+    check();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    for (const child of el.children) ro.observe(child);
+    return () => ro.disconnect();
+  }, [compactBar]);
   const [opacity, setOpacity] = useState(50);
   const [zoom, setZoom] = useState(1);
   const [error, setError] = useState<PwError | null>(null);
@@ -473,7 +502,7 @@ export function Studio({ source, jobs, onClose }: Props) {
 
   return (
     <div className="studio" role="dialog" aria-modal="true" aria-label="Design Studio" ref={root} tabIndex={-1} onKeyDown={onKeyDown} onKeyUp={(e) => e.key === " " && setSpaceDown(false)} onBlur={(e) => !e.currentTarget.contains(e.relatedTarget as Node) && setSpaceDown(false)} data-testid="studio">
-      <header className="studio-bar" role="toolbar" aria-label="Design Studio">
+      <header ref={barRef} className={compactBar ? "studio-bar compact" : "studio-bar"} role="toolbar" aria-label="Design Studio" data-compact={compactBar || undefined}>
         <h2 title={design?.source_name}>
           <span className="studio-title">
             Design Studio{design && <span className="hint"> — {design.source_name}</span>}
@@ -496,13 +525,23 @@ export function Studio({ source, jobs, onClose }: Props) {
             <Square />
           </button>
         </div>
-        <div className="segmented" role="radiogroup" aria-label="Compare with the original">
-          {(["design", "original", "overlay", "difference"] as Compare[]).map((m) => (
-            <button key={m} type="button" role="radio" aria-checked={compare === m} data-compare={m} onClick={() => setCompare(m)}>
-              {{ design: "Design", original: "Original", overlay: "Overlay", difference: "Differences" }[m]}
-            </button>
-          ))}
-        </div>
+        {compactBar ? (
+          <select className="input studio-compare-select" aria-label="Compare with the original" title="Compare with the original" data-testid="studio-compare-select" value={compare} onChange={(e) => setCompare(e.target.value as Compare)}>
+            {COMPARE_MODES.map((m) => (
+              <option key={m} value={m}>
+                {COMPARE_LABELS[m]}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <div className="segmented" role="radiogroup" aria-label="Compare with the original">
+            {COMPARE_MODES.map((m) => (
+              <button key={m} type="button" role="radio" aria-checked={compare === m} data-compare={m} onClick={() => setCompare(m)}>
+                {COMPARE_LABELS[m]}
+              </button>
+            ))}
+          </div>
+        )}
         {compare === "overlay" && (
           <input type="range" className="studio-opacity" min={0} max={100} value={opacity} aria-label="Original's opacity" title={`Original at ${opacity}%`} onChange={(e) => setOpacity(Number(e.target.value))} />
         )}

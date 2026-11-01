@@ -80,6 +80,31 @@ describe("Design Studio", () => {
     expect(document.querySelectorAll("[data-layer]")).toHaveLength(3);
   });
 
+  it("turns the bar compact when its controls do not fit: compare list, Save keeps its name", async () => {
+    // jsdom has no layout: report the bar as overflowing (contents 900 px in 700 px).
+    const sw = vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("studio-bar") ? 900 : 0;
+    });
+    const cw = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("studio-bar") ? 700 : 0;
+    });
+    try {
+      setup({ kind: "open", path: "/d/f.pwdesign" });
+      await flush();
+      const bar = screen.getByRole("toolbar", { name: "Design Studio" });
+      expect(bar.classList.contains("compact")).toBe(true);
+      expect(document.querySelector("[data-compare]")).toBeNull();
+      const list = screen.getByLabelText("Compare with the original") as HTMLSelectElement;
+      expect([...list.options].map((o) => o.textContent)).toEqual(["Design", "Original", "Overlay", "Differences"]);
+      fireEvent.change(list, { target: { value: "overlay" } });
+      expect(screen.getByLabelText("Original's opacity")).toBeTruthy();
+      expect(screen.getByTestId("studio-save").textContent).toContain("Save");
+    } finally {
+      sw.mockRestore();
+      cw.mockRestore();
+    }
+  });
+
   it("lists layers front first, flags uncertain ones and edits the selected text with undo", async () => {
     const s = setup({ kind: "open", path: "/d/f.pwdesign" });
     await flush();

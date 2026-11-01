@@ -3076,25 +3076,32 @@ kbd,
   text-decoration: underline;
 }
 
-/* Narrow windows (down to the 720 px minimum): every Studio control stays on the bar. The export
-   buttons keep their format names, Save keeps its icon and its name for screen readers. */
-@media (max-width: 880px) {
-  .studio-bar {
-    gap: var(--space-2);
-    padding: 0 var(--space-2);
-  }
-  .studio-export-icon {
-    display: none;
-  }
-  .studio-save-label {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-  }
+/* Compact Studio bar (set by the Studio when the full bar does not fit: narrow window, comfortable
+   density, larger text). Export buttons keep their format names, Save keeps its icon and its name
+   for screen readers, and the compare buttons become one list. If even this does not fit (very
+   large text in a small window), the bar scrolls sideways so every control stays reachable. */
+.studio-bar.compact {
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.studio-bar.compact .studio-export-icon {
+  display: none;
+}
+.studio-bar.compact .studio-save-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+.studio-compare-select {
+  flex: none;
+  width: auto;
+  height: var(--control-h);
 }
 
 @media (max-width: 900px) {
