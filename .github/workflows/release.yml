@@ -205,7 +205,11 @@ jobs:
           if (-not $u.WaitForExit(300000)) { throw "update installer did not finish in 5 minutes" }
           if ($u.ExitCode -ne 0) { throw "update installer exit $($u.ExitCode)" }
           if ($app.HasExited -eq $false) { throw "the running app was not closed by the update" }
-          if (-not (Test-Path (Join-Path $langs "en-de\encoder.onnx"))) { throw "the update removed the languages" }
+          # Every model folder the pin lists is still there (D-027: shared folders such as mul-itc,
+          # not one folder per pair).
+          foreach ($folder in $checked.Keys) {
+            if (-not (Test-Path (Join-Path $langs "$folder\encoder.onnx"))) { throw "the update removed the languages ($folder)" }
+          }
           Get-Process pageweave-app -ErrorAction SilentlyContinue | Stop-Process -Force
           Start-Sleep -Seconds 2
           $un = Get-ChildItem $dir -Filter "uninstall*.exe" | Select-Object -First 1

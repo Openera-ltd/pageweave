@@ -1135,10 +1135,17 @@ export function App() {
   }, [markMode, dialog, menu]);
 
   /* ---------- Keyboard ---------- */
+  // The listener reads the current dialog, menu and bindings through refs set during render. A
+  // listener re-registered by an effect kept the previous state until after the next paint, so a
+  // shortcut pressed right after a dialog closed was ignored as if the dialog were still open
+  // (seen on CI: Ctrl+, right after Settings closed).
   const handlersRef = useRef(handlers);
   handlersRef.current = handlers;
+  const keyStateRef = useRef({ bindings, dialog, menu });
+  keyStateRef.current = { bindings, dialog, menu };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const { bindings, dialog, menu } = keyStateRef.current;
       const sc = eventToShortcut(e);
       // The browser's own print would print the app's screens: printing always goes through the
       // Print dialog, never the default action (also while a menu, dialog or text field has focus).
@@ -1155,7 +1162,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [bindings, dialog, menu]);
+  }, []);
 
   /* ---------- Menus ---------- */
   const item = (id: CommandId, label?: string, run?: () => void, available?: true | string): MenuItemOrSeparator => ({
