@@ -1727,7 +1727,11 @@ await test("translate side by side: page 1 into German as a PDF with the origina
     await s.type('[role="dialog"] input', "Translate");
     await s.click('[role="option"][data-command="file.translate"]');
     await s.waitFor("#translate-to");
+    // The list is disabled until the installed languages are known; choosing earlier is lost (the
+    // target stayed English and Start waited on "same language" instead of the glossary reason).
+    await s.waitUntil(async () => await s.exec("const t = document.querySelector('#translate-to'); return !t.disabled && [...t.options].some((o) => o.value === 'de')"), "German offered");
     await s.exec("const t = document.querySelector('#translate-to'); t.value = 'de'; t.dispatchEvent(new Event('change', { bubbles: true }));");
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('#translate-to').value")) === "de", "German chosen");
     await s.waitFor('[data-testid="translate-side-by-side"]');
     // Word and text output have no side-by-side option.
     await s.click('[data-testid="translate-format-docx"]');
