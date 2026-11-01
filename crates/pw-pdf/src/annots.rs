@@ -184,8 +184,8 @@ fn mapped(doc: &Document, o: &Object, f: &dyn Fn(f32, f32) -> (f32, f32)) -> Opt
     let a = o.as_array().ok()?;
     if a.iter().all(|v| num(v).is_some()) {
         let v: Vec<f32> = a.iter().filter_map(num).collect();
-        let pts = v.chunks_exact(2).flat_map(|p| {
-            let (x, y) = f(p[0], p[1]);
+        let pts = v.as_chunks::<2>().0.iter().flat_map(|&[px, py]| {
+            let (x, y) = f(px, py);
             [Object::Real(x), Object::Real(y)]
         });
         return Some(Object::Array(pts.collect()));
