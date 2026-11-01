@@ -110,14 +110,18 @@ fn version_of(program: &Path) -> Option<String> {
             return None;
         }
         let ini = std::fs::read(program.parent()?.join("version.ini")).ok()?;
-        return Some(version_from_ini(&ini));
+        // The exact version is in the program's version resource; version.ini only names the
+        // major version (UpdateID=LibreOffice_26_...).
+        let exact = std::fs::read(program).ok().and_then(|exe| product_version(&exe));
+        return Some(exact.map(|v| format!("LibreOffice {v}")).unwrap_or_else(|| version_from_ini(&ini)));
     }
     let text = output_within(Command::new(program).arg("--version"), Duration::from_secs(30))?;
     text.contains("LibreOffice").then(|| text.split_whitespace().take(2).collect::<Vec<_>>().join(" "))
 }
 
-/// "LibreOffice <MsiProductVersion>" from a Windows LibreOffice `program\version.ini` (UTF-8 or
-/// UTF-16), or plain "LibreOffice" when the file names no version.
+/// The version a Windows LibreOffice `program\\version.ini` (UTF-8 or UTF-16) names: its
+/// MsiProductVersion when present, else the major version in UpdateID ("LibreOffice_26_..."), else
+/// plain "LibreOffice".
 fn version_from_ini(bytes: &[u8]) -> String {
     let text = if bytes.starts_with(&[0xFF, 0xFE]) {
         let units: Vec<u16> =
@@ -132,10 +136,43 @@ fn version_from_ini(bytes: &[u8]) -> String {
             (k.trim().eq_ignore_ascii_case(key) && !v.trim().is_empty()).then(|| v.trim().to_string())
         })
     };
-    match value("MsiProductVersion").or_else(|| value("ProductVersion")) {
-        Some(v) if v.chars().all(|c| c.is_ascii_digit() || c == '.') => format!("LibreOffice {v}"),
+    let numeric = |v: &str| !v.is_empty() && v.chars().all(|c| c.is_ascii_digit() || c == '.');
+    if let Some(v) = value("MsiProductVersion").filter(|v| numeric(v)) {
+        return format!("LibreOffice {v}");
+    }
+    let major = value("UpdateID").and_then(|id| id.strip_prefix("LibreOffice_")?.split('_').next().map(str::to_string));
+    match major {
+        Some(m) if numeric(&m) => format!("LibreOffice {m}"),
         _ => "LibreOffice".to_string(),
     }
+}
+
+/// The ProductVersion string from a Windows program's version resource (VS_VERSIONINFO), read
+/// from the file's bytes: the UTF-16 key, its terminator and alignment padding, then the value.
+fn product_version(exe: &[u8]) -> Option<String> {
+    let key: Vec<u8> = "ProductVersion\0".encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let mut from = 0;
+    while let Some(at) = exe[from..].windows(key.len()).position(|w| w == key.as_slice()) {
+        let mut i = from + at + key.len();
+        while i + 1 < exe.len() && exe[i] == 0 && exe[i + 1] == 0 {
+            i += 2;
+        }
+        let mut units = Vec::new();
+        while i + 1 < exe.len() && units.len() < 32 {
+            let u = u16::from_le_bytes([exe[i], exe[i + 1]]);
+            if u == 0 {
+                break;
+            }
+            units.push(u);
+            i += 2;
+        }
+        let v = String::from_utf16_lossy(&units).trim().replace(", ", ".").replace(',', ".");
+        if !v.is_empty() && v.chars().all(|c| c.is_ascii_digit() || c == '.') && v.contains('.') {
+            return Some(v);
+        }
+        from += at + key.len();
+    }
+    None
 }
 
 /// Standard output of `cmd` when it exits successfully within `limit`; a program that does not
@@ -544,6 +581,18 @@ mod tests {
             .collect();
         assert_eq!(version_from_ini(&utf16), "LibreOffice 24.2.7.2");
         assert_eq!(version_from_ini(b"[Version]\nbuildid=abc\n"), "LibreOffice");
+        // As shipped with LibreOffice 26.2 (no MsiProductVersion): the major version from UpdateID.
+        assert_eq!(version_from_ini(b"[Version]\r\nbuildid=8221e3\r\nUpdateID=LibreOffice_26_en-US_ab_af\r\nVendor=The Document Foundation\r\n"), "LibreOffice 26");
+        // The exact version from the program's version resource: key, terminator, padding, value.
+        let mut exe = b"MZ....".to_vec();
+        for s in ["FileVersion\0", "26.2.6.2\0"] {
+            exe.extend(s.encode_utf16().flat_map(u16::to_le_bytes));
+        }
+        exe.extend("ProductVersion\0".encode_utf16().flat_map(u16::to_le_bytes));
+        exe.extend([0, 0]);
+        exe.extend("26.2.6.2\0".encode_utf16().flat_map(u16::to_le_bytes));
+        assert_eq!(product_version(&exe).as_deref(), Some("26.2.6.2"));
+        assert_eq!(product_version(b"no resource here"), None);
         assert_eq!(version_from_ini(b"MsiProductVersion=<script>\n"), "LibreOffice");
     }
 
