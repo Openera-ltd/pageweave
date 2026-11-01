@@ -462,16 +462,14 @@ await test("password-protected PDF: dialog, wrong password, then correct passwor
 await test("unsupported file shows a specific error and app stays usable", async () => {
   const fake = join(work, "fake.pdf");
   copyFileSync(join(FIX, "not-a-pdf.pdf"), fake);
-  const s = await Session.create(DRIVER, APP, appArgs([fake, join(FIX, "single-page.pdf")]));
-  try {
-    await s.waitFor('.tab-label', { timeout: 20000 });
+  // withApp: the same launch retry and failure capture as other scenarios (a launch that timed out
+  // once under load failed this scenario before it ran).
+  await withApp([fake, join(FIX, "single-page.pdf")], async (s) => {
     await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Couldn’t open fake.pdf") && t.includes("not a PDF")), "error notice");
     const tabs = await s.exec("return document.querySelectorAll('.tab-label').length");
     assert(tabs === 1, `only the valid file opened (${tabs})`);
     writeFileSync(join(ART, "error-notice.png"), await s.screenshot());
-  } finally {
-    await s.delete();
-  }
+  });
 });
 
 await test("disabled controls explain why (no document open)", async () => {
