@@ -200,11 +200,40 @@ fn merge_in_order_with_progress() {
     })
     .expect("merge");
     assert_eq!(r.outputs[0].pages, Some(9));
-    assert!(r.warnings.iter().any(|w| w.contains("Bookmarks")), "bookmark loss must be disclosed");
+    // five-pages.pdf's bookmarks ("Chapter 1"–"Chapter 5" on its pages 1–5) come along, pointing at
+    // pages 2–6 of the combined file (after single-page.pdf).
+    let info = pw_pdf::open_document(&out, &opts()).expect("reopen");
+    let got: Vec<(String, Option<u32>)> = info.bookmarks.iter().map(|b| (b.title.clone(), b.page)).collect();
+    let want: Vec<(String, Option<u32>)> = (1..=5).map(|i| (format!("Chapter {i}"), Some(i))).collect();
+    assert_eq!(got, want);
+    assert!(r.warnings.iter().any(|w| w.contains("Bookmarks of the combined files are kept")), "{:?}", r.warnings);
     let (n, texts, rots) = independent(&out);
     assert_eq!(n, 9);
     assert!(texts[1].contains("PWMARK001") && texts[5].contains("PWMARK005"));
     assert_eq!(rots[8], 90, "intrinsic rotation survives the merge");
+}
+
+#[test]
+fn merge_keeps_the_first_files_properties() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("merged.pdf");
+    let r =
+        run(Operation::Merge { inputs: vec![fixture("article.pdf"), fixture("compare-new.pdf")], output: out.clone() })
+            .expect("merge");
+    assert_eq!(
+        pw_pdf::open_document(&out, &opts()).expect("reopen").title.as_deref(),
+        Some("Annual review of river systems")
+    );
+    assert!(r.warnings.iter().any(|w| w.contains("first file's title")), "{:?}", r.warnings);
+    // The first file has none: none are invented (the second file's are not taken either).
+    let out2 = dir.path().join("merged2.pdf");
+    let r = run(Operation::Merge {
+        inputs: vec![fixture("embedded-font.pdf"), fixture("article.pdf")],
+        output: out2.clone(),
+    })
+    .expect("merge");
+    assert_eq!(pw_pdf::open_document(&out2, &opts()).expect("reopen").title, None);
+    assert!(!r.warnings.iter().any(|w| w.contains("first file's title")));
 }
 
 #[test]
@@ -216,7 +245,25 @@ fn merge_with_bad_input_names_the_file_position_and_writes_nothing() {
         output: out.clone(),
     })
     .expect_err("bad input");
-    assert!(e.message.starts_with("File 2 of 2"), "{}", e.message);
+    assert!(e.message.starts_with("File 2 of 2 (not-a-pdf.pdf)"), "{}", e.message);
+    assert!(!out.exists());
+    // Several bad files: all named at once, the good ones not.
+    let e = run(Operation::Merge {
+        inputs: vec![
+            fixture("five-pages.pdf"),
+            fixture("not-a-pdf.pdf"),
+            fixture("article.pdf"),
+            fixture("corrupt-truncated.pdf"),
+        ],
+        output: out.clone(),
+    })
+    .expect_err("bad inputs");
+    assert_eq!(e.code, "pdf.not_pdf", "the first problem's code");
+    assert!(e.message.starts_with("2 files can't be combined."), "{}", e.message);
+    assert!(
+        e.message.contains("File 2 of 4 (not-a-pdf.pdf)") && e.message.contains("File 4 of 4 (corrupt-truncated.pdf)")
+    );
+    assert!(!e.message.contains("article.pdf") && !e.message.contains("five-pages.pdf"), "{}", e.message);
     assert!(!out.exists());
 }
 
@@ -352,6 +399,66 @@ fn encrypted_document_requires_password() {
 }
 
 /// Probe: does an output derived from an encrypted file stay encrypted? Records actual behaviour.
+#[test]
+fn keep_protection_protects_outputs_with_the_same_password() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let src = fixture("encrypted-rc4-user-password.pdf");
+    let ops = [
+        Operation::ExtractPages { input: src.clone(), pages: "1".into(), output: dir.path().join("ext.pdf") },
+        Operation::Split {
+            input: src.clone(),
+            split: pw_core::ops::SplitMode::EveryN { n: 1 },
+            output_dir: dir.path().join("parts"),
+        },
+    ];
+    std::fs::create_dir_all(dir.path().join("parts")).expect("dir");
+    for op in ops {
+        let mut req = OperationRequest::new(op);
+        req.password = Some(USER_PW.into());
+        req.keep_protection = true;
+        let r = execute(&req, None).expect("run");
+        assert!(!r.outputs.is_empty());
+        for o in &r.outputs {
+            assert_eq!(
+                open_document(&o.path, &opts()).expect_err("needs the password").code,
+                "pdf.password",
+                "{:?}",
+                o.path
+            );
+            let with = pw_pdf::OpenOptions { password: Some(USER_PW) };
+            assert_eq!(
+                open_document(&o.path, &with).expect("opens with the original password").pages.len() as u32,
+                o.pages.unwrap_or(1)
+            );
+            assert_eq!(
+                std::fs::metadata(&o.path).expect("size").len(),
+                o.bytes,
+                "reported size is the protected file's"
+            );
+        }
+        assert!(!r.warnings.iter().any(|w| w.contains("not password protected")), "{:?}", r.warnings);
+        assert!(r.warnings.iter().any(|w| w.contains("same open password")), "{:?}", r.warnings);
+        // No staged copies left behind.
+        let stray = |d: &std::path::Path| {
+            std::fs::read_dir(d)
+                .expect("dir")
+                .filter_map(|e| e.ok())
+                .any(|e| e.file_name().to_string_lossy().contains(".protecting."))
+        };
+        assert!(!stray(dir.path()) && !stray(&dir.path().join("parts")));
+    }
+    // Without the option (the API default) the output is plain and the warning stays.
+    let mut req = OperationRequest::new(Operation::ExtractPages {
+        input: src,
+        pages: "1".into(),
+        output: dir.path().join("plain.pdf"),
+    });
+    req.password = Some(USER_PW.into());
+    let r = execute(&req, None).expect("run");
+    assert!(open_document(&r.outputs[0].path, &opts()).is_ok());
+    assert!(r.warnings.iter().any(|w| w.contains("not password protected")));
+}
+
 #[test]
 fn protection_status_of_outputs_from_encrypted_input() {
     let dir = tempfile::tempdir().expect("tmp");

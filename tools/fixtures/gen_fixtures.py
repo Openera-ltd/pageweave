@@ -104,10 +104,12 @@ def build_document(pages: list[dict], title: str | None = None, outline: bool = 
     return w.render(catalog, info)
 
 
-def build_form_document(defaults: bool = False) -> bytes:
+def build_form_document(defaults: bool = False, xfa: str | None = None) -> bytes:
     """One page with an AcroForm: text, multiline text, checkbox (on-state named /On, not /Yes),
     a two-button radio group and a combo box, each with appearance streams. With `defaults`, the
-    same form with default values (/DV) for every field except the comments, for Reset form."""
+    same form with default values (/DV) for every field except the comments, for Reset form. With
+    `xfa`, an XFA layer in front of the same form: "hybrid" (like government forms: the standard
+    form is complete) or "dynamic" (/NeedsRendering: only the XFA form counts) (D-038)."""
     dv = (lambda v: f" /DV {v}") if defaults else (lambda v: "")
     w = PdfWriter()
     catalog, pages_obj, page = w.reserve(), w.reserve(), w.reserve()
@@ -167,8 +169,21 @@ def build_form_document(defaults: bool = False) -> bytes:
     w.set(page, f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 {font} 0 R >> >> "
                 f"/Contents {content} 0 R /Annots [{' '.join(f'{a} 0 R' for a in annots)}] >>")
     w.set(pages_obj, f"<< /Type /Pages /Kids [{page} 0 R] /Count 1 >>")
-    acro = f"<< /Fields [{' '.join(f'{f} 0 R' for f in fields)}] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv {font} 0 R >> >> >>"
-    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R /AcroForm {acro} >>")
+    xfa_entry, needs = "", ""
+    if xfa:
+        packet = (b'<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/"><template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">'
+                  b'<subform name="form1"><field name="full_name"/></subform></template>'
+                  b'<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/"><xfa:data><form1><full_name>Old XFA value</full_name>'
+                  b'</form1></xfa:data></xfa:datasets></xdp:xdp>')
+        xfa_entry = f" /XFA {w.stream(packet)} 0 R"
+        needs = " /NeedsRendering true" if xfa == "dynamic" else ""
+        # Usage rights as on government forms (/Perms /UR3): its /EF is a permission list, not files.
+        ur3 = w.add("<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Contents <00> "
+                    "/Reference [<< /Type /SigRef /TransformMethod /UR3 /TransformParams << /Type /TransformParams /V /2.2 "
+                    "/Document [/FullSave] /Form [/FillIn /Import /Export] /EF [/Create /Delete /Import /Modify] >> >>] >>")
+        needs += f" /Perms << /UR3 {ur3} 0 R >>"
+    acro = f"<< /Fields [{' '.join(f'{f} 0 R' for f in fields)}] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv {font} 0 R >> >>{xfa_entry} >>"
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R /AcroForm {acro}{needs} >>")
     info = w.add("<< /Title (Form fixture) /Author (PageWeave fixtures) /Producer (gen_fixtures.py) >>")
     return w.render(catalog, info)
 
@@ -720,6 +735,202 @@ def build_poster_document() -> bytes:
     return w.render(catalog, info)
 
 
+def build_badges_document() -> bytes:
+    """Shapes the Design Studio rebuilds as vectors (D-031): a circle, an ellipse, a rounded
+    rectangle with white bold wording on it, and a plain rectangle, on a tinted page. Curves are
+    four Bezier quarters (k = 0.5523). Expected forms and sizes are in crates/pw-pdf/tests/studio.rs."""
+    w = PdfWriter()
+    catalog, pages_obj = w.reserve(), w.reserve()
+    bold = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>")
+    k = 0.5523
+
+    def ellipse(cx: float, cy: float, rx: float, ry: float) -> str:
+        return (f"{cx + rx} {cy} m "
+                f"{cx + rx} {cy + k * ry} {cx + k * rx} {cy + ry} {cx} {cy + ry} c "
+                f"{cx - k * rx} {cy + ry} {cx - rx} {cy + k * ry} {cx - rx} {cy} c "
+                f"{cx - rx} {cy - k * ry} {cx - k * rx} {cy - ry} {cx} {cy - ry} c "
+                f"{cx + k * rx} {cy - ry} {cx + rx} {cy - k * ry} {cx + rx} {cy} c f\n")
+
+    def rounded(x: float, y: float, rw: float, rh: float, r: float) -> str:
+        c = r * (1 - k)
+        return (f"{x + r} {y} m {x + rw - r} {y} l {x + rw - c} {y} {x + rw} {y + c} {x + rw} {y + r} c "
+                f"{x + rw} {y + rh - r} l {x + rw} {y + rh - c} {x + rw - c} {y + rh} {x + rw - r} {y + rh} c "
+                f"{x + r} {y + rh} l {x + c} {y + rh} {x} {y + rh - c} {x} {y + rh - r} c "
+                f"{x} {y + r} l {x} {y + c} {x + c} {y} {x + r} {y} c f\n")
+
+    ops = "0.98 0.96 0.90 rg 0 0 300 200 re f\n"
+    ops += "0.15 0.35 0.75 rg " + ellipse(60, 140, 40, 40)
+    ops += "0.20 0.60 0.30 rg " + ellipse(200, 150, 70, 30)
+    ops += "0.95 0.55 0.10 rg " + rounded(20, 30, 140, 50, 16)
+    ops += "1 g BT /F1 20 Tf 40 48 Td (SALE 50%) Tj ET\n"
+    ops += "0.45 0.45 0.50 rg 190 30 90 60 re f\n"
+    content = w.stream(ops.encode("latin-1"))
+    page = w.add(f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 300 200] "
+                 f"/Resources << /Font << /F1 {bold} 0 R >> >> /Contents {content} 0 R >>")
+    w.set(pages_obj, f"<< /Type /Pages /Kids [{page} 0 R] /Count 1 >>")
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R >>")
+    info = w.add("<< /Title (Badges fixture) /Producer (gen_fixtures.py) >>")
+    return w.render(catalog, info)
+
+
+def build_caption_document(words: bool = True) -> bytes:
+    """White words over a gradient picture (Design Studio, painting words out of a picture). With
+    words=False the same page without them: what the picture should look like once the words are
+    painted out (crates/pw-pdf/tests/studio.rs compares the two)."""
+    w = PdfWriter()
+    catalog, pages_obj = w.reserve(), w.reserve()
+    font = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    bold = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>")
+    pw_, ph = 130, 80
+    pixels = bytes(v for y in range(ph) for x in range(pw_) for v in (40 + x, 70 + y, 150 - y))
+    picture = w.stream(pixels, f"/Type /XObject /Subtype /Image /Width {pw_} /Height {ph} "
+                               "/ColorSpace /DeviceRGB /BitsPerComponent 8 ")
+    ops = "0.98 0.96 0.90 rg 0 0 300 200 re f\n"
+    ops += "q 260 0 0 160 20 20 cm /Im1 Do Q\n"
+    if words:
+        ops += "1 g BT /F2 30 Tf 45 110 Td (OPEN DAY) Tj ET\n"
+        ops += "1 g BT /F1 14 Tf 45 75 Td (Saturday from ten) Tj ET\n"
+    content = w.stream(ops.encode("latin-1"))
+    page = w.add(f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 300 200] "
+                 f"/Resources << /Font << /F1 {font} 0 R /F2 {bold} 0 R >> /XObject << /Im1 {picture} 0 R >> >> "
+                 f"/Contents {content} 0 R >>")
+    w.set(pages_obj, f"<< /Type /Pages /Kids [{page} 0 R] /Count 1 >>")
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R >>")
+    info = w.add("<< /Title (Caption fixture) /Producer (gen_fixtures.py) >>")
+    return w.render(catalog, info)
+
+
+FONT_LINES = [
+    ("Times-Roman", 12, "Minutes of the annual meeting"),
+    ("Times-Roman", 18, "The quick brown fox jumps"),
+    ("Times-Bold", 24, "Grand Opening Night"),
+    ("Times-Italic", 16, "An evening of chamber music"),
+    ("Times-Roman", 36, "Certificate"),
+    ("Times-Bold", 14, "Hand made in small batches"),
+    ("Helvetica", 12, "Minutes of the annual meeting"),
+    ("Helvetica", 18, "The quick brown fox jumps"),
+    ("Helvetica-Bold", 24, "Grand Opening Night"),
+    ("Helvetica-Oblique", 16, "An evening of chamber music"),
+    ("Helvetica", 36, "Certificate"),
+    ("Helvetica-Bold", 14, "Hand made in small batches"),
+]
+
+
+HOLDOUT_FONT_LINES = [
+    ("Times-Roman", 10, "Please reply by the first of June"),
+    ("Times-Bold", 20, "Summer Menu"),
+    ("Times-Roman", 28, "Winners announced at noon"),
+    ("Times-Italic", 22, "with music and dancing"),
+    ("Times-Roman", 48, "Diploma"),
+    ("Helvetica", 10, "Please reply by the first of June"),
+    ("Helvetica-Bold", 20, "Summer Menu"),
+    ("Helvetica", 28, "Winners announced at noon"),
+    ("Helvetica-Oblique", 22, "with music and dancing"),
+    ("Helvetica", 48, "Diploma"),
+]
+
+
+def build_fonts_document(lines=None) -> bytes:
+    """Serif (Times) and sans (Helvetica) lines of several sizes and weights, for measuring how well
+    the Design Studio tells the two families apart (crates/pw-pdf/tests/studio.rs, FONT_LINES)."""
+    w = PdfWriter()
+    catalog, pages_obj = w.reserve(), w.reserve()
+    lines = lines or FONT_LINES
+    names = sorted({f for f, _, _ in lines})
+    fonts = {n: w.add(f"<< /Type /Font /Subtype /Type1 /BaseFont /{n} /Encoding /WinAnsiEncoding >>") for n in names}
+    ops, y = "", 800
+    for f, size, s in lines:
+        y -= size * 1.6 + 8
+        ops += f"BT /F{names.index(f)} {size} Tf 40 {y} Td ({esc(s)}) Tj ET\n"
+    content = w.stream(ops.encode("latin-1"))
+    res = " ".join(f"/F{i} {fonts[n]} 0 R" for i, n in enumerate(names))
+    page = w.add(f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 420 842] "
+                 f"/Resources << /Font << {res} >> >> /Contents {content} 0 R >>")
+    w.set(pages_obj, f"<< /Type /Pages /Kids [{page} 0 R] /Count 1 >>")
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R >>")
+    info = w.add("<< /Title (Fonts fixture) /Producer (gen_fixtures.py) >>")
+    return w.render(catalog, info)
+
+
+def build_shaded_table_document() -> bytes:
+    """A ruled 3 × 3 table as Word draws it: the header cells shaded, and the paragraph inside each
+    header cell shaded again within the cell padding. The inner shading must not become table lines
+    (it made phantom rows and columns)."""
+    w = PdfWriter()
+    catalog, pages_obj = w.reserve(), w.reserve()
+    font = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    xs, ys = [72, 200, 330, 460], [700, 670, 645, 620]
+    ops = ""
+    for i in range(3):  # header cell shading, then the paragraph's shading inside the padding
+        ops += f"0.55 0.70 0.88 rg {xs[i]} {ys[1]} {xs[i + 1] - xs[i]} {ys[0] - ys[1]} re f\n"
+        # Inset within the padding, down to the cell's bottom border (as in Word's output).
+        ops += f"0.55 0.70 0.88 rg {xs[i] + 5.5} {ys[1]} {xs[i + 1] - xs[i] - 11} 22 re f\n"
+    ops += "0 0 0 RG 0.5 w\n"
+    for y in ys:
+        ops += f"{xs[0]} {y} m {xs[-1]} {y} l S\n"
+    for x in xs:
+        ops += f"{x} {ys[0]} m {x} {ys[-1]} l S\n"
+    cells = [["Name", "Count", "Share"], ["Apples", "12", "40%"], ["Pears", "18", "60%"]]
+    for r, row in enumerate(cells):
+        for c, v in enumerate(row):
+            ops += f"0 g BT /F1 11 Tf {xs[c] + 6} {ys[r + 1] + 8} Td ({esc(v)}) Tj ET\n"
+    content = w.stream(ops.encode("latin-1"))
+    page = w.add(f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] "
+                 f"/Resources << /Font << /F1 {font} 0 R >> >> /Contents {content} 0 R >>")
+    w.set(pages_obj, f"<< /Type /Pages /Kids [{page} 0 R] /Count 1 >>")
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R >>")
+    info = w.add("<< /Title (Shaded table fixture) /Producer (gen_fixtures.py) >>")
+    return w.render(catalog, info)
+
+
+def build_calibrated_colour_document() -> bytes:
+    """Shading and text in a calibrated (non-device) colour space, as Word writes colours through ICC
+    profiles. Removing an object makes PDFium rewrite the page, and its writer once turned such
+    colours black (D-041)."""
+    w = PdfWriter()
+    catalog, pages_obj = w.reserve(), w.reserve()
+    font = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    cs = w.add("[/CalRGB << /WhitePoint [0.9505 1 1.089] /Gamma [2.2 2.2 2.2] >>]")
+    ops = "/CS0 cs 0.2 0.4 0.85 scn 72 600 300 80 re f\n"
+    ops += "0 0 0 rg BT /F1 14 Tf 90 630 Td (Remove this line) Tj ET\n"
+    ops += "0 0 0 rg BT /F1 14 Tf 90 560 Td (Keep this line) Tj ET\n"
+    content = w.stream(ops.encode("latin-1"))
+    page = w.add(f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 792] "
+                 f"/Resources << /Font << /F1 {font} 0 R >> /ColorSpace << /CS0 {cs} 0 R >> >> /Contents {content} 0 R >>")
+    w.set(pages_obj, f"<< /Type /Pages /Kids [{page} 0 R] /Count 1 >>")
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R >>")
+    info = w.add("<< /Title (Calibrated colour fixture) /Producer (gen_fixtures.py) >>")
+    return w.render(catalog, info)
+
+
+def build_frames_document() -> bytes:
+    """Outlined shapes the Design Studio rebuilds as vector frames (D-036): a 3 pt dark blue border
+    inset 10 pt, a 2 pt red elliptical ring with "SEAL" inside it, and a heading, on a tinted page.
+    Expected forms and widths are in crates/pw-pdf/tests/studio.rs."""
+    w = PdfWriter()
+    catalog, pages_obj = w.reserve(), w.reserve()
+    bold = w.add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>")
+    k = 0.5523
+    cx, cy, rx, ry = 225, 70, 45, 30
+    ring = (f"{cx + rx} {cy} m "
+            f"{cx + rx} {cy + k * ry} {cx + k * rx} {cy + ry} {cx} {cy + ry} c "
+            f"{cx - k * rx} {cy + ry} {cx - rx} {cy + k * ry} {cx - rx} {cy} c "
+            f"{cx - rx} {cy - k * ry} {cx - k * rx} {cy - ry} {cx} {cy - ry} c "
+            f"{cx + k * rx} {cy - ry} {cx + rx} {cy - k * ry} {cx + rx} {cy} c S\n")
+    ops = "0.98 0.96 0.90 rg 0 0 300 200 re f\n"
+    ops += "0.10 0.20 0.50 RG 3 w 11.5 11.5 277 177 re S\n"
+    ops += "0.80 0.10 0.10 RG 2 w " + ring
+    ops += "0.1 g BT /F1 18 Tf 40 140 Td (Certificate) Tj ET\n"
+    ops += "0.8 0.1 0.1 rg BT /F1 14 Tf 207 65 Td (SEAL) Tj ET\n"
+    content = w.stream(ops.encode("latin-1"))
+    page = w.add(f"<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 300 200] "
+                 f"/Resources << /Font << /F1 {bold} 0 R >> >> /Contents {content} 0 R >>")
+    w.set(pages_obj, f"<< /Type /Pages /Kids [{page} 0 R] /Count 1 >>")
+    w.set(catalog, f"<< /Type /Catalog /Pages {pages_obj} 0 R >>")
+    info = w.add("<< /Title (Frames fixture) /Producer (gen_fixtures.py) >>")
+    return w.render(catalog, info)
+
+
 def build_borderless_tables_document() -> bytes:
     """Tables without drawn grids for table export (D-020): page 1 has a table of aligned columns
     with no lines at all and a table with only horizontal rules above and below its header and at
@@ -803,6 +1014,19 @@ def main() -> int:
     files["tables.pdf"] = build_tables_document()
     files["borderless-tables.pdf"] = build_borderless_tables_document()
     files["poster.pdf"] = build_poster_document()
+    files["badges.pdf"] = build_badges_document()
+    files["caption.pdf"] = build_caption_document()
+    files["fonts.pdf"] = build_fonts_document()
+    files["shaded-table.pdf"] = build_shaded_table_document()
+    files["calibrated-colour.pdf"] = build_calibrated_colour_document()
+    files["frames.pdf"] = build_frames_document()
+    # A word hyphenated across lines (the engine joins it and marks the hyphen), large enough to be
+    # recognised again by OCR with --all-pages.
+    files["hyphenated.pdf"] = build_document([{"lines": ["Workers paid in cash must report all wa-", "ges by the end of the month.", "Line three ends normally."]}], title="Hyphenated")
+    files["form-xfa-hybrid.pdf"] = build_form_document(xfa="hybrid")
+    files["form-xfa-dynamic.pdf"] = build_form_document(xfa="dynamic")
+    files["fonts-holdout.pdf"] = build_fonts_document(HOLDOUT_FONT_LINES)
+    files["caption-clean.pdf"] = build_caption_document(words=False)
     files["form-nested.pdf"] = build_nested_form_document()
     files["redaction.pdf"] = build_redaction_document()
     files["redaction-hard.pdf"] = build_redaction_hard_document()

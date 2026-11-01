@@ -5,10 +5,13 @@ import {
   displaySizePt,
   fitWidthZoom,
   mostVisiblePage,
+  MIN_PAGE_PX,
+  displaySizePx,
   nextZoom,
   wheelZoom,
   pdfRectToScreen,
   screenRectToPdf,
+  screenMoveToPdf,
   renderScalePermille,
   unrotatedLayer,
   applyLayerTransform,
@@ -89,6 +92,13 @@ describe("pdf → screen mapping", () => {
   });
 });
 
+describe("tiny pages", () => {
+  it("never collapse below the minimum on-screen size", () => {
+    expect(displaySizePx({ width_pt: 3, height_pt: 3, rotation: 0 }, 0.01)).toEqual({ w: MIN_PAGE_PX, h: MIN_PAGE_PX });
+    expect(displaySizePx({ width_pt: 600, height_pt: 3, rotation: 0 }, 1)).toEqual({ w: 800, h: MIN_PAGE_PX });
+  });
+});
+
 describe("visible page", () => {
   it("picks the page with most visible area", () => {
     const tops = [0, 1000, 2000];
@@ -96,6 +106,16 @@ describe("visible page", () => {
     expect(mostVisiblePage(tops, heights, 0, 800)).toBe(0);
     expect(mostVisiblePage(tops, heights, 700, 800)).toBe(1);
     expect(mostVisiblePage(tops, heights, 2500, 800)).toBe(2);
+  });
+
+  it("at the very end, a short last page fully in view is current, not the bigger page above", () => {
+    // A tall page, then a 40 px one: at the bottom the tall page still shows more area.
+    const tops = [0, 2010];
+    const heights = [2000, 40];
+    expect(mostVisiblePage(tops, heights, 1250, 800)).toBe(0);
+    expect(mostVisiblePage(tops, heights, 1250, 800, 2050)).toBe(1);
+    // Not at the end yet: the most visible page as before.
+    expect(mostVisiblePage(tops, heights, 1200, 800, 2050)).toBe(0);
   });
 });
 
@@ -137,6 +157,22 @@ describe("pages whose box does not start at 0,0", () => {
       expect(back.bottom).toBeCloseTo(100);
       expect(back.right).toBeCloseTo(110);
       expect(back.top).toBeCloseTo(120);
+    });
+  }
+});
+
+describe("screen moves → PDF moves", () => {
+  for (const rotation of [0, 90, 180, 270] as const) {
+    it(`agrees with moving the mapped rectangle at ${rotation}°`, () => {
+      const page: PageInfo = { index: 0, width_pt: 612, height_pt: 792, rotation, label: null };
+      const r = { left: 100, bottom: 500, right: 220, top: 530 };
+      for (const zoom of [0.5, 1, 1.75]) {
+        const s = pdfRectToScreen(r, page, zoom);
+        const moved = screenRectToPdf({ ...s, left: s.left + 30, top: s.top - 12 }, page, zoom);
+        const [dx, dy] = screenMoveToPdf(30, -12, page, zoom);
+        expect(dx).toBeCloseTo(moved.left - r.left, 6);
+        expect(dy).toBeCloseTo(moved.bottom - r.bottom, 6);
+      }
     });
   }
 });

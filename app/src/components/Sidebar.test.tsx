@@ -70,15 +70,62 @@ describe("Comments panel", () => {
     expect(screen.getByText("Note")).toBeTruthy();
     expect(screen.getByText("Text box")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Delete Note on page 1" }));
-    expect(onChanges).toHaveBeenLastCalledWith({ "0:0": { page: 0, index: 0, subtype: "Text", delete: true, text: null } });
+    expect(onChanges).toHaveBeenLastCalledWith({ "0:0": { page: 0, index: 0, subtype: "Text", delete: true, text: null, color: null } });
     fireEvent.click(screen.getByRole("button", { name: "Edit comment of Note on page 1" }));
     fireEvent.change(screen.getByLabelText("Comment for Note on page 1"), { target: { value: "Fixed" } });
     fireEvent.click(screen.getByTestId("comment-apply"));
-    expect(onChanges).toHaveBeenLastCalledWith({ "0:0": { page: 0, index: 0, subtype: "Text", delete: false, text: "Fixed" } });
+    expect(onChanges).toHaveBeenLastCalledWith({ "0:0": { page: 0, index: 0, subtype: "Text", delete: false, text: "Fixed", color: null } });
+    // A note's colour can change; a text box (drawn text) offers no colour.
+    fireEvent.change(screen.getByLabelText("Colour of Note on page 1"), { target: { value: "#00aa00" } });
+    expect(onChanges).toHaveBeenLastCalledWith({ "0:0": { page: 0, index: 0, subtype: "Text", delete: false, text: null, color: "#00aa00" } });
+    expect(screen.queryByLabelText("Colour of Text box on page 1")).toBeNull();
     const editBox = screen.getByRole("button", { name: "Edit comment of Text box on page 1" });
     expect(editBox.getAttribute("aria-disabled")).toBe("true");
     fireEvent.click(screen.getByText("Fix this"));
     expect(onSelect).toHaveBeenCalledWith(0);
+  });
+
+  it("Move hands the annotation to the page; while it moves, Done and Cancel finish it", async () => {
+    const onMove = vi.fn();
+    const onMoveDone = vi.fn();
+    const onMoveCancel = vi.fn();
+    const api = { listAnnotations: vi.fn(async () => ({ annotations: [note, box], truncated: false })), pageUrl: () => "" } as unknown as Api;
+    const props = { doc, view: "comments" as const, onView: () => undefined, currentPage: 0, onSelectPage: () => undefined, onPageContextMenu: () => undefined, onSaveAttachment: () => undefined, onAttachFiles: () => undefined, onEditBookmarks: () => undefined, annotChanges: {}, onAnnotChanges: () => undefined, onMove, onMoveDone, onMoveCancel };
+    const r = render(
+      <ApiContext.Provider value={api}>
+        <Sidebar {...props} moving={null} />
+      </ApiContext.Provider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Move Note on page 1" }));
+    expect(onMove).toHaveBeenCalledWith(note);
+    r.rerender(
+      <ApiContext.Provider value={api}>
+        <Sidebar {...props} moving="0:0" />
+      </ApiContext.Provider>,
+    );
+    expect(screen.queryByRole("button", { name: "Move Note on page 1" })).toBeNull();
+    fireEvent.click(screen.getByTestId("move-done"));
+    expect(onMoveDone).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onMoveCancel).toHaveBeenCalled();
+    // The other annotation can still be moved.
+    expect(screen.getByRole("button", { name: "Move Text box on page 1" })).toBeTruthy();
+  });
+
+  it("lists the comments of a file whose owner does not allow changing them read-only, saying why", async () => {
+    const api = { listAnnotations: vi.fn(async () => ({ annotations: [note], truncated: false })), pageUrl: () => "" } as unknown as Api;
+    const locked = { ...doc, info: { ...doc.info, encrypted: true, can_annotate: false } };
+    render(
+      <ApiContext.Provider value={api}>
+        <Sidebar doc={locked} view="comments" onView={() => undefined} currentPage={0} onSelectPage={() => undefined} onPageContextMenu={() => undefined} onSaveAttachment={() => undefined} onAttachFiles={() => undefined} onEditBookmarks={() => undefined} annotChanges={{}} onAnnotChanges={() => undefined} onMove={() => undefined} />
+      </ApiContext.Provider>,
+    );
+    await screen.findByText("Fix this");
+    expect(screen.getByTestId("comments-locked").textContent).toContain("does not allow");
+    for (const name of ["Delete Note on page 1", "Move Note on page 1", "Edit comment of Note on page 1"]) {
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    }
+    expect(screen.queryByLabelText("Colour of Note on page 1")).toBeNull();
   });
 
   it("shows pending deletes and lets them be undone", async () => {

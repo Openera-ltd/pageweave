@@ -21,6 +21,8 @@ describe("Create PDF from images", () => {
   it("recognises image files and names the output next to the first one", () => {
     expect(isImagePath("/a/photo.JPEG")).toBe(true);
     expect(isImagePath("/a/scan.png")).toBe(true);
+    for (const f of ["/a/b.webp", "/a/scan.TIF", "/a/s.tiff", "/a/anim.gif", "/a/old.bmp"]) expect(isImagePath(f)).toBe(true);
+    expect(isImagePath("/a/photo.heic")).toBe(false);
     expect(isImagePath("/a/doc.pdf")).toBe(false);
     expect(defaultImagesOutput(["/pics/a.jpg"])).toBe("/pics/images.pdf");
   });
@@ -46,6 +48,19 @@ describe("Create PDF from images", () => {
       expect(op.page_size).toBe("letter");
       expect(op.margin).toBeCloseTo(28.35, 2);
     }
+  });
+
+  it("adds pictures that arrive while it is open, without repeating any", () => {
+    const api = { startOperation: vi.fn(), cancelJob: vi.fn(), pickImageFiles: vi.fn(), pickSavePath: vi.fn() } as unknown as Api;
+    const ui = (files: string[]) => (
+      <ApiContext.Provider value={api}>
+        <ImagesToPdfDialog initialFiles={files} jobs={{}} onClose={() => undefined} onFinished={() => undefined} />
+      </ApiContext.Provider>
+    );
+    const view = render(ui(["/pics/a.jpg"]));
+    view.rerender(ui(["/pics/a.jpg", "/pics/b.png"]));
+    const names = [...document.querySelectorAll(".file-list .name")].map((n) => n.textContent);
+    expect(names).toEqual(["1. a.jpg", "2. b.png"]);
   });
 
   it("explains an impossible margin", () => {

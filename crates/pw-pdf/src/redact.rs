@@ -585,7 +585,7 @@ fn apply_plan<'a>(
             .create_path_object_rect(b.to_pdf(), None, None, Some(PdfColor::new(0, 0, 0, 255)))
             .map_err(|_| "box could not be drawn")?;
     }
-    page.regenerate_content().map_err(|_| "page content could not be written")?;
+    crate::edit::regenerate_keeping_colours(page).map_err(|_| "page content could not be written")?;
     Ok(dropped_images)
 }
 

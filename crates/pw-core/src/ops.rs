@@ -44,7 +44,50 @@ pub struct AnnotationChange {
     /// New comment text (not for text boxes, whose text is drawn on the page).
     #[serde(default)]
     pub text: Option<String>,
+    /// New colour `#rrggbb` (markup, shapes, ink and notes; viewers redraw it in the new colour).
+    #[serde(default)]
+    pub color: Option<String>,
+    /// Move by `[dx, dy]` PDF points in unrotated page space (+y is up); its pop-up moves with it.
+    #[serde(default)]
+    pub offset: Option<[f32; 2]>,
+    /// New bounds (PDF points, unrotated page space) for shapes, drawings and stamps: the shape is
+    /// scaled into them. Not together with `offset` (a resize may also move it).
+    #[serde(default)]
+    pub rect: Option<RectPt>,
 }
+
+/// One glossary term (in the document's language) and its fixed translation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GlossaryEntry {
+    pub source: String,
+    pub target: String,
+}
+
+/// Most glossary entries in one translation.
+pub const MAX_GLOSSARY: usize = 1000;
+
+/// Largest move of one annotation, in points (the largest page side PDF allows).
+pub const MAX_ANNOTATION_MOVE: f32 = 14_400.0;
+
+/// Annotation types that can be resized: shapes and drawings are redrawn from their scaled
+/// geometry, stamps stretch their picture into the new bounds.
+pub const RESIZABLE: &[&str] = &["Square", "Circle", "Ink", "Line", "Polygon", "PolyLine", "Stamp"];
+
+/// Annotation types whose colour can be changed: their look follows the colour (/C) when the stored
+/// appearance is dropped, in PDFium and in other viewers.
+pub const RECOLOURABLE: &[&str] = &[
+    "Highlight",
+    "Underline",
+    "StrikeOut",
+    "Squiggly",
+    "Square",
+    "Circle",
+    "Ink",
+    "Line",
+    "Polygon",
+    "PolyLine",
+    "Text",
+];
 
 pub const MAX_ANNOTATION_CHANGES: usize = 10_000;
 
@@ -424,7 +467,7 @@ pub enum PageEdit {
         dx: f32,
         dy: f32,
     },
-    /// Put a PNG/JPEG picture in an existing picture's place (same box).
+    /// Put a picture (PNG, JPEG, WebP, TIFF, GIF or BMP) in an existing picture's place (same box).
     ReplaceImage {
         object: u32,
         path: PathBuf,
@@ -432,6 +475,12 @@ pub enum PageEdit {
     RotateImage {
         object: u32,
         degrees: u32,
+    },
+    /// Fit a picture into a new box (points, unrotated page space, as the listing gives boxes).
+    /// The box is where the picture is before this request's moves, which then still apply.
+    ResizeImage {
+        object: u32,
+        rect: RectPt,
     },
     /// New text at (x, y) in unrotated page space (baseline start), upright as displayed.
     AddText {
@@ -501,7 +550,7 @@ pub enum SignatureMark {
         #[serde(default = "default_pen")]
         width: f32,
     },
-    /// A PNG or JPEG picture of a signature.
+    /// A picture of a signature (PNG, JPEG, WebP, TIFF, GIF or BMP).
     Image { path: PathBuf },
 }
 
@@ -539,6 +588,8 @@ pub struct AnnotationSpec {
 pub enum DesignFormat {
     Svg,
     Pdf,
+    /// A picture of the design at its own size (one design pixel per image pixel).
+    Png,
 }
 
 /// Spreadsheet format for exported tables.
@@ -675,7 +726,7 @@ pub enum Operation {
         permissions: ProtectPermissions,
         output: PathBuf,
     },
-    /// Rebuild a flat picture (a PNG/JPEG file, or page `page` (0-based) of a PDF) as separately
+    /// Rebuild a flat picture (a PNG, JPEG, WebP, TIFF, GIF or BMP file, or page `page` (0-based) of a PDF) as separately
     /// editable text, shapes and pictures, saved as a design project (.pwdesign).
     ReconstructDesign {
         input: PathBuf,
@@ -729,7 +780,8 @@ pub enum Operation {
     InstallOffice,
     /// Translate pages (all when `pages` is absent) with the local translation models into a Word
     /// document (`output` .docx, layout kept) or a text file (.txt). `source` is detected when
-    /// absent; language codes are BCP 47 ("en", "de", …).
+    /// absent; language codes are BCP 47 ("en", "de", …). `bilingual` (PDF only): each sheet shows
+    /// the original page next to its translation.
     TranslateDocument {
         input: PathBuf,
         #[serde(default)]
@@ -738,6 +790,11 @@ pub enum Operation {
         source: Option<String>,
         target: String,
         output: PathBuf,
+        #[serde(default)]
+        bilingual: bool,
+        /// Terms translated one fixed way (whole words, any case), e.g. a company's own wording.
+        #[serde(default)]
+        glossary: Vec<GlossaryEntry>,
     },
     /// Read pages (all when `pages` is absent) aloud with the computer's speech voice into a WAV
     /// file (`voice`: an id from the speech engine, the default voice when absent; `rate`: 0.5–2,
@@ -767,7 +824,7 @@ pub enum Operation {
         pages: Option<String>,
         output: PathBuf,
     },
-    /// Make a new PDF from JPEG and PNG images, one image per page in the given order.
+    /// Make a new PDF from images (JPEG, PNG, WebP, TIFF, GIF, BMP), one image per page in the given order.
     ImagesToPdf {
         inputs: Vec<PathBuf>,
         #[serde(default)]
@@ -1374,7 +1431,23 @@ impl Operation {
                     return Err(PwError::invalid("office.extension", "Save the PDF with a .pdf name."));
                 }
             }
-            Operation::TranslateDocument { output, source, target, .. } => {
+            Operation::TranslateDocument { output, source, target, bilingual, glossary, .. } => {
+                let term_ok = |t: &str| {
+                    let t = t.trim();
+                    !t.is_empty() && t.chars().count() <= 200 && !t.chars().any(char::is_control)
+                };
+                if glossary.len() > MAX_GLOSSARY || !glossary.iter().all(|g| term_ok(&g.source) && term_ok(&g.target)) {
+                    return Err(PwError::invalid(
+                        "translate.glossary",
+                        "Each glossary line needs a term and its translation (at most 200 characters each, 1000 lines).",
+                    ));
+                }
+                if *bilingual && !output.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf")) {
+                    return Err(PwError::invalid(
+                        "translate.bilingual",
+                        "Side-by-side output is a PDF: save it as .pdf.",
+                    ));
+                }
                 let ok = output.extension().is_some_and(|e| {
                     e.eq_ignore_ascii_case("pdf") || e.eq_ignore_ascii_case("docx") || e.eq_ignore_ascii_case("txt")
                 });
@@ -1719,7 +1792,7 @@ impl Operation {
                 }
                 let mut seen = std::collections::HashSet::new();
                 for c in annotation_changes {
-                    if !c.delete && c.text.is_none() {
+                    if !c.delete && c.text.is_none() && c.color.is_none() && c.offset.is_none() && c.rect.is_none() {
                         return Err(PwError::invalid(
                             "annotation.no_change",
                             "An annotation change has nothing to change.",
@@ -1727,6 +1800,50 @@ impl Operation {
                     }
                     if c.text.as_ref().is_some_and(|t| t.chars().count() > MAX_NOTE_CHARS) {
                         return Err(PwError::invalid("annotation.too_long", "A comment is too long."));
+                    }
+                    if let Some(col) = &c.color {
+                        let ok =
+                            col.len() == 7 && col.starts_with('#') && col[1..].chars().all(|h| h.is_ascii_hexdigit());
+                        if !ok {
+                            return Err(PwError::invalid("annotation.color", "Give the colour as #rrggbb."));
+                        }
+                        if !RECOLOURABLE.contains(&c.subtype.as_str()) {
+                            return Err(PwError::invalid(
+                                "annotation.color_kind",
+                                format!("The colour of a {} annotation can't be changed here.", c.subtype),
+                            ));
+                        }
+                    }
+                    if let Some([dx, dy]) = c.offset {
+                        let ok = dx.is_finite()
+                            && dy.is_finite()
+                            && dx.abs() <= MAX_ANNOTATION_MOVE
+                            && dy.abs() <= MAX_ANNOTATION_MOVE
+                            && (dx != 0.0 || dy != 0.0);
+                        if !ok {
+                            return Err(PwError::invalid(
+                                "annotation.offset",
+                                "Give the move as two numbers of points, not both zero and at most 14400 each.",
+                            ));
+                        }
+                    }
+                    if let Some(r) = &c.rect {
+                        if !RESIZABLE.contains(&c.subtype.as_str()) {
+                            return Err(PwError::invalid(
+                                "annotation.resize_kind",
+                                format!("A {} annotation can't be resized here.", c.subtype),
+                            ));
+                        }
+                        let within = |v: f32| v.is_finite() && v.abs() <= 2.0 * MAX_ANNOTATION_MOVE;
+                        let ok = [r.left, r.bottom, r.right, r.top].into_iter().all(within)
+                            && r.right - r.left >= 1.0
+                            && r.top - r.bottom >= 1.0;
+                        if !ok || c.offset.is_some() {
+                            return Err(PwError::invalid(
+                                "annotation.rect",
+                                "Give the new size as a box at least 1 point wide and high (and no separate move).",
+                            ));
+                        }
                     }
                     if !seen.insert((c.page, c.index)) {
                         return Err(PwError::invalid(
@@ -1844,6 +1961,10 @@ pub struct OperationRequest {
     /// For `sign`: the certificate file's password. Never serialized.
     #[serde(default, skip_serializing)]
     pub certificate_password: Option<String>,
+    /// When the source was opened with `password` and a new PDF would come out unprotected, protect
+    /// it with that same open password (AES-256; the original's permissions are not carried over).
+    #[serde(default)]
+    pub keep_protection: bool,
 }
 
 impl OperationRequest {
@@ -1857,6 +1978,7 @@ impl OperationRequest {
             new_password: None,
             new_owner_password: None,
             certificate_password: None,
+            keep_protection: false,
         }
     }
 
@@ -1945,6 +2067,11 @@ fn validate_page_edits(pages: &[PageEdits]) -> PwResult<()> {
             PageEdit::MoveObjects { objects, dx, dy } => !objects.is_empty() && finite(*dx) && finite(*dy),
             PageEdit::ReplaceImage { .. } => true,
             PageEdit::RotateImage { degrees, .. } => matches!(degrees, 90 | 180 | 270),
+            PageEdit::ResizeImage { rect: r, .. } => {
+                [r.left, r.bottom, r.right, r.top].into_iter().all(finite)
+                    && r.right - r.left >= 1.0
+                    && r.top - r.bottom >= 1.0
+            }
             PageEdit::AddText { x, y, text, size, .. } => {
                 finite(*x) && finite(*y) && text.chars().count() <= 2000 && (4.0..=200.0).contains(size)
             }

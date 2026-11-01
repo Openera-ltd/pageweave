@@ -178,3 +178,16 @@ fn libreoffice_opens_the_workbook_with_the_same_values() {
     assert_eq!(rows[2], "123456789012345678,Current,12/03/2026,-4.5", "long identifiers unchanged");
     assert_eq!(rows[3], "00042,Bonus,2025-11-30,12.40", "trailing zeros unchanged");
 }
+
+#[test]
+fn shading_inside_cells_does_not_split_a_table() {
+    // Word shades a header cell and again the paragraph within its padding (shaded-table.pdf).
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("t.xlsx");
+    let r = export("shaded-table.pdf", TableFormat::Xlsx, None, &out).expect("export");
+    assert_eq!(r.data["found"], serde_json::json!([[1, 1, 3, 3]]), "{}", r.data);
+    let s1 = part(&out, "xl/worksheets/sheet1.xml");
+    for v in ["Name", "Count", "Share", "Apples", "40%"] {
+        assert!(s1.contains(&format!(">{v}</t>")), "{v} in {s1}");
+    }
+}

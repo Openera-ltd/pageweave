@@ -344,6 +344,13 @@ textarea {
   min-width: 0;
 }
 
+/* Multi-line fields take their height from rows, not the one-line control height. */
+textarea.input {
+  height: auto;
+  padding: var(--space-2) var(--space-3);
+  resize: vertical;
+}
+
 .input[aria-invalid="true"] {
   border-color: var(--danger);
 }
@@ -618,6 +625,8 @@ textarea {
   border-right: 1px solid var(--border);
   display: grid;
   grid-template-rows: auto 1fr;
+  /* Content never widens the sidebar (it would be cut off at its edge). */
+  grid-template-columns: minmax(0, 1fr);
   min-height: 0;
 }
 
@@ -635,7 +644,9 @@ textarea {
   justify-content: center;
   gap: var(--space-2);
   height: var(--control-h);
-  min-width: calc(var(--control-h) + var(--space-2));
+  /* Full size when they fit; narrower (down to the icon) when the sidebar is tight. */
+  flex: 0 1 calc(var(--control-h) + var(--space-2));
+  min-width: 0;
   padding: 0 var(--space-2);
   border: none;
   border-bottom: 2px solid transparent;
@@ -645,6 +656,7 @@ textarea {
 }
 
 .sidebar-tabs [role="tab"] svg {
+  flex: none;
   width: var(--icon);
   height: var(--icon);
 }
@@ -872,6 +884,88 @@ textarea {
   cursor: crosshair;
   touch-action: none;
   z-index: 3;
+}
+
+.movelayer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.annot-frame {
+  position: absolute;
+  border: 1.5px dashed var(--accent);
+  border-radius: 2px;
+}
+
+.annot-frame.active {
+  border-style: solid;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: 0 0 0 1px var(--surface);
+  cursor: move;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.edit-handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  background: var(--surface);
+  z-index: 2;
+  touch-action: none;
+}
+
+.edit-handle[data-corner="nw"],
+.edit-handle[data-corner="se"] {
+  cursor: nwse-resize;
+}
+
+.edit-handle[data-corner="ne"],
+.edit-handle[data-corner="sw"] {
+  cursor: nesw-resize;
+}
+
+.annot-handle {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  background: var(--surface);
+}
+
+.annot-handle[data-corner="nw"] {
+  left: -5px;
+  top: -5px;
+  cursor: nwse-resize;
+}
+
+.annot-handle[data-corner="ne"] {
+  right: -5px;
+  top: -5px;
+  cursor: nesw-resize;
+}
+
+.annot-handle[data-corner="sw"] {
+  left: -5px;
+  bottom: -5px;
+  cursor: nesw-resize;
+}
+
+.annot-handle[data-corner="se"] {
+  right: -5px;
+  bottom: -5px;
+  cursor: nwse-resize;
+}
+
+.annot-frame.active:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .markdraft {
@@ -2296,6 +2390,10 @@ kbd,
   flex-direction: column;
   gap: var(--space-2);
 }
+.comments-locked {
+  margin: var(--space-2) var(--space-2) 0;
+  font-size: var(--font-size-1);
+}
 .comments li {
   border: 1px solid var(--border);
   border-radius: var(--radius-2);
@@ -2349,6 +2447,7 @@ kbd,
 }
 .comment-actions {
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: var(--space-1);
 }
 .comment-edit textarea {
@@ -2562,6 +2661,12 @@ kbd,
   min-width: 0;
 }
 
+.studio-bar .studio-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .studio-bar .hint {
   font-weight: 400;
   color: var(--text-muted);
@@ -2581,6 +2686,13 @@ kbd,
   align-items: center;
 }
 
+/* Only the title gives way when the window is narrow; the controls keep their size. */
+.studio-bar > .group,
+.studio-bar > .segmented,
+.studio-bar > .studio-opacity {
+  flex: none;
+}
+
 .studio-bar .spacer {
   flex: 1;
 }
@@ -2594,6 +2706,17 @@ kbd,
 .studio-opacity {
   width: 110px;
   accent-color: var(--accent);
+}
+
+/* Pinned rows: the bar and banners above are optional, and the body must take the free height
+   whether or not they are shown. */
+.studio-body,
+.studio-wait {
+  grid-row: 4;
+}
+
+.studio-status {
+  grid-row: 5;
 }
 
 .studio-body {
@@ -2721,9 +2844,10 @@ kbd,
   color: var(--warning);
 }
 
+/* The stage is centred with auto margins, not place-items: a zoomed-in page overflowing a centred
+   grid would be cut off on the left and top, out of scroll reach. */
 .studio-canvas {
   display: grid;
-  place-items: center;
   overflow: auto;
   background: var(--canvas);
   min-width: 0;
@@ -2731,8 +2855,18 @@ kbd,
   padding: var(--space-6);
 }
 
+.studio-canvas.panning,
+.studio-canvas.panning .studio-stage {
+  cursor: grabbing;
+}
+
+.studio-canvas.pan-ready .studio-stage {
+  cursor: grab;
+}
+
 .studio-stage {
   position: relative;
+  margin: auto;
   flex: none;
   box-shadow: var(--page-shadow);
   touch-action: none;
@@ -2759,6 +2893,47 @@ kbd,
 
 .studio-source {
   transition: opacity var(--dur-fast) var(--ease);
+}
+
+/* Alignment guides while dragging (snapped to the canvas or another object). */
+.studio-guide {
+  position: absolute;
+  background: var(--danger);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.studio-guide.x {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.studio-guide.y {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
+.studio-rotate {
+  align-items: flex-end;
+}
+
+.studio-rotate .studio-num {
+  width: calc(96px * var(--ui-scale));
+}
+
+.studio-form > .label {
+  display: block;
+  margin: var(--space-2) 0 var(--space-1);
+  font-size: var(--font-size-1);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.studio-replace {
+  width: 100%;
+  margin-bottom: var(--space-3);
 }
 
 .studio-selection {
@@ -2901,6 +3076,34 @@ kbd,
   text-decoration: underline;
 }
 
+/* Compact Studio bar (set by the Studio when the full bar does not fit: narrow window, comfortable
+   density, larger text). Export buttons keep their format names, Save keeps its icon and its name
+   for screen readers, and the compare buttons become one list. If even this does not fit (very
+   large text in a small window), the bar scrolls sideways so every control stays reachable. */
+.studio-bar.compact {
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.studio-bar.compact .studio-export-icon {
+  display: none;
+}
+.studio-bar.compact .studio-save-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+.studio-compare-select {
+  flex: none;
+  width: auto;
+  height: var(--control-h);
+}
+
 @media (max-width: 900px) {
   .studio-body {
     grid-template-columns: calc(180px * var(--ui-scale)) 1fr calc(210px * var(--ui-scale));
@@ -2908,4 +3111,53 @@ kbd,
   .studio-bar .segmented button {
     padding: 0 var(--space-2);
   }
+}
+
+/* Picture crop: trims in a compact fieldset; the kept area is outlined on the canvas. */
+.studio-crop {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-1);
+}
+
+.studio-crop > legend {
+  padding: 0 var(--space-1);
+  font-size: var(--font-size-1);
+  color: var(--text-muted);
+}
+
+.studio-crop-box {
+  position: absolute;
+  pointer-events: none;
+  outline: 2px dashed var(--accent);
+  box-shadow: 0 0 0 9999px color-mix(in srgb, var(--bg) 55%, transparent);
+}
+
+/* Colour of an existing annotation in the Comments panel: a compact swatch beside its actions. */
+.field .markup-color {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 8px;
+  font-weight: 400;
+}
+
+.comment-color,
+.markup-color input {
+  width: calc(24px * var(--ui-scale));
+  height: calc(24px * var(--ui-scale));
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-1);
+  background: none;
+  cursor: pointer;
+}
+
+.comment-color:focus-visible,
+.markup-color input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }

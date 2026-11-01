@@ -11,7 +11,7 @@ pub mod install;
 pub mod tokenizer;
 
 use ort::session::Session;
-use ort::value::{DynValue, Tensor};
+use ort::value::Tensor;
 use pw_core::{ErrorCategory, PwError, PwResult};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -27,6 +27,10 @@ pub const CONFIG_FILE: &str = "config.json";
 const LOCK: &str = include_str!("../../../resources/translate.lock.json");
 /// Longest sentence accepted (tokens); longer ones are split at commas or by length.
 const MAX_INPUT_TOKENS: usize = 400;
+/// Beam width: 4 hypotheses (the usual setting for these Marian models). Greedy decoding (1) turned
+/// "The house is small." into "Das Haus ist sehr schön." with the English → German model; measured
+/// gains in docs/benchmarks/TRANSLATION_BASELINE.md.
+const BEAM: usize = 4;
 /// Longest text accepted in one call (characters).
 pub const MAX_TEXT_CHARS: usize = 500_000;
 
@@ -248,6 +252,10 @@ pub struct Translator {
     cfg: Config,
     /// Token put before the source (the target language, for multilingual models).
     prefix: Option<u32>,
+    /// Hypotheses kept while decoding (1 = greedy).
+    beam: usize,
+    /// Terms translated one fixed way (source term, its translation), longest first.
+    glossary: Vec<(String, String)>,
 }
 
 impl Translator {
@@ -321,10 +329,16 @@ impl Translator {
             Some(t) => Some(tok.id(t).ok_or_else(|| corrupt(&pair, TOKENIZER_FILE))?),
             None => None,
         };
-        Ok(Translator { encoder, decoder, tok, cfg, prefix })
+        Ok(Translator { encoder, decoder, tok, cfg, prefix, beam: BEAM, glossary: Vec::new() })
     }
 
-    /// Translate one sentence (greedy decoding with the decoder's key/value cache).
+    /// Hypotheses kept while decoding (1 = greedy); for benchmarks.
+    pub fn set_beam(&mut self, width: usize) {
+        self.beam = width.clamp(1, 16);
+    }
+
+    /// Translate one sentence: beam search (`self.beam` hypotheses, 1 = greedy) with the decoder's
+    /// key/value cache, finished hypotheses compared by log-probability per token.
     pub fn sentence(&mut self, text: &str) -> PwResult<String> {
         let mut ids: Vec<i64> = self.tok.encode(text).into_iter().map(i64::from).collect();
         if ids.is_empty() {
@@ -349,72 +363,144 @@ impl Translator {
         let hidden = hidden.to_vec();
         drop(enc_out);
 
-        let (l, h, hd) = (self.cfg.layers, self.cfg.heads, self.cfg.head_dim);
-        let empty = || -> PwResult<DynValue> {
-            Ok(Tensor::from_array(([1usize, h, 0, hd], Vec::<f32>::new())).map_err(engine_err)?.into_dyn())
-        };
-        // Self-attention cache (key, value per layer), grows each step; cross-attention cache
-        // (key, value per layer), computed on the first step only (later steps return it empty).
-        let mut own: Vec<DynValue> = (0..2 * l).map(|_| empty()).collect::<PwResult<_>>()?;
-        let mut cross: Vec<DynValue> = (0..2 * l).map(|_| empty()).collect::<PwResult<_>>()?;
-        let mut out: Vec<u32> = Vec::new();
+        let (l, h, hd, v) = (self.cfg.layers, self.cfg.heads, self.cfg.head_dim, self.cfg.vocab);
+        let width = self.beam.max(1);
         let max_new = (2 * n + 10).min(512);
-        let mut next = self.cfg.start as i64;
+        // Active hypotheses: tokens so far and summed log-probability. Every row of the decoder's
+        // batch is one hypothesis; its self-attention cache rows follow it when hypotheses are kept.
+        let mut beams: Vec<(Vec<u32>, f32)> = vec![(Vec::new(), 0.0)];
+        let mut finished: Vec<(Vec<u32>, f32)> = Vec::new();
+        // Self-attention cache per layer (key, value) as [rows, heads, t, head_dim]; the
+        // cross-attention cache is computed on the first step for one row and repeated per row.
+        let mut own: Vec<Vec<f32>> = vec![Vec::new(); 2 * l];
+        let mut own_t = 0usize;
+        let mut cross: Vec<(Vec<usize>, Vec<f32>)> = Vec::new();
+        let repeat = |data: &[f32], rows: usize| -> Vec<f32> { data.repeat(rows) };
         for step in 0..max_new {
+            let rows = beams.len();
+            let last: Vec<i64> =
+                beams.iter().map(|(t, _)| t.last().map(|&x| x as i64).unwrap_or(self.cfg.start as i64)).collect();
             let mut inputs: Vec<(String, ort::session::SessionInputValue)> = vec![
-                ("input_ids".into(), Tensor::from_array(([1usize, 1], vec![next])).map_err(engine_err)?.into()),
+                ("input_ids".into(), Tensor::from_array(([rows, 1usize], last)).map_err(engine_err)?.into()),
                 (
                     "encoder_attention_mask".into(),
-                    Tensor::from_array(([1usize, n], mask.clone())).map_err(engine_err)?.into(),
+                    Tensor::from_array(([rows, n], mask.repeat(rows))).map_err(engine_err)?.into(),
                 ),
                 (
                     "encoder_hidden_states".into(),
-                    Tensor::from_array((hidden_shape.clone(), hidden.clone())).map_err(engine_err)?.into(),
+                    Tensor::from_array(([rows, hidden_shape[1], hidden_shape[2]], repeat(&hidden, rows)))
+                        .map_err(engine_err)?
+                        .into(),
                 ),
                 ("use_cache_branch".into(), Tensor::from_array(([1usize], vec![step > 0])).map_err(engine_err)?.into()),
             ];
-            for (k, v) in std::mem::take(&mut own).into_iter().enumerate() {
-                inputs.push((format!("past_key_values.{}.decoder.{}", k / 2, ["key", "value"][k % 2]), v.into()));
+            for (k, data) in own.iter().enumerate() {
+                let t = Tensor::from_array(([rows, h, own_t, hd], data.clone())).map_err(engine_err)?;
+                inputs.push((format!("past_key_values.{}.decoder.{}", k / 2, ["key", "value"][k % 2]), t.into()));
             }
-            for (k, v) in cross.iter().enumerate() {
-                inputs
-                    .push((format!("past_key_values.{}.encoder.{}", k / 2, ["key", "value"][k % 2]), v.view().into()));
-            }
-            let mut outputs = self.decoder.run(inputs).map_err(|e| engine_err(format!("step {step}: {e}")))?;
-            let (_, logits) = outputs["logits"].try_extract_tensor::<f32>().map_err(engine_err)?;
-            let v = self.cfg.vocab;
-            if logits.len() < v {
-                return Err(engine_err("unexpected output size"));
-            }
-            let last = &logits[logits.len() - v..];
-            let mut best = 0usize;
-            let mut best_score = f32::NEG_INFINITY;
-            for (i, &x) in last.iter().enumerate() {
-                if i as u32 != self.cfg.pad && x > best_score {
-                    best_score = x;
-                    best = i;
-                }
-            }
-            for k in 0..2 * l {
-                let name = format!("present.{}.decoder.{}", k / 2, ["key", "value"][k % 2]);
-                own.push(outputs.remove(&name).ok_or_else(|| engine_err("missing decoder state"))?);
+            for (k, c) in cross.iter().enumerate() {
+                let value: ort::session::SessionInputValue = if step == 0 {
+                    Tensor::from_array(([rows, h, 0usize, hd], Vec::<f32>::new())).map_err(engine_err)?.into()
+                } else {
+                    Tensor::from_array(([rows, c.0[1], c.0[2], c.0[3]], repeat(&c.1, rows))).map_err(engine_err)?.into()
+                };
+                inputs.push((format!("past_key_values.{}.encoder.{}", k / 2, ["key", "value"][k % 2]), value));
             }
             if step == 0 {
-                let mut c = Vec::with_capacity(2 * l);
+                for k in 0..2 * l {
+                    let t = Tensor::from_array(([rows, h, 0usize, hd], Vec::<f32>::new())).map_err(engine_err)?;
+                    inputs.push((format!("past_key_values.{}.encoder.{}", k / 2, ["key", "value"][k % 2]), t.into()));
+                }
+            }
+            let outputs = self.decoder.run(inputs).map_err(|e| engine_err(format!("step {step}: {e}")))?;
+            let (_, logits) = outputs["logits"].try_extract_tensor::<f32>().map_err(engine_err)?;
+            if logits.len() < rows * v {
+                return Err(engine_err("unexpected output size"));
+            }
+            let per_row = logits.len() / rows;
+            // Candidates: each hypothesis extended by its `width` best tokens (log-softmax).
+            let mut cand: Vec<(usize, u32, f32)> = Vec::with_capacity(rows * width);
+            for (r, (_, score)) in beams.iter().enumerate() {
+                let row = &logits[r * per_row + per_row - v..(r + 1) * per_row];
+                let max = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                let lse = max + row.iter().map(|&x| (x - max).exp()).sum::<f32>().ln();
+                let mut top: Vec<(u32, f32)> = Vec::with_capacity(width + 1);
+                for (i, &x) in row.iter().enumerate() {
+                    if i as u32 == self.cfg.pad {
+                        continue;
+                    }
+                    if top.len() < width || x > top[top.len() - 1].1 {
+                        let at = top.iter().position(|&(_, y)| x > y).unwrap_or(top.len());
+                        top.insert(at, (i as u32, x));
+                        top.truncate(width);
+                    }
+                }
+                cand.extend(top.into_iter().map(|(tok, x)| (r, tok, score + x - lse)));
+            }
+            cand.sort_by(|a, b| b.2.total_cmp(&a.2));
+            let mut keep: Vec<(usize, Vec<u32>, f32)> = Vec::with_capacity(width);
+            for (r, tok, score) in cand {
+                if keep.len() == width {
+                    break;
+                }
+                if tok == self.cfg.eos {
+                    let len = beams[r].0.len().max(1) as f32;
+                    finished.push((beams[r].0.clone(), score / len));
+                } else {
+                    let mut t = beams[r].0.clone();
+                    t.push(tok);
+                    keep.push((r, t, score));
+                }
+            }
+            // The step's caches: own grows by one position; cross is kept from the first step.
+            let mut present: Vec<(Vec<usize>, Vec<f32>)> = Vec::with_capacity(2 * l);
+            for k in 0..2 * l {
+                let name = format!("present.{}.decoder.{}", k / 2, ["key", "value"][k % 2]);
+                let (sh, data) = outputs[name.as_str()].try_extract_tensor::<f32>().map_err(engine_err)?;
+                present.push((sh.iter().map(|&d| d as usize).collect(), data.to_vec()));
+            }
+            if step == 0 {
                 for k in 0..2 * l {
                     let name = format!("present.{}.encoder.{}", k / 2, ["key", "value"][k % 2]);
-                    c.push(outputs.remove(&name).ok_or_else(|| engine_err("missing decoder state"))?);
+                    let (sh, data) = outputs[name.as_str()].try_extract_tensor::<f32>().map_err(engine_err)?;
+                    let sh: Vec<usize> = sh.iter().map(|&d| d as usize).collect();
+                    let one = data.len() / sh[0].max(1);
+                    cross.push((sh, data[..one].to_vec()));
                 }
-                drop(outputs);
-                cross = c;
             }
-            if best as u32 == self.cfg.eos {
+            drop(outputs);
+            // Stop when nothing is left to extend, or when `width` hypotheses have finished and no
+            // live one can still beat them (scores only fall; per-token scores are compared). Stopping
+            // at the first `width` finished ones would prefer early ends (dropped final full stops).
+            if keep.is_empty() {
                 break;
             }
-            out.push(best as u32);
-            next = best as i64;
+            if finished.len() >= width {
+                finished.sort_by(|a, b| b.1.total_cmp(&a.1));
+                finished.truncate(width);
+                let worst = finished[width - 1].1;
+                let best_live = keep.iter().map(|(_, t, sc)| sc / t.len() as f32).fold(f32::NEG_INFINITY, f32::max);
+                if best_live <= worst {
+                    break;
+                }
+            }
+            own_t = present.first().map(|p| p.0[2]).unwrap_or(own_t + 1);
+            let row_len = h * own_t * hd;
+            own = present
+                .iter()
+                .map(|(_, data)| {
+                    keep.iter().flat_map(|(r, _, _)| data[r * row_len..(r + 1) * row_len].iter().copied()).collect()
+                })
+                .collect();
+            beams = keep.into_iter().map(|(_, t, s)| (t, s)).collect();
         }
-        Ok(self.tok.decode(&out))
+        // Unfinished hypotheses compete too (length limit reached).
+        finished.extend(beams.into_iter().map(|(t, s)| {
+            let len = t.len().max(1) as f32;
+            (t, s / len)
+        }));
+        let best = finished.into_iter().max_by(|a, b| a.1.total_cmp(&b.1)).map(|(t, _)| t).unwrap_or_default();
+        Ok(self.tok.decode(&best))
     }
 
     /// Translate a sentence with addresses and codes masked: they are replaced by placeholders the
@@ -439,8 +525,15 @@ impl Translator {
         Ok(first)
     }
 
+    /// Translate glossary terms one fixed way from now on (empty: none).
+    pub fn set_glossary(&mut self, glossary: &[(String, String)]) {
+        self.glossary = glossary.to_vec();
+        // Longest first, so "river basin" wins over "river".
+        self.glossary.sort_by_key(|(s, _)| std::cmp::Reverse(s.chars().count()));
+    }
+
     fn masked_with(&mut self, sentence: &str, all_numbers: bool) -> PwResult<String> {
-        let (masked, originals) = mask_with(sentence, all_numbers);
+        let (masked, originals) = mask_glossary(sentence, all_numbers, &self.glossary);
         let t = self.sentence(&masked)?;
         if originals.is_empty() || placeholders_kept(&t, originals.len()) {
             return Ok(unmask(&t, &originals));
@@ -568,6 +661,7 @@ pub fn translate_all(
     source: &str,
     target: &str,
     texts: &[String],
+    glossary: &[(String, String)],
     cancelled: &dyn Fn() -> bool,
     progress: &dyn Fn(u64, u64),
 ) -> PwResult<Vec<String>> {
@@ -576,12 +670,23 @@ pub fn translate_all(
     let mut current: Vec<String> = texts.to_vec();
     for (k, (s, t)) in steps.iter().enumerate() {
         current = with_translator(s, t, |tr| {
+            // The glossary is in the document's language: it applies to the first step.
+            tr.set_glossary(if k == 0 { glossary } else { &[] });
             let mut out = Vec::with_capacity(current.len());
+            let mut failed = None;
             for (i, text) in current.iter().enumerate() {
-                out.push(tr.text(text, cancelled, &|_, _| {})?);
+                match tr.text(text, cancelled, &|_, _| {}) {
+                    Ok(t) => out.push(t),
+                    Err(e) => {
+                        failed = Some(e);
+                        break;
+                    }
+                }
                 progress((k * texts.len() + i + 1) as u64, total);
             }
-            Ok(out)
+            // The loaded model is kept for the next request: it must not keep this glossary.
+            tr.set_glossary(&[]);
+            failed.map_or(Ok(out), Err)
         })?;
     }
     Ok(current)
@@ -711,8 +816,61 @@ pub fn mask(text: &str) -> (String, Vec<String>) {
 
 /// As [`mask`]; with `all_numbers`, every number is masked too (after a translation changed one).
 pub fn mask_with(text: &str, all_numbers: bool) -> (String, Vec<String>) {
+    mask_glossary(text, all_numbers, &[])
+}
+
+/// As [`mask_with`], and glossary terms (whole words, any case; `glossary` longest first) become
+/// placeholders that are put back as their fixed translation.
+pub fn mask_glossary(text: &str, all_numbers: bool, glossary: &[(String, String)]) -> (String, Vec<String>) {
     let mut out = String::with_capacity(text.len());
     let mut originals: Vec<String> = Vec::new();
+    let mut rest = text;
+    while let Some((at, len, translation)) = first_term(rest, glossary) {
+        mask_words(&rest[..at], all_numbers, &mut out, &mut originals);
+        originals.push(translation.to_string());
+        out.push_str(&format!("PWX{}", originals.len()));
+        rest = &rest[at + len..];
+    }
+    mask_words(rest, all_numbers, &mut out, &mut originals);
+    (out, originals)
+}
+
+/// The earliest glossary term in `text` as a whole word (any case): byte start, byte length and its
+/// translation. Among terms starting at the same place the first listed (the longest) wins.
+fn first_term<'g>(text: &str, glossary: &'g [(String, String)]) -> Option<(usize, usize, &'g str)> {
+    if glossary.is_empty() {
+        return None;
+    }
+    let lower = text.to_lowercase();
+    // Only when lowercasing keeps byte offsets (true for the six languages' letters).
+    if lower.len() != text.len() {
+        return None;
+    }
+    let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric());
+    let mut best: Option<(usize, usize, &str)> = None;
+    for (src, dst) in glossary {
+        let term = src.to_lowercase();
+        if term.is_empty() {
+            continue;
+        }
+        let mut from = 0;
+        while let Some(i) = lower[from..].find(&term) {
+            let at = from + i;
+            let end = at + term.len();
+            if !word(lower[..at].chars().next_back()) && !word(lower[end..].chars().next()) {
+                if best.is_none_or(|(b, _, _)| at < b) {
+                    best = Some((at, term.len(), dst.as_str()));
+                }
+                break;
+            }
+            from = at + term.chars().next().map_or(1, char::len_utf8);
+        }
+    }
+    best
+}
+
+/// Mask the maskable words of `text` (see [`mask_with`]) onto `out`, numbering after `originals`.
+fn mask_words(text: &str, all_numbers: bool, out: &mut String, originals: &mut Vec<String>) {
     // Names in capitals (brands, acronyms) are kept, unless the sentence is mostly capitals (a
     // heading set in capitals is translated).
     let words: Vec<&str> = text.split_whitespace().filter(|w| w.chars().any(char::is_alphabetic)).collect();
@@ -739,7 +897,6 @@ pub fn mask_with(text: &str, all_numbers: bool) -> (String, Vec<String>) {
             out.push_str(part);
         }
     }
-    (out, originals)
 }
 
 /// Whether every placeholder PWX1..PWXn is in `text` (any case).
@@ -773,12 +930,34 @@ mod route_tests {
     use super::*;
 
     #[test]
+    fn glossary_terms_become_placeholders_put_back_as_their_translation() {
+        let g = |pairs: &[(&str, &str)]| {
+            let mut v: Vec<(String, String)> = pairs.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+            v.sort_by_key(|(s, _)| std::cmp::Reverse(s.chars().count()));
+            v
+        };
+        let glossary = g(&[("river", "Strom"), ("river basin", "Einzugsgebiet"), ("sediment", "Schwebstoff")]);
+        let (m, o) = mask_glossary("The River basin holds sediment; the river at gauge RX-100.", false, &glossary);
+        // Longest term first, any case, whole words only; other masking still applies (RX-100).
+        assert_eq!(m, "The PWX1 holds PWX2; the PWX3 at gauge PWX4.");
+        assert_eq!(o, ["Einzugsgebiet", "Schwebstoff", "Strom", "RX-100"]);
+        assert_eq!(
+            unmask("Das PWX1 hält PWX2; der PWX3 am Pegel PWX4.", &o),
+            "Das Einzugsgebiet hält Schwebstoff; der Strom am Pegel RX-100."
+        );
+        // Not inside other words.
+        let (m, o) = mask_glossary("Riverside sediments", false, &glossary);
+        assert_eq!((m.as_str(), o.len()), ("Riverside sediments", 0));
+        // Without a glossary masking is unchanged.
+        assert_eq!(mask_glossary("Call NASA at 10.", false, &[]), mask_with("Call NASA at 10.", false));
+    }
+
+    #[test]
     fn routes_protected_tokens_and_names() {
         assert_eq!(route("en", "de").expect("direct"), vec![("en".to_string(), "de".to_string())]);
-        assert_eq!(
-            route("de", "fr").expect("pivot"),
-            vec![("de".to_string(), "en".to_string()), ("en".to_string(), "fr".to_string())]
-        );
+        // Every pair of the six languages is pinned directly (D-027): no route through English.
+        assert_eq!(route("de", "fr").expect("direct"), vec![("de".to_string(), "fr".to_string())]);
+        assert_eq!(route("pt", "it").expect("direct"), vec![("pt".to_string(), "it".to_string())]);
         assert_eq!(route("en", "en").expect_err("same").code, "translate.same");
         assert_eq!(route("en", "xx").expect_err("none").code, "translate.direction");
         assert_eq!(

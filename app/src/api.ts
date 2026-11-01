@@ -11,6 +11,7 @@ import { OFFICE_EXTENSIONS } from "./office";
 import type {
   AppInfo,
   Design,
+  DesignFormat,
   AttachmentInfo,
   ExistingAnnotation,
   ResourceReport,
@@ -39,6 +40,12 @@ import type {
   Settings,
 } from "./types";
 
+const EXPORT_FILTERS: Record<DesignFormat, { name: string; extensions: string[] }> = {
+  svg: { name: "SVG drawing", extensions: ["svg"] },
+  pdf: { name: "PDF document", extensions: ["pdf"] },
+  png: { name: "PNG picture", extensions: ["png"] },
+};
+
 export interface DropEvent {
   type: "enter" | "over" | "drop" | "leave";
   paths: string[];
@@ -61,10 +68,14 @@ export interface Api {
   pickPdfFiles(multiple: boolean): Promise<string[]>;
   pickSavePath(defaultPath: string): Promise<string | null>;
   /** Save dialog for a design export (SVG or PDF). */
-  pickDesignExport(defaultPath: string, format: "svg" | "pdf"): Promise<string | null>;
+  pickDesignExport(defaultPath: string, format: DesignFormat): Promise<string | null>;
   /** A picture, PDF or design project to open in the Studio. */
   pickDesignSource(): Promise<string | null>;
   loadDesign(path: string): Promise<Design>;
+  /** A PNG/JPEG file decoded and re-encoded as PNG (base64), for replacing a picture. */
+  loadPicture(path: string): Promise<string>;
+  /** A picture (PNG, base64) with fractions of its width/height trimmed from each side, re-encoded. */
+  cropPicture(png: string, trim: [number, number, number, number]): Promise<string>;
   /** Save edits over the design project at `path` (an existing .pwdesign only); returns its size. */
   saveDesign(path: string, design: Design): Promise<number>;
   pickFolder(defaultPath?: string): Promise<string | null>;
@@ -172,16 +183,18 @@ export const tauriApi: Api = {
   },
   pickSavePath: (defaultPath) => saveDialog({ defaultPath, filters: [{ name: "PDF document", extensions: ["pdf"] }] }),
   pickDesignExport: (defaultPath, format) =>
-    saveDialog({ defaultPath, filters: [format === "svg" ? { name: "SVG drawing", extensions: ["svg"] } : { name: "PDF document", extensions: ["pdf"] }] }),
+    saveDialog({ defaultPath, filters: [EXPORT_FILTERS[format]] }),
   pickDesignSource: async () => {
     const r = await openDialog({
       multiple: false,
       directory: false,
-      filters: [{ name: "Pictures, PDFs and designs", extensions: ["png", "jpg", "jpeg", "pdf", "pwdesign"] }],
+      filters: [{ name: "Pictures, PDFs and designs", extensions: ["png", "jpg", "jpeg", "webp", "tif", "tiff", "gif", "bmp", "pdf", "pwdesign"] }],
     });
     return typeof r === "string" ? r : null;
   },
   loadDesign: (path) => invoke("load_design", { path }),
+  loadPicture: (path) => invoke("load_picture", { path }),
+  cropPicture: (png, trim) => invoke("crop_picture", { png, left: trim[0], top: trim[1], right: trim[2], bottom: trim[3] }),
   saveDesign: (path, design) => invoke("save_design", { path, design }),
   pickFolder: async (defaultPath) => {
     const r = await openDialog({ directory: true, multiple: false, defaultPath });
@@ -200,7 +213,7 @@ export const tauriApi: Api = {
   trustCertificate: (docId, index, position) => invoke("trust_certificate", { docId, index, position }),
   removeTrustedCertificate: (fingerprint) => invoke("remove_trusted_certificate", { fingerprint }),
   pickImageFiles: async () => {
-    const r = await openDialog({ multiple: true, directory: false, filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png"] }] });
+    const r = await openDialog({ multiple: true, directory: false, filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png", "webp", "tif", "tiff", "gif", "bmp"] }] });
     if (r === null) return [];
     return Array.isArray(r) ? r : [r];
   },

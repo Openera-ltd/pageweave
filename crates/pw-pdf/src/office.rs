@@ -91,18 +91,82 @@ fn candidates() -> Vec<PathBuf> {
 
 /// The installed LibreOffice, if any (its version is read from the program itself).
 pub fn find_office() -> Option<OfficeEngine> {
-    for p in candidates() {
-        if !p.is_file() {
-            continue;
+    candidates()
+        .into_iter()
+        .filter(|p| p.is_file())
+        .find_map(|p| version_of(&p).map(|version| OfficeEngine { program: p, version }))
+}
+
+/// "LibreOffice 24.2.7.2", or None when `program` is not a LibreOffice. A candidate that does not
+/// qualify is skipped (it used to end the whole search).
+///
+/// Windows: read from `version.ini` beside the program, never by running it. `soffice.exe` is a
+/// windowed program: started without a console (the desktop app, the installer's post-install
+/// step) `--version` shows a message box and waits for a click, which blocked Office detection and
+/// conversion (found when the offline installer hung for 40 minutes, 2026-11-01).
+fn version_of(program: &Path) -> Option<String> {
+    if cfg!(windows) {
+        if !program.is_file() {
+            return None;
         }
-        let out = Command::new(&p).arg("--version").stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
-        let text = String::from_utf8_lossy(&out.stdout);
-        if out.status.success() && text.contains("LibreOffice") {
-            let version = text.split_whitespace().take(2).collect::<Vec<_>>().join(" ");
-            return Some(OfficeEngine { program: p, version });
-        }
+        let ini = std::fs::read(program.parent()?.join("version.ini")).ok()?;
+        return Some(version_from_ini(&ini));
     }
-    None
+    let text = output_within(Command::new(program).arg("--version"), Duration::from_secs(30))?;
+    text.contains("LibreOffice").then(|| text.split_whitespace().take(2).collect::<Vec<_>>().join(" "))
+}
+
+/// "LibreOffice <MsiProductVersion>" from a Windows LibreOffice `program\version.ini` (UTF-8 or
+/// UTF-16), or plain "LibreOffice" when the file names no version.
+fn version_from_ini(bytes: &[u8]) -> String {
+    let text = if bytes.starts_with(&[0xFF, 0xFE]) {
+        let units: Vec<u16> =
+            bytes[2..].chunks(2).map(|c| u16::from_le_bytes([c[0], *c.get(1).unwrap_or(&0)])).collect();
+        String::from_utf16_lossy(&units)
+    } else {
+        String::from_utf8_lossy(bytes).into_owned()
+    };
+    let value = |key: &str| {
+        text.lines().find_map(|l| {
+            let (k, v) = l.split_once('=')?;
+            (k.trim().eq_ignore_ascii_case(key) && !v.trim().is_empty()).then(|| v.trim().to_string())
+        })
+    };
+    match value("MsiProductVersion").or_else(|| value("ProductVersion")) {
+        Some(v) if v.chars().all(|c| c.is_ascii_digit() || c == '.') => format!("LibreOffice {v}"),
+        _ => "LibreOffice".to_string(),
+    }
+}
+
+/// Standard output of `cmd` when it exits successfully within `limit`; a program that does not
+/// finish in time is stopped (None).
+fn output_within(cmd: &mut Command, limit: Duration) -> Option<String> {
+    let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+    let mut stdout = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut stdout, &mut buf);
+        buf
+    });
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() < limit => std::thread::sleep(Duration::from_millis(50)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    };
+    // A child of the program may still hold the pipe open; do not wait for it beyond the limit.
+    let deadline = started + limit;
+    while !reader.is_finished() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let out = if reader.is_finished() { reader.join().ok()? } else { Vec::new() };
+    status.success().then(|| String::from_utf8_lossy(&out).into_owned())
 }
 
 fn not_installed() -> PwError {
@@ -219,17 +283,17 @@ pub fn install_office(cancelled: &dyn Fn() -> bool, progress: &dyn Fn(u64, u64))
         }
         std::thread::sleep(Duration::from_millis(250));
     }
-    // The unpacked program must run before it replaces anything.
+    // The unpacked program must be a LibreOffice before it replaces anything (on Windows its
+    // version.ini is read; the first conversion starts it).
     let found = program_in(&staging).into_iter().find(|p| p.is_file()).ok_or_else(|| {
         PwError::new(ErrorCategory::CorruptResource, "office.unpack", "The unpacked LibreOffice has no program.")
     })?;
-    let out = Command::new(&found).arg("--version").stdin(Stdio::null()).stderr(Stdio::null()).output();
-    if !out.as_ref().is_ok_and(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains("LibreOffice")) {
+    if version_of(&found).is_none() {
         let _ = std::fs::remove_dir_all(&staging);
         return Err(PwError::new(
             ErrorCategory::CorruptResource,
             "office.unpack",
-            "The unpacked LibreOffice does not start.",
+            "The unpacked LibreOffice is incomplete.",
         ));
     }
     let _ = std::fs::remove_dir_all(&dir);
@@ -276,6 +340,52 @@ pub struct OfficeReport {
 }
 
 /// Convert `input` (an Office document) to a PDF at `output`.
+/// The first 64 KB of a file.
+fn read_head(path: &Path) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut buf = Vec::with_capacity(65_536);
+    std::fs::File::open(path)?.take(65_536).read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
+/// Whether the start of a file is what its extension says, so LibreOffice is never asked to
+/// convert a renamed picture or random bytes (it would turn them into a PDF of noise and report
+/// success). Office Open XML and OpenDocument are ZIP archives, older Office formats OLE
+/// containers (old .doc/.xls files are sometimes RTF, HTML or XML instead), RTF starts with
+/// `{\rtf`, and text formats must look like text.
+fn content_matches(ext: &str, head: &[u8]) -> bool {
+    const ZIP: &[u8] = b"PK\x03\x04";
+    const OLE: &[u8] = &[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+    let markup = || {
+        let t: Vec<u8> = head
+            .iter()
+            .skip_while(|b| matches!(b, 0xEF | 0xBB | 0xBF | b' ' | b'\t' | b'\r' | b'\n'))
+            .take(1)
+            .copied()
+            .collect();
+        t.first() == Some(&b'<')
+    };
+    let rtf = || head.starts_with(b"{\\rtf");
+    match ext {
+        "docx" | "docm" | "dotx" | "dotm" | "xlsx" | "xlsm" | "xlsb" | "xltx" | "xltm" | "pptx" | "pptm" | "ppsx"
+        | "ppsm" | "potx" | "potm" | "vsdx" | "odt" | "ods" | "odp" | "odg" => head.starts_with(ZIP),
+        "doc" | "dot" | "xls" | "xlt" => head.starts_with(OLE) || rtf() || markup(),
+        "ppt" | "pps" | "pot" | "vsd" | "pub" => head.starts_with(OLE),
+        "rtf" => rtf(),
+        _ => looks_like_text(head),
+    }
+}
+
+/// Text (any common encoding): few control characters other than tab and line ends. UTF-16 is
+/// recognised by its byte-order mark (its NUL bytes would look binary).
+fn looks_like_text(head: &[u8]) -> bool {
+    if head.starts_with(&[0xFF, 0xFE]) || head.starts_with(&[0xFE, 0xFF]) {
+        return true;
+    }
+    let control = head.iter().filter(|&&b| b < 0x20 && !matches!(b, b'\t' | b'\n' | b'\r' | 0x0C | 0x1B)).count();
+    control * 100 <= head.len() * 2
+}
+
 pub fn convert_office_to_pdf(
     input: &Path,
     output: &Path,
@@ -293,6 +403,19 @@ pub fn convert_office_to_pdf(
     let meta = std::fs::metadata(input).map_err(|e| PwError::from_io(&e, "file"))?;
     if meta.len() > MAX_INPUT_BYTES {
         return Err(PwError::invalid("office.too_large", "The file is larger than 512 MB."));
+    }
+    if meta.len() == 0 {
+        return Err(PwError::new(ErrorCategory::UnsupportedFormat, "office.empty", "The file is empty."));
+    }
+    let ext = input.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    let head = read_head(input).map_err(|e| PwError::from_io(&e, "file"))?;
+    if !content_matches(&ext, &head) {
+        return Err(PwError::new(
+            ErrorCategory::UnsupportedFormat,
+            "office.mismatch",
+            format!("This file is not a .{ext} document: its content does not match its name."),
+        )
+        .with_action("Check that it is the right file; a renamed picture or download error can look like this."));
     }
     let engine_info = find_office().ok_or_else(not_installed)?;
     let started = Instant::now();
@@ -411,12 +534,74 @@ mod tests {
     use super::*;
 
     #[test]
+    fn windows_version_ini_gives_the_version_without_running_libreoffice() {
+        let ini =
+            b"[Version]\r\nAllLanguages=en-US\r\nbuildid=abc\r\nMsiProductVersion=26.2.6.2\r\nProductCode={X}\r\n";
+        assert_eq!(version_from_ini(ini), "LibreOffice 26.2.6.2");
+        let utf16: Vec<u8> = [0xFF, 0xFE]
+            .into_iter()
+            .chain("[Version]\nMsiProductVersion=24.2.7.2\n".encode_utf16().flat_map(u16::to_le_bytes))
+            .collect();
+        assert_eq!(version_from_ini(&utf16), "LibreOffice 24.2.7.2");
+        assert_eq!(version_from_ini(b"[Version]\nbuildid=abc\n"), "LibreOffice");
+        assert_eq!(version_from_ini(b"MsiProductVersion=<script>\n"), "LibreOffice");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_program_that_does_not_finish_is_stopped() {
+        let started = Instant::now();
+        assert_eq!(output_within(Command::new("sleep").arg("30"), Duration::from_millis(300)), None);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(
+            output_within(Command::new("echo").arg("LibreOffice 1.2"), Duration::from_secs(5)).as_deref(),
+            Some("LibreOffice 1.2\n")
+        );
+        assert_eq!(output_within(&mut Command::new("false"), Duration::from_secs(5)), None);
+    }
+
+    #[test]
     fn office_files_by_extension() {
         assert!(is_office_file(Path::new("a/Report.DOCX")));
         assert!(is_office_file(Path::new("x.odp")));
         assert!(!is_office_file(Path::new("x.pdf")));
         assert!(!is_office_file(Path::new("x")));
         assert!(!is_office_file(Path::new("x.exe")));
+    }
+
+    #[test]
+    fn content_must_match_the_name() {
+        let zip = b"PK\x03\x04rest".as_slice();
+        let ole = [0xD0u8, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, 0, 0];
+        let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".as_slice();
+        assert!(content_matches("docx", zip) && content_matches("odp", zip));
+        assert!(!content_matches("docx", png) && !content_matches("xlsx", &ole));
+        assert!(content_matches("doc", &ole) && content_matches("ppt", &ole));
+        // Old .doc/.xls files are sometimes RTF, HTML or XML.
+        assert!(content_matches("doc", b"{\\rtf1\\ansi") && content_matches("xls", b"\xEF\xBB\xBF<?xml version"));
+        assert!(!content_matches("ppt", b"{\\rtf1"));
+        assert!(content_matches("rtf", b"{\\rtf1\\ansi") && !content_matches("rtf", b"hello"));
+        // Text: plain, Latin-1, UTF-16 with its mark; binary is not.
+        assert!(content_matches("csv", b"a,b\r\n1,2\r\n") && content_matches("txt", b"caf\xe9\n"));
+        assert!(content_matches("txt", &[0xFF, 0xFE, b'a', 0, b'b', 0]));
+        assert!(!content_matches("txt", &[0u8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0]) && !content_matches("html", png));
+    }
+
+    #[test]
+    fn empty_and_mislabelled_files_are_refused_before_libreoffice_runs() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let refuse = |name: &str, bytes: &[u8]| {
+            let input = dir.path().join(name);
+            std::fs::write(&input, bytes).expect("write");
+            let out = dir.path().join(format!("{name}.pdf"));
+            let e = convert_office_to_pdf(&input, &out, CollisionPolicy::Fail, &|| false, Duration::from_secs(5))
+                .expect_err("refused");
+            assert!(!out.exists());
+            e.code
+        };
+        assert_eq!(refuse("empty.docx", b""), "office.empty");
+        assert_eq!(refuse("picture.docx", b"\x89PNG\r\n\x1a\n"), "office.mismatch");
+        assert_eq!(refuse("noise.rtf", &[0u8, 7, 200, 13, 0, 0, 9]), "office.mismatch");
     }
 
     #[test]

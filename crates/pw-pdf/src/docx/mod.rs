@@ -165,6 +165,22 @@ fn path_rules(path: &PdfPagePathObject, rot: u32, w: f32, h: f32, origin: (f32, 
         return Vec::new();
     }
     let disp = |x: PdfPoints, y: PdfPoints| page_to_display(rot, w, h, x.value - origin.0, y.value - origin.1);
+    // A filled shape that is not stroked is a line only when it is thin (a rule drawn as a bar).
+    // A filled area — cell or paragraph shading, a coloured box — does not draw table lines: Word
+    // shades a header cell and again the paragraph inside its padding, and those inner edges made
+    // phantom rows and columns.
+    if !stroked {
+        let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        for i in 0..n {
+            let Ok(seg) = segs.get(i) else { continue };
+            let (x, y) = seg.point();
+            let p = disp(x, y);
+            (x0, y0, x1, y1) = (x0.min(p.0), y0.min(p.1), x1.max(p.0), y1.max(p.1));
+        }
+        if x1 - x0 > 2.5 && y1 - y0 > 2.5 {
+            return Vec::new();
+        }
+    }
     let mut out = Vec::new();
     let (mut cur, mut start) = ((0.0f32, 0.0f32), (0.0f32, 0.0f32));
     for i in 0..n {

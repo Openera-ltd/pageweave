@@ -38,4 +38,29 @@ describe("Process several files", () => {
     expect(screen.getByTestId("batch-results").textContent).toContain("nothing to gain");
     expect(screen.queryByTestId("batch-stop")).toBeNull();
   });
+
+  it("batch translation: choose the language; blocked with a reason until a model into it is downloaded", async () => {
+    const startOperation = vi.fn(async (_r: OperationRequest) => "j1");
+    const translationDirections = vi.fn(async () => [
+      { source: "en", target: "de", installed: true },
+      { source: "en", target: "fr", installed: false },
+    ]);
+    const api = { startOperation, cancelJob: vi.fn(), pickPdfFiles: vi.fn(), pickFolder: vi.fn(), revealInFolder: vi.fn(), translationDirections } as unknown as Api;
+    render(
+      <ApiContext.Provider value={api}>
+        <BatchDialog openFiles={["/d/a.pdf"]} jobs={{}} onClose={() => undefined} />
+      </ApiContext.Provider>,
+    );
+    fireEvent.click(screen.getByTestId("batch-add-open"));
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Action"), { target: { value: "translate" } });
+    });
+    fireEvent.change(screen.getByLabelText("Translate into"), { target: { value: "fr" } });
+    expect(screen.getByTestId("batch-start").getAttribute("title")).toContain("No translation into French");
+    fireEvent.change(screen.getByLabelText("Translate into"), { target: { value: "de" } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("batch-start"));
+    });
+    expect(startOperation.mock.calls[0]![0]).toMatchObject({ operation: { op: "translate_document", source: null, target: "de", output: "/d/a-de.pdf" } });
+  });
 });

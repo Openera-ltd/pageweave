@@ -213,6 +213,18 @@ async fn load_design(path: String) -> CmdResult<pw_pdf::studio::Design> {
     blocking(move || pw_pdf::studio::read_design(&PathBuf::from(path))).await
 }
 
+/// A picture file for "Replace picture" in the Studio, decoded and re-encoded as PNG (base64).
+#[tauri::command]
+async fn load_picture(path: String) -> CmdResult<String> {
+    blocking(move || pw_pdf::studio::picture_png(&PathBuf::from(path))).await
+}
+
+/// Crop a Studio picture: fractions of its width/height trimmed from each side, re-encoded as PNG.
+#[tauri::command]
+async fn crop_picture(png: String, left: f32, top: f32, right: f32, bottom: f32) -> CmdResult<String> {
+    blocking(move || pw_pdf::studio::crop_png(&png, [left, top, right, bottom])).await
+}
+
 /// Save the Studio's edits over the design project it opened: only an existing, valid .pwdesign
 /// file is replaced (never another kind of file), atomically and read back. Returns its size.
 #[tauri::command]
@@ -258,6 +270,15 @@ pub struct Spoken {
 async fn speak_text(text: String, voice: Option<String>, rate: f32) -> CmdResult<Spoken> {
     use base64::Engine as _;
     blocking(move || {
+        // With the default voice, text in another language is read by a voice for that language
+        // when the computer has one.
+        let voice = match voice {
+            Some(v) => Some(v),
+            None => pw_speech::engine_info().ok().and_then(|info| {
+                let lang = pw_translate::detect::detect(&text).map(|(l, _)| l);
+                pw_speech::voice_for_language(&info.voices, None, lang)
+            }),
+        };
         let s = pw_speech::speak(&text, &pw_speech::SpeakOptions { voice, rate }, &|| false)?;
         let wav = pw_speech::wav::encode(s.sample_rate, &s.samples);
         Ok(Spoken {
@@ -468,6 +489,9 @@ fn start_operation(
     let mut request = request;
     if let Some(id) = doc_id {
         request.password = state.doc(id)?.password.clone();
+        // New PDFs made from a password-protected document keep its open password (people expect
+        // a page taken out of a protected file to stay protected); Remove password is the way out.
+        request.keep_protection = request.password.is_some();
     }
     let label = request.operation.id().to_string();
     let key = serde_json::to_string(&request.operation).unwrap_or_default();
@@ -753,6 +777,8 @@ pub fn run() {
             app_info,
             load_design,
             save_design,
+            load_picture,
+            crop_picture,
             update_info,
             check_for_update,
             install_update,

@@ -3,7 +3,7 @@ import { FileText, X, ZoomIn, ZoomOut, MoveHorizontal } from "lucide-react";
 import { useApi } from "./api";
 import {
   addAnnotations,
-  ANNOTATION_COLORS,
+  markupColor,
   annotationSpecs,
   clientRectsToPageRects,
   EMPTY_HISTORY,
@@ -32,9 +32,9 @@ import { signatureSummary } from "./signatures";
 import { EMPTY_HISTORY as NO_OBJ_EDITS, push as pushObjEdit, redoLast, toPageEdits, undoLast, type ObjEntry, type ObjHistory } from "./objectEdits";
 import { eventToShortcut, isTextEntry } from "./shortcuts";
 import { applyAppearance } from "./theme";
-import { toPwError, type AppInfo, type AttachmentInfo, type AvailableUpdate, type CollisionPolicy, type FormField, type FormInfo, type FormValue, type JobSnapshot, type OpenedDoc, type Operation, type PwError, type RecoveredJob, type RedactArea, type SearchHit, type SearchRect, type Settings, type SignatureReport } from "./types";
+import { toPwError, type AppInfo, type AttachmentInfo, type AvailableUpdate, type AnnotationChange, type CollisionPolicy, type ExistingAnnotation, type FormField, type FormInfo, type FormValue, type JobSnapshot, type OpenedDoc, type Operation, type PwError, type RecoveredJob, type RedactArea, type SearchHit, type SearchRect, type Settings, type SignatureReport } from "./types";
 import { CommandButton, Menu, type MenuEntry, type MenuItemOrSeparator } from "./components/ui";
-import { Viewer, type ScrollRequest } from "./components/Viewer";
+import { Viewer, type MoveFrame, type ScrollRequest } from "./components/Viewer";
 import { ToolsPanel } from "./components/ToolsPanel";
 import { MENU_ICONS, TopBar, barGroups } from "./components/TopBar";
 import { ReadAloudBar, type ReadStart } from "./components/ReadAloudBar";
@@ -53,7 +53,7 @@ import { TrustSignerDialog, TrustedCertificatesDialog } from "./components/Trust
 import { UnprotectDialog } from "./components/UnprotectDialog";
 import { ExportFormDataDialog, ImportFormDataDialog } from "./components/FormDataDialogs";
 import { RedactPatternsDialog } from "./components/RedactPatternsDialog";
-import { toChanges, type AnnotChanges } from "./annotationChanges";
+import { boundsOf, keyOf, kindName, moveBy, RESIZABLE, setBounds, toChanges, type AnnotChanges } from "./annotationChanges";
 import { AccessibilityDialog } from "./components/AccessibilityDialog";
 import { PageLabelsDialog } from "./components/PageLabelsDialog";
 import { BatchDialog } from "./components/BatchDialog";
@@ -200,8 +200,9 @@ export function App() {
   const [notices, setNotices] = useState<Notice[]>([]);
   const [jobs, setJobs] = useState<Record<string, JobSnapshot>>({});
   const [dropActive, setDropActive] = useState(false);
-  // The installed LibreOffice for opening Office files (null: not installed; checked once).
-  const [officeEngine, setOfficeEngine] = useState<string | null>(null);
+  // The installed LibreOffice for opening Office files (undefined: still checking; null: not
+  // installed; checked once at start — an Office file given at launch can open its dialog first).
+  const [officeEngine, setOfficeEngine] = useState<string | null | undefined>(undefined);
   useEffect(() => {
     api.officeEngine().then(setOfficeEngine).catch(() => setOfficeEngine(null));
   }, [api]);
@@ -237,6 +238,10 @@ export function App() {
   const [objHist, setObjHist] = useState<Record<number, ObjHistory>>({});
   /** Pending deletes / text changes of annotations already in each file. */
   const [annotChanges, setAnnotChanges] = useState<Record<number, AnnotChanges>>({});
+  /** The file's annotations that were picked up to move, by document and key (where each is in the file). */
+  const [movable, setMovable] = useState<Record<number, Record<string, ExistingAnnotation>>>({});
+  /** The annotation being moved now and its pending change when it was picked up (Escape returns to it). */
+  const [moving, setMoving] = useState<{ docId: number; key: string; before: AnnotationChange | undefined } | null>(null);
   const annGroup = useRef(1);
   /** Form fields per document (null: none, or still loading) and the user's unsaved field edits. */
   const [forms, setForms] = useState<Record<number, FormInfo | null>>({});
@@ -389,6 +394,12 @@ export function App() {
         setDialog((d) => (d ? d : { kind: "office", file: path }));
         return;
       }
+      // Pictures (given at launch, e.g. "Open with") go to Create PDF from images, as when dropped;
+      // several arrive one by one and are collected in the same dialog.
+      if (isImagePath(path)) {
+        setDialog((d) => (d?.kind === "images" ? { ...d, files: d.files.includes(path) ? d.files : [...d.files, path] } : d ?? { kind: "images", files: [path] }));
+        return;
+      }
       // Design projects (dropped, or given at launch) open in the Design Studio.
       if (isDesignPath(path)) {
         setDialog((d) => (d ? d : { kind: "studio", source: { kind: "open", path } }));
@@ -457,6 +468,8 @@ export function App() {
       setForms(({ [id]: _f, ...rest }) => rest);
       setFormEdits(({ [id]: _e, ...rest }) => rest);
       setAnnotChanges(({ [id]: _c, ...rest }) => rest);
+      setMovable(({ [id]: _m, ...rest }) => rest);
+      setMoving((m) => (m?.docId === id ? null : m));
       if (id === activeId) {
         setSearchOpen(false);
         setHits([]);
@@ -487,7 +500,8 @@ export function App() {
       .formFields(id)
       .then((info) => {
         setForms((f) => (id in f ? { ...f, [id]: info } : f));
-        if (info.has_xfa) notify({ kind: "warning", title: active.name, detail: "This form uses XFA; its fields cannot be filled in PageWeave.", persistent: true });
+        if (info.xfa_only) notify({ kind: "warning", title: active.name, detail: "This is a dynamic XFA form; its fields cannot be filled in PageWeave.", persistent: true });
+        else if (info.has_xfa) notify({ kind: "info", title: active.name, detail: "This form also has an XFA layer. PageWeave fills its standard form; saved copies leave the XFA layer out so every viewer shows the same values.", persistent: false });
       })
       .catch((e) => notifyError("Couldn’t read the form fields", e));
   }, [api, active, forms, notify, notifyError]);
@@ -669,6 +683,37 @@ export function App() {
   const updateObjEdits = (docId: number, f: (h: ObjHistory) => ObjHistory) =>
     setObjHist((o) => ({ ...o, [docId]: f(o[docId] ?? NO_OBJ_EDITS) }));
 
+  const startMove = (docId: number, a: ExistingAnnotation) => {
+    const key = keyOf(a);
+    setMovable((m) => ({ ...m, [docId]: { ...m[docId], [key]: a } }));
+    setMoving({ docId, key, before: annotChanges[docId]?.[key] });
+    goToPage(a.page);
+  };
+  const changeAnnot = (docId: number, key: string, f: (c: AnnotChanges, a: ExistingAnnotation) => AnnotChanges) => {
+    const a = movable[docId]?.[key];
+    if (a) setAnnotChanges((all) => ({ ...all, [docId]: f(all[docId] ?? NO_ANNOT_CHANGES, a) }));
+  };
+  const cancelMove = () => {
+    if (moving) {
+      const { docId, key, before } = moving;
+      setAnnotChanges((all) => {
+        const { [key]: _now, ...rest } = all[docId] ?? NO_ANNOT_CHANGES;
+        return { ...all, [docId]: before ? { ...rest, [key]: before } : rest };
+      });
+    }
+    setMoving(null);
+  };
+  /** Where the active document's moved annotations will be, and the one being moved now. */
+  const moveFrames = (docId: number): MoveFrame[] => {
+    const changes = annotChanges[docId] ?? NO_ANNOT_CHANGES;
+    return Object.entries(movable[docId] ?? {}).flatMap(([key, a]) => {
+      const active = moving?.docId === docId && moving.key === key;
+      const c = changes[key];
+      if (c?.delete || (!active && !c?.offset && !c?.rect)) return [];
+      return [{ key, page: a.page, rect: boundsOf(changes, a), label: `${kindName(a.subtype)} on page ${a.page + 1}`, active, resizable: RESIZABLE.has(a.subtype) }];
+    });
+  };
+
   const annotateSelection = (kind: Exclude<PendingKind, "note">, snapshot?: Map<number, SearchRect[]>) => {
     if (!active) return;
     const rects = snapshot ?? selectionRects();
@@ -678,7 +723,7 @@ export function App() {
       return;
     }
     const group = annGroup.current++;
-    const color = kind === "redact" ? REDACT_MARK_COLOR : ANNOTATION_COLORS[kind];
+    const color = kind === "redact" ? REDACT_MARK_COLOR : markupColor(settings?.markup_colors, kind);
     const added: PendingAnnotation[] = [...rects.entries()]
       .sort(([a], [b]) => a - b)
       .map(([page, r], n) => ({ id: makeId(group, n), page, kind, rects: r.slice(0, 1000), color }));
@@ -763,6 +808,7 @@ export function App() {
     setFormEdits(({ [docId]: _gone, ...rest }) => rest);
     setObjHist(({ [docId]: _gone, ...rest }) => rest);
     setAnnotChanges(({ [docId]: _gone, ...rest }) => rest);
+    setMoving((m) => (m?.docId === docId ? null : m));
     notify({
       kind: "info",
       title: `Discarded ${n} change${n === 1 ? "" : "s"}`,
@@ -797,7 +843,7 @@ export function App() {
     const f = forms[active.doc_id];
     if (f === undefined) return "Reading the form fields…";
     if (f === null) return "The form fields couldn’t be read.";
-    if (f.has_xfa) return "This form uses XFA, which PageWeave can’t fill.";
+    if (f.xfa_only) return "This is a dynamic XFA form, which PageWeave can’t fill.";
     return f.fields.some(isFillable) ? true : "This document has no form fields.";
   };
 
@@ -815,20 +861,20 @@ export function App() {
     });
   };
 
-  /** Empty the form's text fields and checkboxes as unsaved edits, with Undo. */
+  /** Empty every field the user can fill (text, checkboxes, choices, radio groups) as unsaved edits, with Undo. */
   const clearForm = (docId: number) => {
     const fields = forms[docId]?.fields ?? [];
     const before = formEdits[docId];
     const r = clearedEdits(before ?? {}, fields);
     if (r.changed === 0) {
-      notify({ kind: "info", title: "The form is already empty", detail: r.kept ? `${r.kept} choice field${r.kept === 1 ? "" : "s"} can’t be emptied here.` : undefined, persistent: false });
+      notify({ kind: "info", title: "The form is already empty", persistent: false });
       return;
     }
     setFormEdits((all) => ({ ...all, [docId]: r.edits }));
     notify({
       kind: "success",
       title: `Cleared ${r.changed} field${r.changed === 1 ? "" : "s"}`,
-      detail: r.kept ? `${r.kept} choice field${r.kept === 1 ? " keeps its" : "s keep their"} option (choices can’t be emptied here).` : "Save a copy to keep the empty form (Ctrl+S).",
+      detail: "Save a copy to keep the empty form (Ctrl+S).",
       actions: [{ label: "Undo", run: () => setFormEdits(({ [docId]: _new, ...rest }) => (before ? { ...rest, [docId]: before } : rest)) }],
       persistent: false,
     });
@@ -839,16 +885,15 @@ export function App() {
     const fields = forms[docId]?.fields ?? [];
     const before = formEdits[docId];
     const r = resetEdits(before ?? {}, fields);
-    const keptNote = r.kept ? `${r.kept} choice field${r.kept === 1 ? " has" : "s have"} no default and keep${r.kept === 1 ? "s its" : " their"} option.` : undefined;
     if (r.changed === 0) {
-      notify({ kind: "info", title: "The form already shows its default values", detail: keptNote, persistent: false });
+      notify({ kind: "info", title: "The form already shows its default values", persistent: false });
       return;
     }
     setFormEdits((all) => ({ ...all, [docId]: r.edits }));
     notify({
       kind: "success",
       title: `Reset ${r.changed} field${r.changed === 1 ? "" : "s"} to default values`,
-      detail: keptNote ?? "Save a copy to keep the reset form (Ctrl+S).",
+      detail: "Save a copy to keep the reset form (Ctrl+S).",
       actions: [{ label: "Undo", run: () => setFormEdits(({ [docId]: _new, ...rest }) => (before ? { ...rest, [docId]: before } : rest)) }],
       persistent: false,
     });
@@ -1381,6 +1426,8 @@ export function App() {
     setFormEdits(({ [docId]: _saved, ...rest }) => rest);
     setObjHist(({ [docId]: _saved, ...rest }) => rest);
     setAnnotChanges(({ [docId]: _saved, ...rest }) => rest);
+    setMovable(({ [docId]: _moved, ...rest }) => rest);
+    setMoving((m) => (m?.docId === docId ? null : m));
     const next = afterSave.current;
     afterSave.current = null;
     if (next?.kind === "close") return closeTabNow(next.docId);
@@ -1530,6 +1577,10 @@ export function App() {
               onManageTrust={() => setDialog((d) => d ?? { kind: "trustedCertificates" })}
               annotChanges={annotChangesOf(active.doc_id)}
               onAnnotChanges={(c) => setAnnotChanges((all) => ({ ...all, [active.doc_id]: c }))}
+              moving={moving?.docId === active.doc_id ? moving.key : null}
+              onMove={(a) => startMove(active.doc_id, a)}
+              onMoveDone={() => setMoving(null)}
+              onMoveCancel={cancelMove}
             />
           )}
           <div ref={viewerHost} style={{ display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0, minWidth: 0, position: "relative" }}>
@@ -1610,7 +1661,7 @@ export function App() {
               onReadingInterrupted={stopFollowing}
               onPageContextMenu={pageMenu}
               annotations={activePending}
-              form={forms[active.doc_id] ?? null}
+              form={forms[active.doc_id]?.xfa_only ? null : (forms[active.doc_id] ?? null)}
               formEdits={editsOf(active.doc_id)}
               onFormEdit={onFormEdit}
               markMode={markMode}
@@ -1625,6 +1676,13 @@ export function App() {
                   : undefined
               }
               onMarkArea={(page, rect) => addMarks([[page, [rect]]])}
+              moves={{
+                frames: moveFrames(active.doc_id),
+                onMove: (key, dx, dy) => changeAnnot(active.doc_id, key, (c, a) => moveBy(c, a, dx, dy)),
+                onResize: (key, rect) => changeAnnot(active.doc_id, key, (c, a) => setBounds(c, a, rect)),
+                onDone: () => setMoving(null),
+                onCancel: cancelMove,
+              }}
               onMeasured={(width) => {
                 if (view.fitPending) setView({ zoom: Math.min(1.5, fitWidthZoom(active.info.pages, width)), fitPending: false });
               }}
@@ -1673,6 +1731,7 @@ export function App() {
           jobs={jobs}
           readVoice={settings?.read_voice ?? null}
           readRate={settings?.read_rate ?? 1}
+          openPaths={tabs.filter((t) => t.doc_id !== active.doc_id).map((t) => t.path)}
           onClose={() => {
             afterSave.current = null;
             setDialog(null);
@@ -1787,7 +1846,7 @@ export function App() {
           onCancel={() => setDialog(null)}
           onAdd={(text) => {
             const group = annGroup.current++;
-            updateAnnots(active.doc_id, (h) => addAnnotations(h, [{ id: makeId(group, 0), page: dialog.page, kind: "note", rects: [dialog.rect], color: ANNOTATION_COLORS.note, contents: text }]));
+            updateAnnots(active.doc_id, (h) => addAnnotations(h, [{ id: makeId(group, 0), page: dialog.page, kind: "note", rects: [dialog.rect], color: markupColor(settings?.markup_colors, "note"), contents: text }]));
             setDialog(null);
           }}
         />

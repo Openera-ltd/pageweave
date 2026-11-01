@@ -1,0 +1,44 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [6 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+[/CalRGB << /WhitePoint [0.9505 1 1.089] /Gamma [2.2 2.2 2.2] >>]
+endobj
+5 0 obj
+<< /Length 156 >>
+stream
+/CS0 cs 0.2 0.4 0.85 scn 72 600 300 80 re f
+0 0 0 rg BT /F1 14 Tf 90 630 Td (Remove this line) Tj ET
+0 0 0 rg BT /F1 14 Tf 90 560 Td (Keep this line) Tj ET
+
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> /ColorSpace << /CS0 4 0 R >> >> /Contents 5 0 R >>
+endobj
+7 0 obj
+<< /Title (Calibrated colour fixture) /Producer (gen_fixtures.py) >>
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000121 00000 n 
+0000000218 00000 n 
+0000000299 00000 n 
+0000000506 00000 n 
+0000000661 00000 n 
+trailer
+<< /Size 8 /Root 1 0 R /Info 7 0 R /ID [<70616765776561766566697874757265> <70616765776561766566697874757265>] >>
+startxref
+745
+%%EOF

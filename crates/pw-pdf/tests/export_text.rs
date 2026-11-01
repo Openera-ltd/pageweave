@@ -96,3 +96,15 @@ fn output_may_not_replace_the_source() {
     assert!(export(&src, None, &src).is_err());
     assert_eq!(std::fs::read(&src).expect("read"), before);
 }
+
+#[test]
+fn hyphenation_marks_never_reach_the_text() {
+    // The engine joins a word hyphenated across lines and marks the join with U+0002 (a control
+    // character). The text has the word whole, so it can be searched and pasted.
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("t.txt");
+    export(&fixture("hyphenated.pdf"), None, &out).expect("export");
+    let text = std::fs::read_to_string(&out).expect("utf-8");
+    assert!(!text.contains('\u{2}'), "{text:?}");
+    assert!(text.contains("report all wages by the end"), "{text:?}");
+}

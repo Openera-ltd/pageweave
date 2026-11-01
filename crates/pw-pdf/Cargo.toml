@@ -16,6 +16,8 @@ pw-update.workspace = true
 pw-net.workspace = true
 pdfium-render.workspace = true
 image.workspace = true
+# Already used by `image` for TIFF; only to count the pages of a multi-page TIFF.
+tiff = { version = "0.11", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { addFiles, batchOperation, batchOutputs, summary } from "./batch";
+import { addFiles, batchOperation, batchOutputs, summary, translateBlocker } from "./batch";
+import type { TranslationDirection } from "./types";
 
 describe("batch processing", () => {
   it("names outputs in the folder, unique within the batch", () => {
@@ -18,6 +19,24 @@ describe("batch processing", () => {
     expect(batchOperation("optimize_images", "/a.pdf", "/o.pdf")).toMatchObject({ op: "optimize", images: { max_dpi: 150, quality: 75 } });
     expect(batchOperation("orient", "/a.pdf", "/o.pdf").op).toBe("fix_orientation");
   });
+  it("translates each file into the chosen language, detected source, named after the target", () => {
+    expect(batchOutputs(["/a/report.pdf"], "translate", "/out", "de")).toEqual(["/out/report-de.pdf"]);
+    expect(batchOperation("translate", "/a/report.pdf", "/out/report-de.pdf", "de")).toEqual({
+      op: "translate_document",
+      input: "/a/report.pdf",
+      pages: null,
+      source: null,
+      target: "de",
+      output: "/out/report-de.pdf",
+    });
+    const dir = (source: string, target: string, installed: boolean) => ({ source, target, installed }) as TranslationDirection;
+    const dirs = [dir("en", "de", true), dir("de", "en", false), dir("en", "fr", false)];
+    expect(translateBlocker(null, "de")).toContain("Reading");
+    expect(translateBlocker(dirs, "de")).toBeNull();
+    expect(translateBlocker(dirs, "fr")).toContain("No translation into French is downloaded");
+    expect(translateBlocker(dirs, "en")).toContain("into English");
+  });
+
   it("adds PDFs once and summarises progress", () => {
     expect(addFiles(["/a.pdf"], ["/A.PDF", "/b.pdf", "/c.png"])).toEqual(["/a.pdf", "/b.pdf"]);
     expect(summary(["done", "failed", "waiting", "running"])).toBe("1 done · 1 failed · 2 to go (of 4)");

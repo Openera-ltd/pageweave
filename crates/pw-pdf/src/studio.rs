@@ -39,6 +39,47 @@ const SPECK: usize = 6;
 /// Beyond this many regions the rest are kept together as one picture.
 const MAX_REGIONS: usize = 600;
 
+/// Text typeface family. The original font is not identified; these map to fonts every viewer has
+/// (PDF's built-in Helvetica, Times and Courier; SVG generic families), so nothing is embedded.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FontFamily {
+    #[default]
+    Sans,
+    Serif,
+    Mono,
+}
+
+impl FontFamily {
+    fn is_sans(&self) -> bool {
+        *self == FontFamily::Sans
+    }
+
+    fn svg(self) -> &'static str {
+        match self {
+            FontFamily::Sans => "Helvetica, Arial, sans-serif",
+            FontFamily::Serif => "'Times New Roman', Times, serif",
+            FontFamily::Mono => "'Courier New', Courier, monospace",
+        }
+    }
+}
+
+/// Alignment of a paragraph's lines inside its box.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextAlign {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+impl TextAlign {
+    fn is_left(&self) -> bool {
+        *self == TextAlign::Left
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ObjectKind {
@@ -79,12 +120,52 @@ pub struct DesignObject {
     pub bold: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub baseline: Option<f32>,
+    /// Text: typeface family and slant.
+    #[serde(default, skip_serializing_if = "FontFamily::is_sans")]
+    pub font: FontFamily,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub italic: bool,
+    /// Text with several lines (a paragraph, lines split at "\n"): distance between baselines in
+    /// design pixels (absent: 1.2 × size), alignment, and horizontal scale of the glyphs measured
+    /// from the original (absent: 1). A single line is fitted to its box width instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_height: Option<f32>,
+    #[serde(default, skip_serializing_if = "TextAlign::is_left")]
+    pub align: TextAlign,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stretch: Option<f32>,
     /// Shape: fill `#rrggbb`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fill: Option<String>,
     /// Picture: PNG, base64.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub png: Option<String>,
+    /// Objects with the same group id are selected and moved together.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// Clockwise turn in degrees around the box's centre.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rotation: f32,
+    /// Shape: an ellipse filling the box (D-031).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub ellipse: bool,
+    /// Shape: corner radius in design pixels (0: square corners).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub radius: f32,
+    /// Shape: outline colour and width in design pixels, drawn inside the box (D-036). A shape
+    /// without `fill` has an outline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stroke: Option<String>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub stroke_width: f32,
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
+}
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
 }
 
 fn yes() -> bool {
@@ -131,6 +212,67 @@ impl Rgb {
         let i = (y * self.w + x) * 3;
         [self.px[i] as i32, self.px[i + 1] as i32, self.px[i + 2] as i32]
     }
+
+    fn set(&mut self, x: usize, y: usize, c: [i32; 3]) {
+        let i = (y * self.w + x) * 3;
+        for (dst, v) in self.px[i..i + 3].iter_mut().zip(c) {
+            *dst = v.clamp(0, 255) as u8;
+        }
+    }
+}
+
+/// What lies behind a box, pixel by pixel, estimated from the ring just outside it: the mean of
+/// the top-to-bottom and left-to-right interpolations of the ring (each side smoothed over 5 px).
+/// Exact for flat colours and linear gradients; a soft guess on photographs. Row-major over the
+/// box `x0..x1 × y0..y1`; the ring is `rx0..rx1 × ry0..ry1` (its outermost rows and columns).
+fn behind_box(
+    img: &Rgb,
+    (x0, y0, x1, y1): (usize, usize, usize, usize),
+    (rx0, ry0, rx1, ry1): (usize, usize, usize, usize),
+) -> Vec<[i32; 3]> {
+    let smooth = |side: Vec<[i32; 3]>| -> Vec<[i32; 3]> {
+        (0..side.len())
+            .map(|i| {
+                let near = &side[i.saturating_sub(2)..(i + 3).min(side.len())];
+                [0, 1, 2].map(|k| near.iter().map(|c| c[k]).sum::<i32>() / near.len() as i32)
+            })
+            .collect()
+    };
+    let mut top = smooth((x0..x1).map(|x| img.at(x, ry0)).collect());
+    let mut bottom = smooth((x0..x1).map(|x| img.at(x, ry1 - 1)).collect());
+    let mut left = smooth((y0..y1).map(|y| img.at(rx0, y)).collect());
+    let mut right = smooth((y0..y1).map(|y| img.at(rx1 - 1, y)).collect());
+    // A side running along a rule (a table line, a box edge) is not the background: it is far darker
+    // than the opposite side along its whole length. That side takes the opposite side's colours.
+    fn darker(a: &[[i32; 3]], b: &[[i32; 3]]) -> bool {
+        let luma = |c: &[i32; 3]| c[0] + c[1] + c[2];
+        !a.is_empty() && a.iter().zip(b).filter(|(p, q)| luma(q) - luma(p) > 3 * INK).count() * 10 >= a.len() * 8
+    }
+    if darker(&top, &bottom) {
+        top = bottom.clone();
+    } else if darker(&bottom, &top) {
+        bottom = top.clone();
+    }
+    if darker(&left, &right) {
+        left = right.clone();
+    } else if darker(&right, &left) {
+        right = left.clone();
+    }
+    let (span_y, span_x) = ((ry1 - 1 - ry0).max(1) as f32, (rx1 - 1 - rx0).max(1) as f32);
+    let mut out = Vec::with_capacity((x1 - x0) * (y1 - y0));
+    for y in y0..y1 {
+        let t = (y - ry0) as f32 / span_y;
+        for x in x0..x1 {
+            let s = (x - rx0) as f32 / span_x;
+            let (a, b, l, r) = (top[x - x0], bottom[x - x0], left[y - y0], right[y - y0]);
+            out.push([0, 1, 2].map(|k| {
+                let v = a[k] as f32 * (1.0 - t) + b[k] as f32 * t;
+                let h = l[k] as f32 * (1.0 - s) + r[k] as f32 * s;
+                ((v + h) / 2.0).round() as i32
+            }));
+        }
+    }
+    out
 }
 
 fn dist(a: [i32; 3], b: [i32; 3]) -> i32 {
@@ -202,15 +344,142 @@ impl Line {
     }
 }
 
+/// Serif evidence of a line (D-034): the share of its vertical stems (runs about one stroke wide
+/// across the middle of the x-height) whose run at the baseline sticks out on both sides of the
+/// stem: a foot. Sans serif stems end square, and a curve's bottom joins on one side only. `None`
+/// with fewer than four stems (too little to judge). Measured on Times vs Helvetica at 10–48 pt:
+/// serif lines 0.21–0.74, sans 0.00–0.03.
+fn serif_share(ink: &[bool], bw: usize, bh: usize) -> Option<f32> {
+    let median = |mut v: Vec<usize>| -> usize {
+        v.sort_unstable();
+        v.get(v.len() / 2).copied().unwrap_or(0)
+    };
+    // Top and baseline: where most columns' ink starts and ends (descenders and accents are few),
+    // over columns at least half as tall as the tallest (not the thin columns of serifs alone).
+    let cols: Vec<(usize, usize)> = (0..bw)
+        .filter_map(|x| {
+            let top = (0..bh).find(|&y| ink[y * bw + x])?;
+            Some((top, (0..bh).rev().find(|&y| ink[y * bw + x]).unwrap_or(top)))
+        })
+        .collect();
+    let tallest = cols.iter().map(|(t, b)| b - t + 1).max().unwrap_or(0);
+    let stem_cols = cols.iter().filter(|(t, b)| 2 * (b - t + 1) >= tallest);
+    let (yt, yb) = (median(stem_cols.clone().map(|c| c.0).collect()), median(stem_cols.map(|c| c.1).collect()));
+    // Runs of ink along a row as (start, length).
+    let runs = |y: usize| -> Vec<(usize, usize)> {
+        let mut out = Vec::new();
+        let mut start = None;
+        for x in 0..=bw {
+            match (x < bw && ink[y * bw + x], start) {
+                (true, None) => start = Some(x),
+                (false, Some(s0)) => {
+                    out.push((s0, x - s0));
+                    start = None;
+                }
+                _ => {}
+            }
+        }
+        out
+    };
+    let middle = runs((yt + yb) / 2);
+    let stroke = median(middle.iter().map(|r| r.1).collect()).max(1);
+    let stems: Vec<(usize, usize)> = middle.into_iter().filter(|r| r.1 <= stroke * 3 / 2 + 1).collect();
+    if stems.len() < 4 {
+        return None;
+    }
+    let base = [runs(yb.saturating_sub(1)), runs(yb)];
+    let centres: Vec<usize> = stems.iter().map(|&(s0, len)| s0 + len / 2).collect();
+    let feet = stems
+        .iter()
+        .filter(|&&(s0, len)| {
+            // A foot sticks out on both sides of the stem (a curve's bottom joins on one side
+            // only), and belongs to this stem alone: a run under several stems is a rule or an
+            // underline the letters stand on, not serifs.
+            let c = s0 + len / 2;
+            base.iter().filter_map(|row| row.iter().find(|(a, l)| *a <= c && c < a + l)).any(|&(a, l)| {
+                a < s0
+                    && a + l > s0 + len
+                    && l >= len + 2.max(len / 2)
+                    && centres.iter().filter(|&&o| a <= o && o < a + l).count() == 1
+            })
+        })
+        .count();
+    Some(feet as f32 / stems.len() as f32)
+}
+
+/// Table rules and box edges inside a recognised line's box are not part of its glyphs: rows inked
+/// across nearly the whole box width, and columns inked down nearly the whole box height, are
+/// cleared (they made a line look taller, wider and "serifed").
+fn drop_rules(ink: &mut [bool], bw: usize, bh: usize) {
+    if bw < 8 || bh < 4 {
+        return;
+    }
+    for y in 0..bh {
+        let row = &mut ink[y * bw..(y + 1) * bw];
+        if row.iter().filter(|&&v| v).count() * 100 >= bw * 85 {
+            row.fill(false);
+        }
+    }
+    for x in 0..bw {
+        if (0..bh).filter(|&y| ink[y * bw + x]).count() * 100 >= bh * 85 {
+            for y in 0..bh {
+                ink[y * bw + x] = false;
+            }
+        }
+    }
+}
+
+/// Rows `a..b` of a line's ink: the run of rows holding ink (split at empty rows) with the most ink.
+fn main_band(ink: &[bool], bw: usize, bh: usize) -> (usize, usize) {
+    let count = |y: usize| ink[y * bw..(y + 1) * bw].iter().filter(|&&v| v).count();
+    let (mut best, mut start, mut sum) = ((0, bh, 0), None, 0);
+    for y in 0..=bh {
+        let n = if y < bh { count(y) } else { 0 };
+        match (n > 0, start) {
+            (true, None) => {
+                start = Some(y);
+                sum = n;
+            }
+            (true, Some(_)) => sum += n,
+            (false, Some(a)) => {
+                if sum > best.2 {
+                    best = (a, y, sum);
+                }
+                start = None;
+            }
+            (false, None) => {}
+        }
+    }
+    (best.0, best.1)
+}
+
+/// Above this share of stems with feet a line is set in a serif family (D-034).
+const SERIF_SHARE: f32 = 0.12;
+
 /// Rebuild `img` as a design from its recognised lines (no I/O; the engine's core, unit-tested).
-pub fn reconstruct(img: &Rgb, lines: &[Line]) -> (Vec<DesignObject>, [i32; 3], ReconstructSummary) {
+/// `measure(style, wording)` is the natural width of one line of wording in the text object's font
+/// at its size (design pixels), used to fit paragraphs.
+pub fn reconstruct(
+    img: &Rgb,
+    lines: &[Line],
+    measure: &dyn Fn(&DesignObject, &str) -> f32,
+) -> (Vec<DesignObject>, [i32; 3], ReconstructSummary) {
     let (w, h) = (img.w, img.h);
     let edge = (0..w).flat_map(|x| [(x, 0), (x, h - 1)]).chain((0..h).flat_map(|y| [(0, y), (w - 1, y)]));
     let (bg, _) = dominant(edge.map(|(x, y)| img.at(x, y)));
     // Ink: everything that is not background.
     let mut mask: Vec<bool> = (0..w * h).map(|i| dist(img.at(i % w, i / w), bg) > SAME).collect();
+    // Pixels of text lines that sit on a box: part of the box's area, not of its colour.
+    let mut under_text = vec![false; w * h];
+    // Pixels of text lines on the page background: they became text objects, so a picture whose
+    // box reaches over them leaves them out (else the wording shows twice).
+    let mut as_text = vec![false; w * h];
+    // The picture the regions are cut from: words recognised over a picture are painted out of it,
+    // so the editable text is not doubled by the original wording underneath.
+    let mut work = Rgb { w, h, px: img.px.clone() };
 
     let mut texts = Vec::new();
+    let mut painted = Vec::new(); // per text: its wording was painted out of the picture
     let mut summary = ReconstructSummary::default();
     let mut conf_sum = 0f32;
     for l in lines.iter().filter(|l| !l.text.is_empty() && l.x1 > l.x0 + 1 && l.y1 > l.y0 + 1) {
@@ -220,17 +489,43 @@ pub fn reconstruct(img: &Rgb, lines: &[Line]) -> (Vec<DesignObject>, [i32; 3], R
         let ring =
             (rx0..rx1).flat_map(|x| [(x, ry0), (x, ry1 - 1)]).chain((ry0..ry1).flat_map(|y| [(rx0, y), (rx1 - 1, y)]));
         let (behind, uniform) = dominant(ring.map(|(x, y)| img.at(x, y)));
-        // Ink of the line: pixels far from what is behind it.
+        let on_background = dist(behind, bg) <= SAME;
+        let on_box = !on_background && uniform > 0.6;
+        // Not on the page background, and recognised confidently: what is behind each pixel is
+        // estimated from the ring, and the words are painted out with it (on a box that is its
+        // colour; on a picture, a gentle gradient counts as one colour over a short ring, so both
+        // are painted). A doubtful line leaves the picture untouched (it may be texture, not words).
+        let estimate =
+            (!on_background && l.score >= 0.8).then(|| behind_box(img, (l.x0, l.y0, l.x1, l.y1), (rx0, ry0, rx1, ry1)));
+        let behind_at = |x: usize, y: usize| match &estimate {
+            Some(e) => e[(y - l.y0) * (l.x1 - l.x0) + (x - l.x0)],
+            None => behind,
+        };
+        // Ink of the line: pixels far from what is behind it, in its main band of rows. A box can
+        // reach into a tightly spaced neighbouring line; that ink is a separate band (split at an
+        // empty row) and is left out of size, width, colour and font.
+        let (bw, bh) = (l.x1 - l.x0, l.y1 - l.y0);
+        let mut line_ink: Vec<bool> = (0..bw * bh)
+            .map(|i| {
+                let (x, y) = (l.x0 + i % bw, l.y0 + i / bw);
+                dist(img.at(x, y), behind_at(x, y)) > INK
+            })
+            .collect();
+        drop_rules(&mut line_ink, bw, bh);
+        let (band0, band1) = main_band(&line_ink, bw, bh);
+        line_ink[..band0 * bw].fill(false);
+        line_ink[band1 * bw..].fill(false);
         let (mut ix0, mut iy0, mut ix1, mut iy1) = (usize::MAX, usize::MAX, 0, 0);
         let mut ink = Vec::new();
         let mut runs = (0u32, 0u32); // (ink pixels, ink runs) along rows: stroke thickness
-        for y in l.y0..l.y1 {
+        for y in l.y0 + band0..l.y0 + band1 {
             let mut inside = false;
             for x in l.x0..l.x1 {
                 let c = img.at(x, y);
-                let on = dist(c, behind) > INK;
+                let d = dist(c, behind_at(x, y));
+                let on = line_ink[(y - l.y0) * bw + (x - l.x0)];
                 if on {
-                    ink.push(c);
+                    ink.push((c, d));
                     (ix0, iy0, ix1, iy1) = (ix0.min(x), iy0.min(y), ix1.max(x + 1), iy1.max(y + 1));
                     runs.0 += 1;
                     if !inside {
@@ -243,25 +538,57 @@ pub fn reconstruct(img: &Rgb, lines: &[Line]) -> (Vec<DesignObject>, [i32; 3], R
         if ink.is_empty() {
             continue;
         }
-        // The line's own pixels leave the ink mask: on plain background they were text; on a filled
-        // box they are holes in the box, filled so the box is found whole.
-        let on_background = dist(behind, bg) <= SAME;
-        for y in l.y0..l.y1 {
-            for x in l.x0..l.x1 {
-                mask[y * w + x] = !on_background && uniform > 0.6;
+        let font = match serif_share(&line_ink, bw, bh) {
+            Some(share) if share >= SERIF_SHARE => FontFamily::Serif,
+            _ => FontFamily::Sans,
+        };
+        if estimate.is_some() {
+            // Paint out the ink and one pixel around it (anti-aliased edges).
+            for y in l.y0..l.y1 {
+                for x in l.x0..l.x1 {
+                    // Glyph ink only (rules through the box were cleared from `line_ink` and stay).
+                    let near = (y.saturating_sub(1).max(l.y0)..(y + 2).min(l.y1)).any(|ny| {
+                        (x.saturating_sub(1).max(l.x0)..(x + 2).min(l.x1))
+                            .any(|nx| line_ink[(ny - l.y0) * bw + (nx - l.x0)])
+                    });
+                    if near {
+                        work.set(x, y, behind_at(x, y));
+                    }
+                }
             }
         }
-        // Text colour: the ink pixels furthest from the background behind it (anti-aliased edges
-        // are in between).
-        ink.sort_by_key(|c| -dist(*c, behind));
+        // The line's own pixels leave the ink mask: on plain background they were text; on a
+        // filled box they are holes in the box, filled so the box is found whole; on a picture
+        // the painted pixels are part of it wherever they are not plain background.
+        for y in l.y0..l.y1 {
+            for x in l.x0..l.x1 {
+                mask[y * w + x] = on_box || (estimate.is_some() && dist(work.at(x, y), bg) > SAME);
+                under_text[y * w + x] |= on_box;
+                as_text[y * w + x] |= on_background;
+            }
+        }
+        // Text colour: the ink pixels furthest from what is behind them (anti-aliased edges are
+        // in between).
+        ink.sort_by_key(|&(_, d)| -d);
         let core = &ink[..(ink.len() / 2).max(1)];
-        let color = [0, 1, 2].map(|k| core.iter().map(|c| c[k]).sum::<i32>() / core.len() as i32);
+        let color = [0, 1, 2].map(|k| core.iter().map(|(c, _)| c[k]).sum::<i32>() / core.len() as i32);
         // Size from the ink height and which letters reach above x-height / below the baseline
-        // (Helvetica-like proportions: cap height 0.72 em, x-height 0.52, descender 0.21).
+        // (Helvetica-like proportions: cap height 0.72 em, x-height 0.52, descender 0.21; Times-like
+        // for serif lines: 0.67, 0.45, 0.22).
+        let serif = font == FontFamily::Serif;
         let tall = l.text.chars().any(|c| c.is_uppercase() || c.is_ascii_digit() || "bdfhklt/()[]{}|!?'\"".contains(c));
-        let above = if tall { 0.72 } else { 0.52 };
+        let above = match (tall, serif) {
+            (true, false) => 0.72,
+            (false, false) => 0.52,
+            (true, true) => 0.67,
+            (false, true) => 0.45,
+        };
         let below = if l.text.chars().any(|c| "gjpqy".contains(c)) {
-            0.21
+            if serif {
+                0.22
+            } else {
+                0.21
+            }
         } else if l.text.chars().any(|c| ",;".contains(c)) {
             0.12
         } else {
@@ -273,13 +600,14 @@ pub fn reconstruct(img: &Rgb, lines: &[Line]) -> (Vec<DesignObject>, [i32; 3], R
         // Anti-aliased edges add about a pixel to every stroke. Measured on the poster fixture:
         // regular 0.08–0.10, bold 0.18–0.20 of the size.
         let bold = (stroke - 1.0) / size > 0.14;
-        let note = if uniform < 0.6 {
+        let note = if uniform < 0.6 && estimate.is_none() {
             Some("Over a picture: the original wording also stays in the picture.".to_string())
         } else if l.score < 0.8 {
             Some("Low recognition confidence: check the wording.".to_string())
         } else {
             None
         };
+        painted.push(estimate.is_some());
         summary.low_confidence_text += (l.score < 0.8) as u32;
         conf_sum += l.score;
         texts.push(DesignObject {
@@ -301,10 +629,34 @@ pub fn reconstruct(img: &Rgb, lines: &[Line]) -> (Vec<DesignObject>, [i32; 3], R
             baseline: Some(((above * size) * 10.0).round() / 10.0),
             fill: None,
             png: None,
+            group: None,
+            rotation: 0.0,
+            ellipse: false,
+            radius: 0.0,
+            stroke: None,
+            stroke_width: 0.0,
+            font,
+            italic: false,
+            line_height: None,
+            align: TextAlign::Left,
+            stretch: None,
         });
     }
 
-    let mut regions = regions(img, &mask, bg);
+    let recognised_lines = texts.len();
+    let (mut texts, painted) = paragraphs(texts, painted, measure);
+    let mut regions = regions(&work, &mask, bg, &under_text, &as_text);
+    // Painted-out wording that lies on a picture: say so (the painting is a guess on photographs).
+    for (t, _) in texts.iter_mut().zip(painted).filter(|(t, p)| *p && t.note.is_none()) {
+        let (cx, cy) = (t.x + t.w / 2.0, t.y + t.h / 2.0);
+        if regions
+            .iter()
+            .any(|r| r.kind == ObjectKind::Image && cx > r.x && cy > r.y && cx < r.x + r.w && cy < r.y + r.h)
+        {
+            t.note =
+                Some("Over a picture: the original wording was painted out of it; check the picture there.".into());
+        }
+    }
     // Back to front: large regions first.
     regions.sort_by(|a, b| (b.w * b.h).total_cmp(&(a.w * a.h)));
     summary.text = texts.len() as u32;
@@ -322,12 +674,129 @@ pub fn reconstruct(img: &Rgb, lines: &[Line]) -> (Vec<DesignObject>, [i32; 3], R
     }
     let total = objects.len().max(1) as f32;
     summary.editable_ratio = (summary.text + summary.shapes) as f32 / total;
-    summary.mean_text_confidence = if summary.text > 0 { conf_sum / summary.text as f32 } else { 0.0 };
+    // Over recognised lines (a paragraph holds several).
+    summary.mean_text_confidence = if recognised_lines > 0 { conf_sum / recognised_lines as f32 } else { 0.0 };
     (objects, bg, summary)
 }
 
+/// Consecutive lines that read as one paragraph become one text object (lines joined with "\n"):
+/// same family, weight, slant and colour, size within 12 %, evenly spaced 1–1.9 sizes apart, and a
+/// shared left edge, centre or right edge (within 0.4 size). Its glyphs keep the original width:
+/// `stretch` is the median ratio of each line's measured width to its natural width.
+fn paragraphs(
+    lines: Vec<DesignObject>,
+    painted: Vec<bool>,
+    measure: &dyn Fn(&DesignObject, &str) -> f32,
+) -> (Vec<DesignObject>, Vec<bool>) {
+    let base = |o: &DesignObject| o.y + o.baseline.unwrap_or(0.0);
+    let size = |o: &DesignObject| o.font_size.unwrap_or(o.h);
+    let mut order: Vec<usize> = (0..lines.len()).collect();
+    order.sort_by(|&a, &b| base(&lines[a]).total_cmp(&base(&lines[b])));
+    // Open paragraphs: member indices, line gap, alignments still possible (left, centre, right).
+    let mut groups: Vec<(Vec<usize>, Option<f32>, [bool; 3])> = Vec::new();
+    for &i in &order {
+        let t = &lines[i];
+        let join = groups.iter_mut().position(|(members, gap, aligns)| {
+            let l = &lines[*members.last().expect("non-empty")];
+            let (st, sl) = (size(t), size(l));
+            let same_style = t.font == l.font
+                && t.bold == l.bold
+                && t.italic == l.italic
+                && (st - sl).abs() <= 0.12 * st.max(sl)
+                && match (t.color.as_deref().and_then(parse_hex), l.color.as_deref().and_then(parse_hex)) {
+                    (Some(a), Some(b)) => dist(a, b) <= SAME,
+                    _ => false,
+                };
+            let g = base(t) - base(l);
+            let spaced = g >= 1.0 * sl && g <= 1.9 * sl && gap.is_none_or(|p| (g - p).abs() <= 0.15 * sl);
+            let tol = 0.4 * sl;
+            let fits = [
+                aligns[0] && (t.x - l.x).abs() <= tol,
+                aligns[1] && ((t.x + t.w / 2.0) - (l.x + l.w / 2.0)).abs() <= tol,
+                aligns[2] && ((t.x + t.w) - (l.x + l.w)).abs() <= tol,
+            ];
+            same_style && spaced && fits.iter().any(|&f| f)
+        });
+        match join {
+            Some(k) => {
+                let (members, gap, aligns) = &mut groups[k];
+                let l = &lines[*members.last().expect("non-empty")];
+                let tol = 0.4 * size(l);
+                let g = base(t) - base(l);
+                *aligns = [
+                    aligns[0] && (t.x - l.x).abs() <= tol,
+                    aligns[1] && ((t.x + t.w / 2.0) - (l.x + l.w / 2.0)).abs() <= tol,
+                    aligns[2] && ((t.x + t.w) - (l.x + l.w)).abs() <= tol,
+                ];
+                let n = members.len() as f32;
+                *gap = Some(gap.map_or(g, |p| (p * (n - 1.0) + g) / n));
+                members.push(i);
+            }
+            None => groups.push((vec![i], None, [true; 3])),
+        }
+    }
+    let mut out = Vec::new();
+    let mut out_painted = Vec::new();
+    for (members, gap, aligns) in groups {
+        if members.len() == 1 {
+            out.push(lines[members[0]].clone());
+            out_painted.push(painted[members[0]]);
+            continue;
+        }
+        let ls: Vec<&DesignObject> = members.iter().map(|&i| &lines[i]).collect();
+        let first = ls[0];
+        let x0 = ls.iter().map(|o| o.x).fold(f32::MAX, f32::min);
+        let y0 = ls.iter().map(|o| o.y).fold(f32::MAX, f32::min);
+        let x1 = ls.iter().map(|o| o.x + o.w).fold(f32::MIN, f32::max);
+        let y1 = ls.iter().map(|o| o.y + o.h).fold(f32::MIN, f32::max);
+        // The median size: a line in another script (taller glyphs) does not inflate the rest.
+        let mut sizes: Vec<f32> = ls.iter().map(|o| size(o)).collect();
+        sizes.sort_by(|a, b| a.total_cmp(b));
+        let font_size = sizes[sizes.len() / 2];
+        let align = if aligns[0] {
+            TextAlign::Left
+        } else if aligns[1] {
+            TextAlign::Center
+        } else {
+            TextAlign::Right
+        };
+        let mut style = first.clone();
+        style.font_size = Some(font_size);
+        let ratios: Vec<f32> = ls
+            .iter()
+            .filter_map(|o| {
+                let natural = measure(&style, o.text.as_deref().unwrap_or(""));
+                (natural > 0.0).then(|| o.w / natural)
+            })
+            .collect();
+        // The smallest ratio: no line comes out wider than it was (justified lines then end a little
+        // short). Characters the built-in fonts cannot draw only make a line's ratio larger.
+        let stretch = ratios.iter().copied().reduce(f32::min).map(|v| v.clamp(0.5, 2.0));
+        let round1 = |v: f32| (v * 10.0).round() / 10.0;
+        let text = ls.iter().map(|o| o.text.as_deref().unwrap_or("")).collect::<Vec<_>>().join("\n");
+        out.push(DesignObject {
+            name: first.name.clone(),
+            x: x0,
+            y: y0,
+            w: x1 - x0,
+            h: y1 - y0,
+            confidence: ls.iter().map(|o| o.confidence).fold(1.0, f32::min),
+            note: ls.iter().find_map(|o| o.note.clone()),
+            text: Some(text),
+            font_size: Some(round1(font_size)),
+            baseline: Some(round1(base(first) - y0)),
+            line_height: gap.map(round1),
+            align,
+            stretch: stretch.map(|v| (v * 1000.0).round() / 1000.0),
+            ..first.clone()
+        });
+        out_painted.push(members.iter().any(|&i| painted[i]));
+    }
+    (out, out_painted)
+}
+
 /// Connected ink regions (8-neighbours) as shapes or pictures.
-fn regions(img: &Rgb, mask: &[bool], bg: [i32; 3]) -> Vec<DesignObject> {
+fn regions(img: &Rgb, mask: &[bool], bg: [i32; 3], under_text: &[bool], as_text: &[bool]) -> Vec<DesignObject> {
     let (w, h) = (img.w, img.h);
     let mut label = vec![0u32; w * h];
     let mut found: Vec<(usize, usize, usize, usize, Vec<usize>)> = Vec::new();
@@ -375,11 +844,14 @@ fn regions(img: &Rgb, mask: &[bool], bg: [i32; 3]) -> Vec<DesignObject> {
         }
         found.push(merged);
     }
-    found
+    let objects = found
         .into_iter()
         .map(|(x0, y0, x1, y1, pixels)| {
             let (rw, rh) = (x1 - x0, y1 - y0);
-            let (fill, share) = dominant(pixels.iter().map(|&i| img.at(i % w, i / w)));
+            // The colour is judged without text drawn on the region (white words on a button).
+            let own: Vec<usize> = pixels.iter().copied().filter(|&i| !under_text[i]).collect();
+            let colour_from = if own.is_empty() { &pixels } else { &own };
+            let (fill, share) = dominant(colour_from.iter().map(|&i| img.at(i % w, i / w)));
             let filled = pixels.len() as f32 / (rw * rh) as f32;
             let base = DesignObject {
                 id: String::new(),
@@ -400,33 +872,214 @@ fn regions(img: &Rgb, mask: &[bool], bg: [i32; 3]) -> Vec<DesignObject> {
                 baseline: None,
                 fill: None,
                 png: None,
+                group: None,
+                rotation: 0.0,
+                ellipse: false,
+                radius: 0.0,
+                stroke: None,
+                stroke_width: 0.0,
+                font: FontFamily::Sans,
+                italic: false,
+                line_height: None,
+                align: TextAlign::Left,
+                stretch: None,
             };
-            if share > 0.92 && filled > 0.92 {
-                DesignObject { fill: Some(hex(fill)), ..base }
-            } else {
-                // A picture: the region's own pixels; background around it is transparent.
-                let mut rgba = image::RgbaImage::new(rw as u32, rh as u32);
-                for y in y0..y1 {
-                    for x in x0..x1 {
-                        let c = img.at(x, y);
-                        let a = if mask[y * w + x] || dist(c, bg) > SAME { 255 } else { 0 };
-                        rgba.put_pixel(
-                            (x - x0) as u32,
-                            (y - y0) as u32,
-                            image::Rgba([c[0] as u8, c[1] as u8, c[2] as u8, a]),
-                        );
-                    }
+            // One colour: the best of a rectangle, a rounded rectangle and an ellipse, if it covers
+            // the region's pixels closely enough (overlap ≥ 0.95). Otherwise a picture.
+            let form = (share > 0.92).then(|| best_form(&pixels, w, x0, y0, rw, rh)).flatten();
+            // A thin line is mostly anti-aliased edge: its pixels are blends of its colour and
+            // the background, so a frame's colour test accepts anything on that blend.
+            // The line's width comes from its coverage (edge pixels count by how much line they hold).
+            let blends: Vec<f32> =
+                colour_from.iter().filter_map(|&i| on_blend(img.at(i % w, i / w), fill, bg)).collect();
+            let blended = blends.len() as f32 / colour_from.len().max(1) as f32;
+            let coverage = blends.iter().sum::<f32>() * pixels.len() as f32 / colour_from.len().max(1) as f32;
+            let frame = (blended > 0.92 && form.is_none())
+                .then(|| best_outline(&pixels, coverage, w, x0, y0, rw, rh))
+                .flatten();
+            if let Some((ellipse, radius, overlap)) = form {
+                DesignObject { fill: Some(hex(fill)), ellipse, radius, confidence: share.min(overlap), ..base }
+            } else if let Some((ellipse, width, inset, overlap)) = frame {
+                let round1 = |v: f32| (v * 10.0).round() / 10.0;
+                DesignObject {
+                    x: round1(base.x + inset),
+                    y: round1(base.y + inset),
+                    w: round1(base.w - 2.0 * inset),
+                    h: round1(base.h - 2.0 * inset),
+                    fill: None,
+                    stroke: Some(hex(fill)),
+                    stroke_width: width,
+                    ellipse,
+                    confidence: blended.min(overlap),
+                    ..base
                 }
+            } else {
+                // A picture: its image is made below, once pictures that touch are merged.
                 DesignObject {
                     kind: ObjectKind::Image,
                     confidence: 0.0,
                     note: Some("Kept as a picture: not recognised as text or a plain shape.".into()),
-                    png: Some(png_base64(&image::DynamicImage::ImageRgba8(rgba))),
                     ..base
                 }
             }
         })
-        .collect()
+        .collect::<Vec<_>>();
+    // Pictures whose boxes overlap or nearly touch are one picture: a photograph falls apart into
+    // many pieces (bright patches are background-coloured), which would fill the layer list.
+    let (mut pictures, mut out): (Vec<DesignObject>, Vec<DesignObject>) =
+        objects.into_iter().partition(|o| o.kind == ObjectKind::Image);
+    const NEAR: f32 = 3.0;
+    loop {
+        let mut merged = false;
+        'outer: for i in 0..pictures.len() {
+            for j in i + 1..pictures.len() {
+                let (a, b) = (&pictures[i], &pictures[j]);
+                // Small pieces (the dots of a leader line, specks of a photo) join from further
+                // away: four times the smaller piece's size (leader dots are about 3 px, 9 px apart).
+                let small = a.w.max(a.h).min(b.w.max(b.h));
+                let near = if small <= 12.0 { NEAR.max(4.0 * small) } else { NEAR };
+                let apart = b.x > a.x + a.w + near
+                    || a.x > b.x + b.w + near
+                    || b.y > a.y + a.h + near
+                    || a.y > b.y + b.h + near;
+                if !apart {
+                    let b = pictures.swap_remove(j);
+                    let a = &mut pictures[i];
+                    let (x1, y1) = ((a.x + a.w).max(b.x + b.w), (a.y + a.h).max(b.y + b.h));
+                    (a.x, a.y) = (a.x.min(b.x), a.y.min(b.y));
+                    (a.w, a.h) = (x1 - a.x, y1 - a.y);
+                    merged = true;
+                    break 'outer;
+                }
+            }
+        }
+        if !merged {
+            break;
+        }
+    }
+    for mut p in pictures {
+        // The picture's box with its own pixels; background around them is transparent.
+        let (x0, y0) = (p.x as usize, p.y as usize);
+        let (x1, y1) = ((p.x + p.w) as usize, (p.y + p.h) as usize);
+        let mut rgba = image::RgbaImage::new((x1 - x0) as u32, (y1 - y0) as u32);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let c = img.at(x, y);
+                let i = y * w + x;
+                let a = if mask[i] || (dist(c, bg) > SAME && !as_text[i]) { 255 } else { 0 };
+                rgba.put_pixel((x - x0) as u32, (y - y0) as u32, image::Rgba([c[0] as u8, c[1] as u8, c[2] as u8, a]));
+            }
+        }
+        p.png = Some(png_base64(&image::DynamicImage::ImageRgba8(rgba)));
+        out.push(p);
+    }
+    out
+}
+
+/// The vector form that matches a one-colour region best: (ellipse, corner radius, overlap), when
+/// the overlap (intersection over union of pixel sets) is at least 0.95. A rounded rectangle wins
+/// over a plain one only when clearly better and its radius is at least 2 px.
+/// How much of colour `a` pixel `c` holds when it lies on the blend between `a` and `b` (within
+/// the "same colour" distance): 1 for `a`, 0 for `b`; `None` off the blend.
+fn on_blend(c: [i32; 3], a: [i32; 3], b: [i32; 3]) -> Option<f32> {
+    let d = [0, 1, 2].map(|k| (b[k] - a[k]) as f32);
+    let len2 = d.iter().map(|v| v * v).sum::<f32>();
+    let t = if len2 > 0.0 {
+        ([0, 1, 2].map(|k| (c[k] - a[k]) as f32 * d[k]).iter().sum::<f32>() / len2).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let near = [0, 1, 2].map(|k| (a[k] as f32 + t * d[k]).round() as i32);
+    (dist(c, near) <= SAME).then_some(1.0 - t)
+}
+
+/// The region's pixels as a mask over its box, and the overlap (intersection over union) of that
+/// mask with a model shape given as a test on pixel centres in box coordinates.
+fn region_mask(
+    pixels: &[usize],
+    w: usize,
+    x0: usize,
+    y0: usize,
+    rw: usize,
+    rh: usize,
+) -> impl Fn(&dyn Fn(f32, f32) -> bool) -> f32 {
+    let mut inside = vec![false; rw * rh];
+    for &i in pixels {
+        inside[(i / w - y0) * rw + (i % w - x0)] = true;
+    }
+    let n = pixels.len() as f32;
+    move |model: &dyn Fn(f32, f32) -> bool| {
+        let (mut both, mut area) = (0f32, 0f32);
+        for y in 0..rh {
+            for x in 0..rw {
+                if model(x as f32 + 0.5, y as f32 + 0.5) {
+                    area += 1.0;
+                    both += inside[y * rw + x] as u8 as f32;
+                }
+            }
+        }
+        both / (n + area - both).max(1.0)
+    }
+}
+
+/// A one-colour region that is a frame (D-036): (ellipse, line width, inset, overlap) of the best
+/// rectangular or elliptical ring, when the overlap is at least 0.85 and the line is between 1 px
+/// and a quarter of the shorter side. The line width follows from the pixel count: a rectangular
+/// ring holds 2t(w + h) − 4t² pixels, an elliptical one π(ab − (a − t)(b − t)).
+/// `coverage` is the region's pixel count weighted by how much of the line each pixel holds.
+fn best_outline(
+    pixels: &[usize],
+    coverage: f32,
+    w: usize,
+    x0: usize,
+    y0: usize,
+    rw: usize,
+    rh: usize,
+) -> Option<(bool, f32, f32, f32)> {
+    let overlap = region_mask(pixels, w, x0, y0, rw, rh);
+    let n = pixels.len() as f32;
+    let (fw, fh) = (rw as f32, rh as f32);
+    // The mask is fitted with whole pixels; the reported width uses the coverage.
+    let rect_t = |n: f32| ((fw + fh) - ((fw + fh).powi(2) - 4.0 * n).max(0.0).sqrt()) / 4.0;
+    let (a, b) = (fw / 2.0, fh / 2.0);
+    let ell_t = |n: f32| ((a + b) - ((a + b).powi(2) - 4.0 * n / std::f32::consts::PI).max(0.0).sqrt()) / 2.0;
+    let (t_rect, t_ell) = (rect_t(n), ell_t(n));
+    let ring = overlap(&|x, y| !(x > t_rect && x < fw - t_rect && y > t_rect && y < fh - t_rect));
+    let oval = overlap(&|x, y| {
+        let outer = ((x - a) / a).powi(2) + ((y - b) / b).powi(2) <= 1.0;
+        let (ia, ib) = ((a - t_ell).max(0.01), (b - t_ell).max(0.01));
+        outer && ((x - a) / ia).powi(2) + ((y - b) / ib).powi(2) > 1.0
+    });
+    let (ellipse, whole, t, fit) =
+        if oval > ring { (true, t_ell, ell_t(coverage), oval) } else { (false, t_rect, rect_t(coverage), ring) };
+    // Partly covered pixels at the outer edge widen the box as much as they widen the line.
+    let inset = ((whole - t) / 2.0).max(0.0);
+    (fit >= 0.85 && t >= 1.0 && t <= fw.min(fh) / 4.0).then_some((ellipse, (t * 10.0).round() / 10.0, inset, fit))
+}
+
+fn best_form(pixels: &[usize], w: usize, x0: usize, y0: usize, rw: usize, rh: usize) -> Option<(bool, f32, f32)> {
+    let overlap = region_mask(pixels, w, x0, y0, rw, rh);
+    let n = pixels.len() as f32;
+    let (fw, fh) = (rw as f32, rh as f32);
+    let rect = n / (fw * fh);
+    let (rx, ry) = (fw / 2.0, fh / 2.0);
+    let ellipse = overlap(&|x, y| ((x - rx) / rx).powi(2) + ((y - ry) / ry).powi(2) <= 1.0);
+    // Radius from the missing corner area: w·h − area = (4 − π)·r².
+    let r = ((fw * fh - n).max(0.0) / (4.0 - std::f32::consts::PI)).sqrt().min(fw.min(fh) / 2.0);
+    let corner = |x: f32, y: f32| {
+        let cx = x.clamp(r, fw - r);
+        let cy = y.clamp(r, fh - r);
+        (x - cx).powi(2) + (y - cy).powi(2) <= r * r
+    };
+    let rounded = if r >= 2.0 { overlap(&corner) } else { 0.0 };
+    let best = if ellipse >= rect.max(rounded) {
+        (true, 0.0, ellipse)
+    } else if rounded > rect + 0.005 {
+        (false, (r * 10.0).round() / 10.0, rounded)
+    } else {
+        (false, 0.0, rect)
+    };
+    (best.2 >= 0.95).then_some(best)
 }
 
 fn png_base64(img: &image::DynamicImage) -> String {
@@ -470,11 +1123,36 @@ fn rgb_from(img: image::DynamicImage) -> Rgb {
 }
 
 /// The picture to rebuild and PDF points per pixel: a PNG/JPEG file, or a page of a PDF.
+/// Picture formats the Studio reads, recognised by content: PNG, JPEG, WebP, TIFF, GIF, BMP
+/// (TIFF and GIF: the first page or frame).
+fn picture_format(head: &[u8]) -> Option<image::ImageFormat> {
+    use image::ImageFormat as F;
+    image::guess_format(head).ok().filter(|f| matches!(f, F::Png | F::Jpeg | F::WebP | F::Tiff | F::Gif | F::Bmp))
+}
+
+/// Decode an untrusted picture with limits; a picture over 20 000 pixels on a side is refused as
+/// too large (decompression bombs declare huge sizes in tiny files), anything else unreadable as such.
+fn decode_picture(bytes: Vec<u8>, fmt: image::ImageFormat) -> PwResult<image::DynamicImage> {
+    let (w, h) = image::ImageReader::with_format(std::io::Cursor::new(&bytes), fmt)
+        .into_dimensions()
+        .map_err(|_| PwError::invalid("design.unreadable", "The picture could not be read."))?;
+    if w > 20_000 || h > 20_000 {
+        return Err(PwError::invalid("design.too_large", "The picture is larger than 20 000 pixels on a side."));
+    }
+    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), fmt);
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(20_000);
+    limits.max_image_height = Some(20_000);
+    limits.max_alloc = Some(1024 * 1024 * 1024);
+    reader.limits(limits);
+    reader.decode().map_err(|_| PwError::invalid("design.unreadable", "The picture could not be read."))
+}
+
 pub fn load_source(input: &Path, opts: &OpenOptions, page: u32) -> PwResult<(Rgb, f32)> {
     let head = {
         use std::io::Read;
         let mut f = std::fs::File::open(input).map_err(|e| PwError::from_io(&e, "file"))?;
-        let mut b = [0u8; 8];
+        let mut b = [0u8; 16];
         let n = f.read(&mut b).map_err(|e| PwError::from_io(&e, "file"))?;
         b[..n].to_vec()
     };
@@ -495,27 +1173,73 @@ pub fn load_source(input: &Path, opts: &OpenOptions, page: u32) -> PwResult<(Rgb
         let pt = dw / rgb.w as f32;
         return Ok((rgb, pt));
     }
-    let fmt =
-        image::guess_format(&head).ok().filter(|f| matches!(f, image::ImageFormat::Png | image::ImageFormat::Jpeg));
-    let Some(fmt) = fmt else {
-        return Err(PwError::new(ErrorCategory::UnsupportedFormat, "design.format", "Choose a PDF, PNG or JPEG file."));
+    let Some(fmt) = picture_format(&head) else {
+        return Err(PwError::new(
+            ErrorCategory::UnsupportedFormat,
+            "design.format",
+            "Choose a PDF or a picture (PNG, JPEG, WebP, TIFF, GIF or BMP).",
+        ));
     };
     let meta = std::fs::metadata(input).map_err(|e| PwError::from_io(&e, "image"))?;
     if meta.len() > MAX_IMAGE_FILE {
         return Err(PwError::invalid("design.too_large", "The picture is larger than 100 MB."));
     }
     let bytes = std::fs::read(input).map_err(|e| PwError::from_io(&e, "image"))?;
-    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), fmt);
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(20_000);
-    limits.max_image_height = Some(20_000);
-    limits.max_alloc = Some(1024 * 1024 * 1024);
-    reader.limits(limits);
-    let img = reader.decode().map_err(|_| PwError::invalid("design.unreadable", "The picture could not be read."))?;
+    let img = decode_picture(bytes, fmt)?;
     let scale = img.width().max(img.height()) as f32 / MAX_SIDE as f32;
     let rgb = rgb_from(img);
     // 96 pixels per inch, as an image of that size is usually meant (scaled with the picture).
     Ok((rgb, 0.75 * scale.max(1.0)))
+}
+
+/// A picture file (PNG or JPEG) for replacing a picture in a design: decoded with limits, at most
+/// 4096 px on the long side, re-encoded as PNG (base64). Untrusted bytes are never passed through.
+pub fn picture_png(path: &Path) -> PwResult<String> {
+    let head = {
+        use std::io::Read;
+        let mut f = std::fs::File::open(path).map_err(|e| PwError::from_io(&e, "picture"))?;
+        let mut b = [0u8; 16];
+        let n = f.read(&mut b).map_err(|e| PwError::from_io(&e, "picture"))?;
+        b[..n].to_vec()
+    };
+    let fmt = picture_format(&head).ok_or_else(|| {
+        PwError::new(
+            ErrorCategory::UnsupportedFormat,
+            "design.picture_format",
+            "Choose a picture (PNG, JPEG, WebP, TIFF, GIF or BMP).",
+        )
+    })?;
+    if std::fs::metadata(path).map_err(|e| PwError::from_io(&e, "picture"))?.len() > MAX_IMAGE_FILE {
+        return Err(PwError::invalid("design.too_large", "The picture is larger than 100 MB."));
+    }
+    let bytes = std::fs::read(path).map_err(|e| PwError::from_io(&e, "picture"))?;
+    let img = decode_picture(bytes, fmt)?;
+    let img = if img.width().max(img.height()) > 4096 {
+        img.resize(4096, 4096, image::imageops::FilterType::Lanczos3)
+    } else {
+        img
+    };
+    Ok(png_base64(&image::DynamicImage::ImageRgba8(img.to_rgba8())))
+}
+
+/// A design picture (PNG, base64) with the given fractions of its width and height trimmed from
+/// the left, top, right and bottom, re-encoded as PNG. At least one pixel is kept each way.
+pub fn crop_png(b64: &str, trim: [f32; 4]) -> PwResult<String> {
+    if trim.iter().any(|v| !v.is_finite() || *v < 0.0 || *v >= 1.0)
+        || trim[0] + trim[2] >= 1.0
+        || trim[1] + trim[3] >= 1.0
+    {
+        return Err(PwError::invalid("design.crop", "The crop would leave nothing of the picture."));
+    }
+    let img = decode_png(b64, "picture")?;
+    let (w, h) = (img.width() as f32, img.height() as f32);
+    let x0 = (trim[0] * w).round() as u32;
+    let y0 = (trim[1] * h).round() as u32;
+    let x1 = ((w - trim[2] * w).round() as u32).max(x0 + 1).min(img.width());
+    let y1 = ((h - trim[3] * h).round() as u32).max(y0 + 1).min(img.height());
+    let x0 = x0.min(x1 - 1);
+    let y0 = y0.min(y1 - 1);
+    Ok(png_base64(&img.crop_imm(x0, y0, x1 - x0, y1 - y0)))
 }
 
 /// Rebuild `input` (page `page` of a PDF, or a picture) and save it as a design project.
@@ -541,7 +1265,12 @@ pub fn reconstruct_design(
         return Err(PwError::cancelled());
     }
     let lines: Vec<Line> = ocr.iter().map(|l| Line::from_ocr(l, img.w, img.h)).collect();
-    let (objects, bg, summary) = reconstruct(&img, &lines);
+    let pdfium = engine()?;
+    let mut doc = pdfium.create_new_pdf().map_err(|e| map_pdfium_error(&e, "design"))?;
+    let fonts = builtin_fonts(&mut doc);
+    let measure = |o: &DesignObject, text: &str| natural_width(&doc, &fonts, o, text, o.font_size.unwrap_or(o.h));
+    let (objects, bg, summary) = reconstruct(&img, &lines, &measure);
+    drop(doc);
     let source = image::RgbImage::from_raw(img.w as u32, img.h as u32, img.px.clone())
         .ok_or_else(|| PwError::internal("design.source", "The source picture could not be kept."))?;
     let name = input.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -597,6 +1326,9 @@ impl Design {
                 || o.id.len() > 64
                 || !ids.insert(o.id.as_str())
                 || o.name.chars().count() > 200
+                || o.group.as_ref().is_some_and(|g| g.is_empty() || g.len() > 64)
+                || !(o.rotation.is_finite() && o.rotation.abs() <= 360.0)
+                || !(o.radius.is_finite() && o.radius >= 0.0 && o.radius <= o.w.min(o.h) / 2.0 + 0.01)
             {
                 return bad(format!("The object “{}” is not valid.", o.name.chars().take(40).collect::<String>()));
             }
@@ -605,7 +1337,9 @@ impl Design {
                     let ok = o.text.as_ref().is_some_and(|t| t.chars().count() <= MAX_TEXT)
                         && o.color.as_deref().and_then(parse_hex).is_some()
                         && o.font_size.is_some_and(|s| s.is_finite() && s > 0.0 && s < 5000.0)
-                        && o.baseline.is_none_or(|b| b.is_finite() && b.abs() < 1.0e5);
+                        && o.baseline.is_none_or(|b| b.is_finite() && b.abs() < 1.0e5)
+                        && o.line_height.is_none_or(|v| v.is_finite() && v > 0.0 && v < 1.0e5)
+                        && o.stretch.is_none_or(|v| v.is_finite() && (0.2..=5.0).contains(&v));
                     if !ok {
                         return bad(format!(
                             "The text “{}” is not valid.",
@@ -614,7 +1348,12 @@ impl Design {
                     }
                 }
                 ObjectKind::Shape => {
-                    if o.fill.as_deref().and_then(parse_hex).is_none() {
+                    let fill_ok = o.fill.as_deref().is_none_or(|c| parse_hex(c).is_some());
+                    let outlined = o.stroke_width > 0.0 && o.stroke.as_deref().and_then(parse_hex).is_some();
+                    let width_ok = o.stroke_width.is_finite()
+                        && o.stroke_width >= 0.0
+                        && o.stroke_width <= o.w.min(o.h) / 2.0 + 0.01;
+                    if !fill_ok || !width_ok || (o.fill.is_none() && !outlined) {
                         return bad(format!("The shape “{}” has no valid colour.", o.name));
                     }
                 }
@@ -699,24 +1438,84 @@ pub fn to_svg(d: &Design) -> String {
         bg = d.background
     );
     for o in d.objects.iter().filter(|o| o.visible) {
-        let id = format!("id=\"{}\"", xml(&o.id));
+        // Clockwise turn around the box's centre (SVG's y axis points down, so positive is clockwise).
+        let id = if o.rotation != 0.0 {
+            format!(
+                "id=\"{}\" transform=\"rotate({} {} {})\"",
+                xml(&o.id),
+                o.rotation,
+                o.x + o.w / 2.0,
+                o.y + o.h / 2.0
+            )
+        } else {
+            format!("id=\"{}\"", xml(&o.id))
+        };
         match o.kind {
-            ObjectKind::Shape => s += &format!(
-                "<rect {id} x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\"/>\n",
-                o.x, o.y, o.w, o.h, o.fill.as_deref().unwrap_or("#000000")
-            ),
+            ObjectKind::Shape => {
+                let g = shape_geometry(o);
+                let paint = match o.stroke.as_deref().filter(|_| g.sw > 0.0) {
+                    Some(c) => format!(" fill=\"{}\" stroke=\"{c}\" stroke-width=\"{}\"", o.fill.as_deref().unwrap_or("none"), g.sw),
+                    None => format!(" fill=\"{}\"", o.fill.as_deref().unwrap_or("none")),
+                };
+                if o.ellipse {
+                    s += &format!(
+                        "<ellipse {id} cx=\"{}\" cy=\"{}\" rx=\"{}\" ry=\"{}\"{paint}/>\n",
+                        o.x + o.w / 2.0,
+                        o.y + o.h / 2.0,
+                        g.w / 2.0,
+                        g.h / 2.0
+                    );
+                } else {
+                    let corner = if g.r > 0.0 { format!(" rx=\"{}\" ry=\"{}\"", g.r, g.r) } else { String::new() };
+                    s += &format!(
+                        "<rect {id} x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"{corner}{paint}/>\n",
+                        g.x, g.y, g.w, g.h
+                    );
+                }
+            }
             ObjectKind::Image => s += &format!(
                 "<image {id} x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" preserveAspectRatio=\"none\" href=\"data:image/png;base64,{}\"/>\n",
                 o.x, o.y, o.w, o.h, o.png.as_deref().unwrap_or("")
             ),
+            ObjectKind::Text if o.text.as_deref().is_some_and(|t| t.contains('\n')) => {
+                // A paragraph: one <tspan> per line, glyphs scaled by `stretch` from the box's left.
+                let size = o.font_size.unwrap_or(o.h);
+                let k = o.stretch.unwrap_or(1.0);
+                let lh = o.line_height.unwrap_or(size * 1.2);
+                let (anchor, ax) = match o.align {
+                    TextAlign::Left => ("start", o.x),
+                    TextAlign::Center => ("middle", o.x + o.w / 2.0 / k),
+                    TextAlign::Right => ("end", o.x + o.w / k),
+                };
+                let mut transform = String::new();
+                if o.rotation != 0.0 {
+                    transform += &format!("rotate({} {} {}) ", o.rotation, o.x + o.w / 2.0, o.y + o.h / 2.0);
+                }
+                transform += &format!("matrix({k} 0 0 1 {} 0)", o.x * (1.0 - k));
+                s += &format!(
+                    "<text id=\"{}\" transform=\"{transform}\" font-family=\"{}\" font-size=\"{size}\" font-weight=\"{}\" font-style=\"{}\" fill=\"{}\" text-anchor=\"{anchor}\" xml:space=\"preserve\">",
+                    xml(&o.id),
+                    o.font.svg(),
+                    if o.bold { "bold" } else { "normal" },
+                    if o.italic { "italic" } else { "normal" },
+                    o.color.as_deref().unwrap_or("#000000"),
+                );
+                let top = o.y + o.baseline.unwrap_or(size * 0.72);
+                for (i, line) in o.text.as_deref().unwrap_or("").split('\n').enumerate() {
+                    s += &format!("<tspan x=\"{ax}\" y=\"{}\">{}</tspan>", top + i as f32 * lh, xml(line));
+                }
+                s += "</text>\n";
+            }
             ObjectKind::Text => {
                 let size = o.font_size.unwrap_or(o.h);
                 s += &format!(
-                    "<text {id} x=\"{}\" y=\"{}\" font-family=\"Helvetica, Arial, sans-serif\" font-size=\"{}\" font-weight=\"{}\" fill=\"{}\" textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\" xml:space=\"preserve\">{}</text>\n",
+                    "<text {id} x=\"{}\" y=\"{}\" font-family=\"{}\" font-size=\"{}\" font-weight=\"{}\" font-style=\"{}\" fill=\"{}\" textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\" xml:space=\"preserve\">{}</text>\n",
                     o.x,
                     o.y + o.baseline.unwrap_or(size * 0.72),
+                    o.font.svg(),
                     size,
                     if o.bold { "bold" } else { "normal" },
+                    if o.italic { "italic" } else { "normal" },
                     o.color.as_deref().unwrap_or("#000000"),
                     o.w,
                     xml(o.text.as_deref().unwrap_or(""))
@@ -738,6 +1537,7 @@ fn check_svg(bytes: &[u8], d: &Design) -> PwResult<()> {
     let mut r = quick_xml::Reader::from_reader(bytes);
     let (mut texts, mut rects, mut images) = (Vec::new(), 0usize, 0usize);
     let mut in_text = false;
+    let mut spans = 0usize; // <tspan> lines of the current <text>: joined with "\n"
     let mut buf = Vec::new();
     loop {
         match r.read_event_into(&mut buf).map_err(|_| fail("not well-formed"))? {
@@ -745,9 +1545,18 @@ fn check_svg(bytes: &[u8], d: &Design) -> PwResult<()> {
                 match e.name().as_ref() {
                     "text" => {
                         in_text = true;
+                        spans = 0;
                         texts.push(String::new());
                     }
-                    "rect" => rects += 1,
+                    "tspan" if in_text => {
+                        if spans > 0 {
+                            if let Some(last) = texts.last_mut() {
+                                last.push('\n');
+                            }
+                        }
+                        spans += 1;
+                    }
+                    "rect" | "ellipse" => rects += 1,
                     "image" => images += 1,
                     "svg" => {}
                     _ => return Err(fail("unexpected element")),
@@ -822,14 +1631,63 @@ fn pdf_color(hex6: &str, alpha: u8) -> PdfColor {
 
 /// A one-page PDF of the design: real text (built-in Helvetica, stretched to the box width),
 /// vector rectangles and embedded pictures.
+/// A shape's drawn path: inset by half its outline so the box stays the outer edge (the Studio's
+/// `shapeGeometry`).
+struct Geometry {
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    r: f32,
+    sw: f32,
+}
+
+fn shape_geometry(o: &DesignObject) -> Geometry {
+    let sw = if o.stroke.is_some() { o.stroke_width.min(o.w.min(o.h) / 2.0).max(0.0) } else { 0.0 };
+    Geometry {
+        x: o.x + sw / 2.0,
+        y: o.y + sw / 2.0,
+        w: (o.w - sw).max(0.0),
+        h: (o.h - sw).max(0.0),
+        r: (o.radius - sw / 2.0).max(0.0),
+        sw,
+    }
+}
+
+/// PDF built-in fonts by family, then [regular, bold, italic, bold italic].
+fn builtin_fonts(doc: &mut PdfDocument) -> [[PdfFontToken; 4]; 3] {
+    let f = doc.fonts_mut();
+    [
+        [f.helvetica(), f.helvetica_bold(), f.helvetica_oblique(), f.helvetica_bold_oblique()],
+        [f.times_roman(), f.times_bold(), f.times_italic(), f.times_bold_italic()],
+        [f.courier(), f.courier_bold(), f.courier_oblique(), f.courier_bold_oblique()],
+    ]
+}
+
+fn font_of(fonts: &[[PdfFontToken; 4]; 3], o: &DesignObject) -> PdfFontToken {
+    fonts[o.font as usize][o.bold as usize + 2 * o.italic as usize]
+}
+
+/// Natural width of `text` in `o`'s font at size `size` (same units as the size). Characters
+/// outside the built-in fonts are left out, as in the PDF export.
+fn natural_width(doc: &PdfDocument, fonts: &[[PdfFontToken; 4]; 3], o: &DesignObject, text: &str, size: f32) -> f32 {
+    let wording: String = text.chars().filter(|&c| winansi(c) || c == ' ').collect();
+    if wording.trim().is_empty() {
+        return 0.0;
+    }
+    PdfPageTextObject::new(doc, &wording, font_of(fonts, o), PdfPoints::new(size))
+        .and_then(|t| t.width())
+        .map(|w| w.value)
+        .unwrap_or(0.0)
+}
+
 fn to_pdf(d: &Design) -> PwResult<(Vec<u8>, Vec<String>)> {
     let pdfium = engine()?;
     let err = |e: PdfiumError| map_pdfium_error(&e, "design export");
     let mut doc = pdfium.create_new_pdf().map_err(err)?;
     let k = d.pt_per_px;
     let (pw, ph) = (d.width as f32 * k, d.height as f32 * k);
-    let regular = doc.fonts_mut().helvetica();
-    let bold = doc.fonts_mut().helvetica_bold();
+    let fonts = builtin_fonts(&mut doc);
     let mut page = doc
         .pages_mut()
         .create_page_at_end(PdfPagePaperSize::Custom(PdfPoints::new(pw), PdfPoints::new(ph)))
@@ -847,17 +1705,50 @@ fn to_pdf(d: &Design) -> PwResult<(Vec<u8>, Vec<String>)> {
     .map_err(err)?;
     page.objects_mut().add_path_object(bg).map_err(err)?;
     let mut dropped = 0usize;
+    // Turn an object clockwise around its box's centre (page space, y up).
+    macro_rules! turn {
+        ($obj:expr, $o:expr) => {
+            if $o.rotation != 0.0 {
+                let (cx, cy) = (($o.x + $o.w / 2.0) * k, ph - ($o.y + $o.h / 2.0) * k);
+                $obj.translate(PdfPoints::new(-cx), PdfPoints::new(-cy)).map_err(err)?;
+                $obj.rotate_clockwise_degrees($o.rotation).map_err(err)?;
+                $obj.translate(PdfPoints::new(cx), PdfPoints::new(cy)).map_err(err)?;
+            }
+        };
+    }
     for o in d.objects.iter().filter(|o| o.visible && o.w > 0.0 && o.h > 0.0) {
         match o.kind {
             ObjectKind::Shape => {
-                let p = PdfPagePathObject::new_rect(
-                    &doc,
-                    rect(o.x, o.y, o.w, o.h),
-                    None,
-                    None,
-                    Some(pdf_color(o.fill.as_deref().unwrap_or(""), 255)),
-                )
-                .map_err(err)?;
+                let fill = o.fill.as_deref().map(|c| pdf_color(c, 255));
+                let g = shape_geometry(o);
+                let (stroke, sw) = match o.stroke.as_deref().filter(|_| g.sw > 0.0) {
+                    Some(c) => (Some(pdf_color(c, 255)), Some(PdfPoints::new(g.sw * k))),
+                    None => (None, None),
+                };
+                let o = &DesignObject { x: g.x, y: g.y, w: g.w, h: g.h, radius: g.r, ..o.clone() };
+                let mut p = if o.ellipse {
+                    PdfPagePathObject::new_ellipse(&doc, rect(o.x, o.y, o.w, o.h), stroke, sw, fill).map_err(err)?
+                } else if o.radius > 0.0 {
+                    // Four straight sides and four quarter-circle corners (Bezier, k = 0.5523).
+                    let (l, b, r_, t) = (o.x * k, ph - (o.y + o.h) * k, (o.x + o.w) * k, ph - o.y * k);
+                    let r = o.radius.min(o.w.min(o.h) / 2.0) * k;
+                    let c = r * (1.0 - 0.5523);
+                    let pt = PdfPoints::new;
+                    let mut p = PdfPagePathObject::new(&doc, pt(l + r), pt(b), stroke, sw, fill).map_err(err)?;
+                    p.line_to(pt(r_ - r), pt(b)).map_err(err)?;
+                    p.bezier_to(pt(r_), pt(b + r), pt(r_ - c), pt(b), pt(r_), pt(b + c)).map_err(err)?;
+                    p.line_to(pt(r_), pt(t - r)).map_err(err)?;
+                    p.bezier_to(pt(r_ - r), pt(t), pt(r_), pt(t - c), pt(r_ - c), pt(t)).map_err(err)?;
+                    p.line_to(pt(l + r), pt(t)).map_err(err)?;
+                    p.bezier_to(pt(l), pt(t - r), pt(l + c), pt(t), pt(l), pt(t - c)).map_err(err)?;
+                    p.line_to(pt(l), pt(b + r)).map_err(err)?;
+                    p.bezier_to(pt(l + r), pt(b), pt(l), pt(b + c), pt(l + c), pt(b)).map_err(err)?;
+                    p.close_path().map_err(err)?;
+                    p
+                } else {
+                    PdfPagePathObject::new_rect(&doc, rect(o.x, o.y, o.w, o.h), stroke, sw, fill).map_err(err)?
+                };
+                turn!(p, o);
                 page.objects_mut().add_path_object(p).map_err(err)?;
             }
             ObjectKind::Image => {
@@ -865,7 +1756,35 @@ fn to_pdf(d: &Design) -> PwResult<(Vec<u8>, Vec<String>)> {
                 let mut obj = PdfPageImageObject::new(&doc, &img).map_err(err)?;
                 obj.apply_matrix(PdfMatrix::new(o.w * k, 0.0, 0.0, o.h * k, o.x * k, ph - (o.y + o.h) * k))
                     .map_err(err)?;
+                turn!(obj, o);
                 page.objects_mut().add_image_object(obj).map_err(err)?;
+            }
+            ObjectKind::Text if o.text.as_deref().is_some_and(|t| t.contains('\n')) => {
+                // A paragraph: one text object per line, placed by the alignment, glyphs scaled
+                // by `stretch` (the same layout as the SVG export and the Studio canvas).
+                let size = o.font_size.unwrap_or(o.h);
+                let sx = o.stretch.unwrap_or(1.0);
+                let lh = o.line_height.unwrap_or(size * 1.2);
+                for (i, line) in o.text.as_deref().unwrap_or("").split('\n').enumerate() {
+                    let wording: String = line.chars().filter(|&c| winansi(c) || c == ' ').collect();
+                    dropped += line.chars().count() - wording.chars().count();
+                    if wording.trim().is_empty() {
+                        continue;
+                    }
+                    let mut t = PdfPageTextObject::new(&doc, &wording, font_of(&fonts, o), PdfPoints::new(size * k))
+                        .map_err(err)?;
+                    t.set_fill_color(pdf_color(o.color.as_deref().unwrap_or(""), 255)).map_err(err)?;
+                    let shown = t.width().map_err(err)?.value * sx;
+                    let left = match o.align {
+                        TextAlign::Left => o.x * k,
+                        TextAlign::Center => (o.x + o.w / 2.0) * k - shown / 2.0,
+                        TextAlign::Right => (o.x + o.w) * k - shown,
+                    };
+                    let base = ph - (o.y + o.baseline.unwrap_or(size * 0.72) + i as f32 * lh) * k;
+                    t.apply_matrix(PdfMatrix::new(sx, 0.0, 0.0, 1.0, left, base)).map_err(err)?;
+                    turn!(t, o);
+                    page.objects_mut().add_text_object(t).map_err(err)?;
+                }
             }
             ObjectKind::Text => {
                 let wording: String =
@@ -876,13 +1795,13 @@ fn to_pdf(d: &Design) -> PwResult<(Vec<u8>, Vec<String>)> {
                 }
                 let size = o.font_size.unwrap_or(o.h) * k;
                 let mut t =
-                    PdfPageTextObject::new(&doc, &wording, if o.bold { bold } else { regular }, PdfPoints::new(size))
-                        .map_err(err)?;
+                    PdfPageTextObject::new(&doc, &wording, font_of(&fonts, o), PdfPoints::new(size)).map_err(err)?;
                 t.set_fill_color(pdf_color(o.color.as_deref().unwrap_or(""), 255)).map_err(err)?;
                 let natural = t.width().map_err(err)?.value.max(0.01);
                 let sx = (o.w * k / natural).clamp(0.2, 5.0);
                 let base = ph - (o.y + o.baseline.unwrap_or(o.font_size.unwrap_or(o.h) * 0.72)) * k;
                 t.apply_matrix(PdfMatrix::new(sx, 0.0, 0.0, 1.0, o.x * k, base)).map_err(err)?;
+                turn!(t, o);
                 page.objects_mut().add_text_object(t).map_err(err)?;
             }
         }
@@ -933,6 +1852,7 @@ pub fn export_design(
     let ext = match format {
         DesignFormat::Svg => "svg",
         DesignFormat::Pdf => "pdf",
+        DesignFormat::Png => "png",
     };
     if output.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case(ext)) != Some(true) {
         return Err(PwError::invalid("design.extension", format!("Save the export as a .{ext} file.")));
@@ -952,7 +1872,36 @@ pub fn export_design(
             let c = write_atomic_bytes(output, policy, &protected, &bytes, |staged| check_pdf(staged, &d))?;
             Ok((c, warnings))
         }
+        DesignFormat::Png => {
+            // Drawn by the PDF engine from the PDF export, one design pixel per image pixel.
+            let (bytes, warnings) = to_pdf(&d)?;
+            let png = to_png(&bytes, &d)?;
+            let c = write_atomic_bytes(output, policy, &protected, &png, |staged| {
+                let bytes = std::fs::read(staged).map_err(|e| PwError::from_io(&e, "png"))?;
+                let read = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png)
+                    .map_err(|_| PwError::internal("design.export", "The PNG could not be read back."))?;
+                if (read.width(), read.height()) != (d.width, d.height) {
+                    return Err(PwError::internal("design.export", "The PNG has the wrong size."));
+                }
+                Ok(())
+            })?;
+            Ok((c, warnings))
+        }
     }
+}
+
+fn to_png(pdf: &[u8], d: &Design) -> PwResult<Vec<u8>> {
+    let pdfium = engine()?;
+    let err = |e: PdfiumError| map_pdfium_error(&e, "design export");
+    let doc = pdfium.load_pdf_from_byte_slice(pdf, None).map_err(err)?;
+    let page = doc.pages().get(0).map_err(err)?;
+    let config = PdfRenderConfig::new().set_target_size(d.width as i32, d.height as i32).render_annotations(false);
+    let img = page.render_with_config(&config).map_err(err)?.as_image().map_err(err)?;
+    let mut png = Vec::new();
+    img.to_rgb8()
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .map_err(|_| PwError::internal("design.export", "Could not encode the PNG."))?;
+    Ok(png)
 }
 
 #[cfg(test)]
@@ -983,7 +1932,7 @@ mod tests {
                 // a gradient
             }
         }
-        let (objects, bg, s) = reconstruct(&img, &[]);
+        let (objects, bg, s) = reconstruct(&img, &[], &chars);
         assert_eq!(hex(bg), "#faf5e6");
         assert_eq!((s.shapes, s.images, s.text), (1, 1, 0));
         let shape = objects.iter().find(|o| o.kind == ObjectKind::Shape).expect("test value");
@@ -1006,7 +1955,7 @@ mod tests {
             fill(&mut img, x0, 20, x0 + 6, 40, [255, 255, 255]);
         }
         let line = Line { text: "HIT".into(), score: 0.95, x0: 36, y0: 16, x1: 112, y1: 44 };
-        let (objects, _, s) = reconstruct(&img, &[line]);
+        let (objects, _, s) = reconstruct(&img, &[line], &chars);
         assert_eq!((s.shapes, s.images, s.text), (1, 0, 1));
         let t = objects.last().expect("test value");
         assert_eq!(t.kind, ObjectKind::Text);
@@ -1019,6 +1968,301 @@ mod tests {
     }
 
     #[test]
+    fn behind_a_box_is_exact_for_a_gradient_and_a_doubtful_line_is_not_painted() {
+        // A horizontal-and-vertical gradient: the estimate from the ring reproduces it.
+        let mut img = canvas(120, 80, [0, 0, 0]);
+        for y in 0..80 {
+            for x in 0..120 {
+                img.set(x, y, [x as i32 * 2, 40 + y as i32, 200]);
+            }
+        }
+        let est = behind_box(&img, (30, 20, 90, 50), (28, 18, 92, 52));
+        let worst = (20..50)
+            .flat_map(|y| (30..90).map(move |x| (x, y)))
+            .map(|(x, y)| dist(est[(y - 20) * 60 + (x - 30)], img.at(x, y)))
+            .max()
+            .expect("pixels");
+        assert!(worst <= 2, "estimate off by {worst}");
+        // White bars over it as words: painted out when recognised confidently, kept when doubtful.
+        for x0 in [40, 60, 80] {
+            fill(&mut img, x0, 25, x0 + 5, 45, [255, 255, 255]);
+        }
+        let white_left = |objects: &[DesignObject]| {
+            objects
+                .iter()
+                .filter(|o| o.kind == ObjectKind::Image)
+                .map(|p| {
+                    let png = decode_png(p.png.as_deref().expect("data"), "test").expect("png").to_rgba8();
+                    png.pixels().filter(|c| c[0] == 255 && c[1] == 255 && c[2] == 255 && c[3] == 255).count()
+                })
+                .sum::<usize>()
+        };
+        let line = |score| Line { text: "III".into(), score, x0: 38, y0: 23, x1: 87, y1: 47 };
+        let (objects, _, _) = reconstruct(&img, &[line(0.95)], &chars);
+        assert_eq!(white_left(&objects), 0, "words painted out");
+        let t = objects.iter().find(|o| o.kind == ObjectKind::Text).expect("text");
+        assert_eq!(t.color.as_deref(), Some("#ffffff"));
+        assert!(t.note.as_deref().is_some_and(|n| n.contains("painted out")), "{:?}", t.note);
+        let (objects, _, _) = reconstruct(&img, &[line(0.5)], &chars);
+        assert!(white_left(&objects) > 0, "a doubtful line leaves the picture as it was");
+    }
+
+    /// Synthetic glyph row: `stems` vertical bars 3 px wide, 20 px tall, optionally with 9 px feet.
+    fn stems(n: usize, feet: bool) -> (Vec<bool>, usize, usize) {
+        let (bw, bh) = (n * 16 + 8, 30);
+        let mut ink = vec![false; bw * bh];
+        for i in 0..n {
+            let x0 = 6 + i * 16;
+            for y in 5..25 {
+                for x in x0..x0 + 3 {
+                    ink[y * bw + x] = true;
+                }
+            }
+            if feet {
+                for y in 23..25 {
+                    for x in x0 - 3..x0 + 6 {
+                        ink[y * bw + x] = true;
+                    }
+                }
+            }
+        }
+        (ink, bw, bh)
+    }
+
+    #[test]
+    fn stems_with_feet_read_as_serif_and_too_few_stems_are_not_judged() {
+        let (ink, bw, bh) = stems(6, true);
+        assert_eq!(serif_share(&ink, bw, bh), Some(1.0));
+        let (ink, bw, bh) = stems(6, false);
+        assert_eq!(serif_share(&ink, bw, bh), Some(0.0));
+        let (ink, bw, bh) = stems(3, true);
+        assert_eq!(serif_share(&ink, bw, bh), None, "three stems are too few");
+        assert_eq!(serif_share(&[false; 100], 10, 10), None, "no ink");
+    }
+
+    #[test]
+    fn letters_standing_on_a_rule_are_not_serif() {
+        // Plain stems on a 2 px line under the first half of the box (a form's field line): the
+        // run under them covers several stems, so it is not a foot. drop_rules does not clear it
+        // (it is shorter than 85 % of the box).
+        let (mut ink, bw, bh) = stems(8, false);
+        for y in 23..25 {
+            for x in 2..bw / 2 {
+                ink[y * bw + x] = true;
+            }
+        }
+        assert_eq!(serif_share(&ink, bw, bh), Some(0.0));
+        // Real feet still count when the letters are close.
+        let (ink, bw, bh) = stems(8, true);
+        assert_eq!(serif_share(&ink, bw, bh), Some(1.0));
+    }
+
+    #[test]
+    fn the_main_band_leaves_out_a_neighbouring_line() {
+        let (mut ink, bw, bh) = stems(6, false);
+        // A sliver of the next line's tops at the bottom of the box, after an empty row.
+        ink.extend(vec![false; bw]);
+        ink.extend((0..bw * 2).map(|i| i % 7 == 0));
+        assert_eq!(main_band(&ink, bw, bh + 3), (5, 25));
+        assert_eq!(main_band(&[false; 20], 4, 5), (0, 5), "no ink: the whole box");
+    }
+
+    /// Stand-in for the engine's font measurement: half the size per character.
+    fn chars(o: &DesignObject, t: &str) -> f32 {
+        t.chars().count() as f32 * 0.5 * o.font_size.unwrap_or(o.h)
+    }
+
+    fn line(text: &str, x: f32, base: f32, size: f32, color: &str) -> DesignObject {
+        let w = chars(&DesignObject { font_size: Some(size), ..obj("t") }, text) * 1.1;
+        DesignObject {
+            name: text.into(),
+            kind: ObjectKind::Text,
+            x,
+            y: base - size * 0.72,
+            w,
+            h: size * 0.93,
+            text: Some(text.into()),
+            color: Some(color.into()),
+            font_size: Some(size),
+            baseline: Some(size * 0.72),
+            confidence: 0.95,
+            ..obj("t")
+        }
+    }
+
+    fn obj(id: &str) -> DesignObject {
+        DesignObject {
+            id: id.into(),
+            name: id.into(),
+            kind: ObjectKind::Shape,
+            x: 0.0,
+            y: 0.0,
+            w: 10.0,
+            h: 10.0,
+            visible: true,
+            locked: false,
+            confidence: 1.0,
+            note: None,
+            text: None,
+            color: None,
+            font_size: None,
+            bold: false,
+            baseline: None,
+            fill: Some("#000000".into()),
+            png: None,
+            group: None,
+            rotation: 0.0,
+            ellipse: false,
+            radius: 0.0,
+            stroke: None,
+            stroke_width: 0.0,
+            font: FontFamily::Sans,
+            italic: false,
+            line_height: None,
+            align: TextAlign::Left,
+            stretch: None,
+        }
+    }
+
+    #[test]
+    fn evenly_spaced_lines_of_one_style_become_a_paragraph() {
+        let ls = vec![
+            line("Music, food and crafts", 40.0, 100.0, 20.0, "#404040"),
+            line("Riverside Park", 40.0, 128.0, 20.0, "#404040"),
+            line("from ten to six", 41.0, 156.0, 20.0, "#404040"),
+        ];
+        let (out, painted) = paragraphs(ls, vec![false, false, true], &chars);
+        assert_eq!(out.len(), 1);
+        assert_eq!(painted, vec![true]);
+        let p = &out[0];
+        assert_eq!(p.text.as_deref(), Some("Music, food and crafts\nRiverside Park\nfrom ten to six"));
+        assert_eq!((p.align, p.line_height, p.font_size), (TextAlign::Left, Some(28.0), Some(20.0)));
+        assert!((p.stretch.expect("stretch") - 1.1).abs() < 0.01, "{:?}", p.stretch);
+        assert_eq!(p.baseline, Some(14.4), "first baseline below the top");
+    }
+
+    #[test]
+    fn centred_lines_heading_columns_and_colours_are_told_apart() {
+        // Centred: different widths around one centre.
+        let c = |t: &str, base| {
+            let mut l = line(t, 0.0, base, 20.0, "#000000");
+            l.x = 200.0 - l.w / 2.0;
+            l
+        };
+        let (out, _) =
+            paragraphs(vec![c("Join us", 100.0), c("for a long evening of music", 126.0)], vec![false; 2], &chars);
+        assert_eq!((out.len(), out[0].align), (1, TextAlign::Center));
+        // A heading above body text, a second column, a red line: all separate.
+        let ls = vec![
+            line("Heading", 40.0, 60.0, 36.0, "#000000"),
+            line("Left column one", 40.0, 100.0, 20.0, "#000000"),
+            line("Right column one", 300.0, 100.0, 20.0, "#000000"),
+            line("Left column two", 40.0, 126.0, 20.0, "#000000"),
+            line("Right column two", 300.0, 126.0, 20.0, "#000000"),
+            line("Warning in red", 40.0, 152.0, 20.0, "#d01010"),
+            line("Far below", 40.0, 260.0, 20.0, "#000000"),
+        ];
+        let (out, _) = paragraphs(ls, vec![false; 7], &chars);
+        let texts: Vec<&str> = out.iter().filter_map(|o| o.text.as_deref()).collect();
+        assert_eq!(
+            texts,
+            [
+                "Heading",
+                "Left column one\nLeft column two",
+                "Right column one\nRight column two",
+                "Warning in red",
+                "Far below"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_hollow_frame_is_an_outline_and_a_thick_one_is_not() {
+        let frame = |t: usize| {
+            let mut img = canvas(200, 120, [250, 250, 250]);
+            fill(&mut img, 20, 20, 180, 100, [20, 40, 120]);
+            fill(&mut img, 20 + t, 20 + t, 180 - t, 100 - t, [250, 250, 250]);
+            img
+        };
+        let (objects, _, s) = reconstruct(&frame(4), &[], &chars);
+        assert_eq!((s.shapes, s.images), (1, 0));
+        let o = &objects[0];
+        assert_eq!(
+            (o.fill.as_deref(), o.stroke.as_deref(), o.stroke_width, o.ellipse),
+            (None, Some("#142878"), 4.0, false)
+        );
+        assert_eq!((o.x, o.y, o.w, o.h), (20.0, 20.0, 160.0, 80.0));
+        // A ring thicker than a quarter of the shorter side is not a line: it stays a picture.
+        let (_, _, s) = reconstruct(&frame(30), &[], &chars);
+        assert_eq!((s.shapes, s.images), (0, 1));
+    }
+
+    #[test]
+    fn crops_keep_the_chosen_part_and_refuse_nothing_left() {
+        let mut img = image::RgbaImage::new(100, 50);
+        for (x, _, p) in img.enumerate_pixels_mut() {
+            *p = image::Rgba([if x < 25 { 255 } else { 0 }, 0, 0, 255]);
+        }
+        let b64 = png_base64(&image::DynamicImage::ImageRgba8(img));
+        let out = decode_png(&crop_png(&b64, [0.25, 0.1, 0.0, 0.2]).expect("crop"), "t").expect("png").to_rgba8();
+        assert_eq!(out.dimensions(), (75, 35));
+        assert!(out.pixels().all(|p| p[0] == 0), "the red quarter was cut away");
+        for bad in [[0.6, 0.0, 0.5, 0.0], [0.0, 1.0, 0.0, 0.0], [-0.1, 0.0, 0.0, 0.0], [f32::NAN, 0.0, 0.0, 0.0]] {
+            assert_eq!(crop_png(&b64, bad).expect_err("refused").code, "design.crop");
+        }
+        assert_eq!(crop_png("not base64!", [0.1, 0.0, 0.0, 0.0]).expect_err("bad data").code, "design.png");
+    }
+
+    #[test]
+    fn a_table_rule_inside_a_line_box_is_not_part_of_the_text() {
+        // Three letter bars 20 px tall on white, a 1 px rule right under them inside the line's box.
+        let mut img = canvas(200, 60, [255, 255, 255]);
+        for x0 in [40, 70, 100] {
+            fill(&mut img, x0, 20, x0 + 6, 40, [0, 0, 0]);
+        }
+        fill(&mut img, 30, 40, 130, 41, [0, 0, 0]); // touching the letters, as in a table cell
+        let line = Line { text: "HIT".into(), score: 0.95, x0: 32, y0: 16, x1: 125, y1: 43 };
+        let (objects, _, _) = reconstruct(&img, &[line], &chars);
+        let t = objects.iter().find(|o| o.kind == ObjectKind::Text).expect("text");
+        assert_eq!((t.x, t.y, t.w, t.h), (40.0, 20.0, 66.0, 20.0), "the rule is not ink of the line");
+        assert_eq!(t.font, FontFamily::Sans);
+    }
+
+    #[test]
+    fn a_rule_along_one_side_of_a_shaded_band_does_not_darken_what_is_painted_behind_text() {
+        let mut img = canvas(120, 60, [255, 255, 255]);
+        fill(&mut img, 10, 18, 110, 42, [200, 200, 200]);
+        fill(&mut img, 10, 18, 110, 19, [0, 0, 0]); // rule along the band's top edge
+        let est = behind_box(&img, (20, 20, 100, 40), (18, 18, 102, 42));
+        let worst = est.iter().map(|c| dist(*c, [200, 200, 200])).max().expect("pixels");
+        assert!(worst <= 2, "background estimate stays the band's grey (off by {worst})");
+    }
+
+    #[test]
+    fn a_dotted_leader_and_touching_picture_pieces_are_one_picture_each() {
+        let mut img = canvas(300, 120, [255, 255, 255]);
+        // A leader: anti-aliased dots (a 3 × 2 px core with grey edges), 12 px apart.
+        for k in 0..15 {
+            fill(&mut img, 19 + k * 12, 29, 24 + k * 12, 33, [150, 150, 150]);
+            fill(&mut img, 20 + k * 12, 30, 23 + k * 12, 32, [0, 0, 0]);
+        }
+        // Two picture pieces (two-coloured noise) 2 px apart, far from the leader.
+        for (x0, x1) in [(40, 90), (92, 140)] {
+            for y in 60..110 {
+                for x in x0..x1 {
+                    img.set(x, y, if (x * 7 + y * 13) % 5 < 2 { [200, 30, 30] } else { [30, 30, 200] });
+                }
+            }
+        }
+        let (objects, _, s) = reconstruct(&img, &[], &chars);
+        assert_eq!(s.images, 2, "{:?}", objects.iter().map(|o| (o.kind, o.x, o.y, o.w, o.h)).collect::<Vec<_>>());
+        let leader = objects.iter().find(|o| o.kind == ObjectKind::Image && o.y < 40.0).expect("leader");
+        assert_eq!((leader.x, leader.w), (19.0, 173.0));
+        let photo = objects.iter().find(|o| o.kind == ObjectKind::Image && o.y >= 60.0).expect("pieces");
+        assert_eq!((photo.x, photo.w), (40.0, 100.0));
+    }
+
+    #[test]
     fn noise_becomes_at_most_a_bounded_number_of_objects() {
         let mut img = canvas(300, 300, [255, 255, 255]);
         for y in (0..300).step_by(4) {
@@ -1026,7 +2270,7 @@ mod tests {
                 fill(&mut img, x, y, x + 3, y + 3, [0, 0, 0]);
             }
         }
-        let (objects, _, _) = reconstruct(&img, &[]);
+        let (objects, _, _) = reconstruct(&img, &[], &chars);
         assert!(objects.len() <= MAX_REGIONS, "{}", objects.len());
     }
 
@@ -1059,6 +2303,17 @@ mod tests {
                 baseline: Some(9.0),
                 fill: None,
                 png: None,
+                group: None,
+                rotation: 0.0,
+                ellipse: false,
+                radius: 0.0,
+                stroke: None,
+                stroke_width: 0.0,
+                font: FontFamily::Sans,
+                italic: false,
+                line_height: None,
+                align: TextAlign::Left,
+                stretch: None,
             }],
         };
         let svg = to_svg(&d);
@@ -1069,6 +2324,19 @@ mod tests {
         assert!(check_svg(bad.as_bytes(), &d).is_err());
         let ext = svg.replace("<rect id=\"background\"", "<image href=\"http://x/y.png\"/><rect id=\"background\"");
         assert!(check_svg(ext.as_bytes(), &d).is_err());
+    }
+
+    #[test]
+    fn replacement_pictures_are_decoded_and_re_encoded() {
+        let dir = tempfile::tempdir().expect("test value");
+        let png = dir.path().join("p.png");
+        image::RgbImage::from_pixel(30, 20, image::Rgb([200, 10, 10])).save(&png).expect("test value");
+        let b64 = picture_png(&png).expect("test value");
+        let back = decode_png(&b64, "p").expect("test value");
+        assert_eq!((back.width(), back.height()), (30, 20));
+        let txt = dir.path().join("x.png");
+        std::fs::write(&txt, b"not a picture").expect("test value");
+        assert_eq!(picture_png(&txt).expect_err("test value").code, "design.picture_format");
     }
 
     #[test]
@@ -1106,6 +2374,17 @@ mod tests {
             baseline: None,
             fill: Some("#000000".into()),
             png: None,
+            group: None,
+            rotation: 0.0,
+            ellipse: false,
+            radius: 0.0,
+            stroke: None,
+            stroke_width: 0.0,
+            font: FontFamily::Sans,
+            italic: false,
+            line_height: None,
+            align: TextAlign::Left,
+            stretch: None,
         };
         assert!(Design { objects: vec![shape.clone()], ..ok.clone() }.validate().is_ok());
         assert!(

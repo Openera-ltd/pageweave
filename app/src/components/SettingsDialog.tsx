@@ -3,12 +3,15 @@ import { useApi } from "../api";
 import { formatBytes } from "../format";
 import { COMMANDS, bindingConflicts, effectiveBindings, type CommandId } from "../commands";
 import { eventToShortcut, validateShortcut } from "../shortcuts";
-import { toPwError, type AvailableUpdate, type Density, type Motion, type PwError, type ResourceReport, type Settings, type Theme } from "../types";
+import { ANNOTATION_COLORS, KIND_LABEL, markupColor } from "../annotations";
+import { toPwError, type AnnotationKind, type AvailableUpdate, type Density, type Motion, type PwError, type ResourceReport, type Settings, type Theme } from "../types";
 import { Dialog } from "./ui";
 import { UpdatesPanel } from "./UpdatesPanel";
 import { OfficeDownload } from "./OfficeDialog";
 
 export const ACCENTS = ["#2f6fde", "#0f7b8a", "#1c7c3d", "#7a4ddb", "#c2410c", "#b42318", "#4b5563"];
+
+const MARKUP_KINDS: AnnotationKind[] = ["highlight", "underline", "strike_out", "note"];
 
 export const DEFAULT_APPEARANCE: Pick<Settings, "theme" | "accent" | "density" | "ui_scale" | "motion"> = {
   theme: "system",
@@ -141,6 +144,34 @@ export function SettingsDialog({ initial, initialTab = "appearance", knownUpdate
             <input id="ui-scale" type="range" min={0.8} max={2} step={0.05} value={s.ui_scale} aria-valuetext={`${Math.round(s.ui_scale * 100)} percent`} onChange={(e) => update({ ui_scale: Number(e.target.value) })} />
           </div>
           <Segmented<Motion> label="Motion" value={s.motion} options={[["system", "Follow system"], ["reduced", "Reduced"], ["full", "Full"]]} onChange={(motion) => update({ motion })} />
+          <div className="field">
+            <span className="label" id="markup-label">
+              Markup colors
+            </span>
+            <div className="row" role="group" aria-labelledby="markup-label">
+              {MARKUP_KINDS.map((k) => (
+                <label key={k} className="markup-color">
+                  <input
+                    type="color"
+                    data-markup={k}
+                    aria-label={`${KIND_LABEL[k]} color`}
+                    value={markupColor(s.markup_colors, k)}
+                    onChange={(e) => update({ markup_colors: { ...s.markup_colors, [k]: e.target.value.toLowerCase() } })}
+                  />
+                  {KIND_LABEL[k]}
+                </label>
+              ))}
+              <button
+                type="button"
+                className="btn outline"
+                aria-disabled={MARKUP_KINDS.every((k) => markupColor(s.markup_colors, k) === ANNOTATION_COLORS[k]) || undefined}
+                title="Use the built-in colors for new markup"
+                onClick={() => update({ markup_colors: {} })}
+              >
+                Default
+              </button>
+            </div>
+          </div>
           <button type="button" className="btn outline" onClick={() => { setCustomAccent(""); update({ ...DEFAULT_APPEARANCE }); }}>
             Restore default appearance
           </button>

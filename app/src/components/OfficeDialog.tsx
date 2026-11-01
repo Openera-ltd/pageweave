@@ -12,8 +12,9 @@ export { isOfficePath };
 interface Props {
   /** The Office file, or null to pick one first. */
   initialFile: string | null;
-  /** The LibreOffice version, or null when it is not installed (the dialog says so). */
-  engine: string | null;
+  /** The LibreOffice version, null when it is not installed (the dialog says so), or undefined
+   * while the app is still looking (the dialog follows when the answer arrives). */
+  engine: string | null | undefined;
   jobs: Record<string, JobSnapshot>;
   onClose: () => void;
   /** Called with the finished job; the caller opens the PDF. */
@@ -24,7 +25,13 @@ interface Props {
 export function OfficeDialog({ initialFile, engine: initialEngine, jobs, onClose, onFinished }: Props) {
   const api = useApi();
   // Re-read after LibreOffice is downloaded from this dialog.
-  const [engine, setEngine] = useState<string | null>(initialEngine);
+  const [found, setEngine] = useState<string | null | undefined>(initialEngine);
+  // The app's startup check can finish after the dialog opened (file given at launch).
+  useEffect(() => {
+    if (initialEngine !== undefined) setEngine((e) => e ?? initialEngine);
+  }, [initialEngine]);
+  const checking = found === undefined;
+  const engine = found ?? null;
   const [file, setFile] = useState<string | null>(initialFile);
   const [output, setOutput] = useState(initialFile ? join(dirname(initialFile), `${stem(initialFile)}.pdf`) : "");
   const [jobId, setJobId] = useState<string | null>(null);
@@ -56,7 +63,9 @@ export function OfficeDialog({ initialFile, engine: initialEngine, jobs, onClose
     }
   };
 
-  const blocker = !engine
+  const blocker = checking
+    ? "Looking for LibreOffice…"
+    : !engine
     ? "LibreOffice is not installed on this computer."
     : !file
       ? "Choose a file first."
@@ -96,7 +105,11 @@ export function OfficeDialog({ initialFile, engine: initialEngine, jobs, onClose
 
   return (
     <Dialog title="Open an Office file" onClose={onClose} footer={footer} busy={busy}>
-      {engine ? (
+      {checking ? (
+        <p className="hint" style={{ marginTop: 0 }} aria-live="polite" data-testid="office-checking">
+          Looking for LibreOffice on this computer…
+        </p>
+      ) : engine ? (
         <p className="hint" style={{ marginTop: 0 }}>
           The file is converted to a PDF with {engine} on this computer, then opened. Macros in the file never run, and the file itself is not changed.
         </p>

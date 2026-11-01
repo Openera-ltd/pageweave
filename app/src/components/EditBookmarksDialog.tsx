@@ -51,8 +51,9 @@ export function EditBookmarksDialog({ doc, currentPage, addOnOpen, jobs, onClose
   }, [job?.state]);
 
   const truncated = (doc.info as { bookmarks_truncated?: boolean }).bookmarks_truncated;
-  const blocker = doc.info.encrypted
-    ? "Remove the password first, then edit the bookmarks of that copy."
+  // A protected file may be changed when its owner allows it; the copy keeps its password (D-042).
+  const blocker = doc.info.can_modify === false
+    ? "The owner of this file does not allow changing it. Open it with its permissions password, or ask its owner for an unrestricted copy."
     : truncated
       ? "This document has more bookmarks than can be edited here."
       : (bookmarksBlocker(list, pages) ?? (output.trim() ? null : "Choose where to save the copy."));

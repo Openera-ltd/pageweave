@@ -75,8 +75,9 @@ export function EditPropertiesDialog({ doc, jobs, onClose, onFinished }: Props) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job?.state]);
 
-  const blocker = doc.info.encrypted
-    ? "Remove the password first, then change the properties of that copy."
+  // A protected file may be changed when its owner allows it; the copy keeps its password (D-042).
+  const blocker = doc.info.can_modify === false
+    ? "The owner of this file does not allow changing it. Open it with its permissions password, or ask its owner for an unrestricted copy."
     : (propertiesBlocker(values, original) ?? (output.trim() ? null : "Choose where to save the copy."));
 
   const start = async (collision: CollisionPolicy) => {

@@ -450,3 +450,22 @@ fn libreoffice_opens_every_word_file_with_the_same_pages_text_and_layout() {
     eprintln!("{}", report.join("\n"));
     assert!(failures.is_empty(), "{failures:#?}");
 }
+
+#[test]
+fn right_to_left_text_is_kept_in_reading_order_and_marked_right_to_left() {
+    // Hebrew drawn glyph by glyph from right to left, as browsers write it (tools/fixtures/gen_rtl.py).
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("rtl.docx");
+    convert("rtl-hebrew.pdf", &out);
+    let p = package(&out);
+    let paras: Vec<&str> = p.xml.split("<w:p>").skip(1).filter(|s| s.contains("<w:t")).collect();
+    let text = |s: &str| docx_text(&format!("<w:p>{s}")).trim().to_string();
+    let hebrew = paras.iter().find(|s| text(s).contains("שלום")).expect("the Hebrew paragraph");
+    // One paragraph, words in reading order with their spaces, both lines joined.
+    assert_eq!(text(hebrew), "שלום עולם, זהו מסמך לדוגמה השורה השנייה של הפסקה");
+    assert!(hebrew.contains("<w:bidi/>") && hebrew.contains("<w:rtl/>"), "marked right-to-left");
+    // Right-aligned: the paragraph's start in a right-to-left paragraph.
+    assert!(hebrew.contains("<w:jc w:val=\"left\"/>"), "aligned to its start (the right)");
+    let english = paras.iter().find(|s| text(s).starts_with("An English line")).expect("English paragraph");
+    assert!(!english.contains("<w:bidi/>") && !english.contains("<w:rtl/>"));
+}

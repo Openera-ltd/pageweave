@@ -2,7 +2,11 @@
   "bundle": {
     "resources": {
       "../../third_party/translate/": "translate/",
-      "../../third_party/office/": "office/"
+      "../../third_party/office-package/": "office-package/",
+      "../../target/release/pageweave.exe": "pageweave.exe"
+    },
+    "windows": {
+      "webviewInstallMode": { "type": "offlineInstaller" }
     }
   }
 }

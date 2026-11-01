@@ -10,6 +10,7 @@ fn english_to_german() {
     let a = t.sentence("The house is small.").expect("translate");
     let b = t.text("Good morning. How are you?\n\nThe river flows into the sea.", &|| false, &|_, _| {}).expect("text");
     eprintln!("{a:?} {b:?} in {:?}", started.elapsed());
+    // Greedy decoding gave "Das Haus ist sehr schön." here; beam search (D-030) gets it right.
     assert_eq!(a, "Das Haus ist klein.");
     assert!(b.contains("\n\n"), "{b}");
 }

@@ -113,8 +113,10 @@ impl SlideXml {
             Align::Right => "r",
             Align::Justify => "just",
         };
+        let text: String = p.runs.iter().map(|r| r.text.as_str()).collect();
+        let rtl = if crate::docx::layout::mostly_rtl(&text) { " rtl=\"1\"" } else { "" };
         let mut x = format!(
-            "<a:p><a:pPr algn=\"{algn}\"><a:lnSpc><a:spcPts val=\"{}\"/></a:lnSpc>",
+            "<a:p><a:pPr algn=\"{algn}\"{rtl}><a:lnSpc><a:spcPts val=\"{}\"/></a:lnSpc>",
             ((p.pitch * k * 100.0).round() as i64).clamp(100, 158_400)
         );
         if !p.tabs.is_empty() {

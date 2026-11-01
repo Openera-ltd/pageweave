@@ -85,7 +85,6 @@ pub fn detect_orientation(
 // ---- operation ------------------------------------------------------------------------------
 
 use crate::document::OpenOptions;
-use crate::sanitize::load_plain;
 use crate::{engine, map_pdfium_error};
 use pdfium_render::prelude::*;
 use pw_core::output::{write_atomic_bytes, CollisionPolicy, CommittedOutput};
@@ -164,14 +163,19 @@ pub fn fix_orientation(
         .with_action("Reinstall PageWeave or run the resource setup.")
     })?;
     let pdfium = engine()?;
-    let (source, mut doc, _raw) = load_plain(&pdfium, input, opts).map_err(|e| {
-        if e.code == "sanitize.protected" {
-            PwError::new(ErrorCategory::UnsupportedOperation, "orient.protected", "This file is password protected.")
+    let (source, mut doc, _raw) =
+        crate::sanitize::load_for_change(&pdfium, input, opts, crate::sanitize::Change::Modify).map_err(|e| {
+            if e.code == "sanitize.protected" {
+                PwError::new(
+                    ErrorCategory::UnsupportedOperation,
+                    "orient.protected",
+                    "This file is password protected.",
+                )
                 .with_action("Remove the password first (Remove password…), then turn that copy.")
-        } else {
-            e
-        }
-    })?;
+            } else {
+                e
+            }
+        })?;
     let n = source.pages().len().max(0) as u32;
     let chosen: Vec<u32> = match pages {
         Some(p) => p.to_vec(),

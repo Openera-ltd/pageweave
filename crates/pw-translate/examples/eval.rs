@@ -16,6 +16,10 @@ fn main() {
         None => pw_translate::Translator::load_with_runtime(&dir, &ocr, &a[1], &a[2]),
     }
     .expect("load");
+    // PAGEWEAVE_EVAL_BEAM: beam width (1 = greedy decoding, as before D-030).
+    if let Some(b) = std::env::var("PAGEWEAVE_EVAL_BEAM").ok().and_then(|b| b.parse().ok()) {
+        t.set_beam(b);
+    }
     let input = std::fs::read_to_string(&a[3]).expect("read");
     let started = std::time::Instant::now();
     let mut out = String::new();

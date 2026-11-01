@@ -27,6 +27,10 @@ struct Cli {
     /// Read the document password from the first line of standard input.
     #[arg(long, global = true)]
     password_stdin: bool,
+    /// With --password-stdin: new PDFs made from the protected document are protected with the
+    /// same open password (otherwise they are written unprotected, with a warning).
+    #[arg(long, global = true, requires = "password_stdin")]
+    keep_protection: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -67,13 +71,22 @@ enum Command {
     Fields { file: PathBuf },
     /// List the comments and markup already in a file, or change them in a new file (-o):
     /// --delete PAGE:INDEX:TYPE removes one (with its pop-up); --set-text PAGE:INDEX:TYPE=TEXT
-    /// changes its comment. PAGE is 1-based; INDEX and TYPE are as the listing prints them.
+    /// changes its comment; --set-color PAGE:INDEX:TYPE=#rrggbb its colour (markup, shapes, ink,
+    /// notes); --move PAGE:INDEX:TYPE=DX,DY moves it by DX,DY points (right and up); --resize
+    /// PAGE:INDEX:TYPE=LEFT,BOTTOM,RIGHT,TOP fits a shape, drawing or stamp into that box. PAGE is
+    /// 1-based; INDEX and TYPE are as the listing prints them.
     Annotations {
         file: PathBuf,
         #[arg(long, value_name = "PAGE:INDEX:TYPE")]
         delete: Vec<String>,
         #[arg(long, value_name = "PAGE:INDEX:TYPE=TEXT")]
         set_text: Vec<String>,
+        #[arg(long, value_name = "PAGE:INDEX:TYPE=#RRGGBB")]
+        set_color: Vec<String>,
+        #[arg(long = "move", value_name = "PAGE:INDEX:TYPE=DX,DY", allow_hyphen_values = true)]
+        move_by: Vec<String>,
+        #[arg(long, value_name = "PAGE:INDEX:TYPE=L,B,R,T", allow_hyphen_values = true)]
+        resize: Vec<String>,
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
@@ -132,7 +145,7 @@ enum Command {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
-    /// Rebuild a flat picture (PNG/JPEG, or one page of a PDF) as editable text, shapes and
+    /// Rebuild a flat picture (PNG, JPEG, WebP, TIFF, GIF or BMP, or one page of a PDF) as editable text, shapes and
     /// pictures, saved as a design project (.pwdesign).
     Design {
         file: PathBuf,
@@ -142,7 +155,7 @@ enum Command {
         #[arg(short, long)]
         output: PathBuf,
     },
-    /// Export a design project as editable SVG or as PDF (chosen by the output's extension).
+    /// Export a design project as editable SVG, as PDF or as a PNG picture (chosen by the output's extension).
     DesignExport {
         file: PathBuf,
         #[arg(short, long)]
@@ -179,6 +192,13 @@ enum Command {
         to: Option<String>,
         #[arg(short, long)]
         output: Option<PathBuf>,
+        /// PDF output: each sheet shows the original page next to its translation.
+        #[arg(long)]
+        bilingual: bool,
+        /// Terms translated one fixed way: a UTF-8 file with one "term = translation" per line
+        /// (blank lines and lines starting with # are ignored).
+        #[arg(long, value_name = "FILE")]
+        glossary: Option<PathBuf>,
         /// Download a language direction's model (e.g. en-de) into PageWeave's data folder.
         #[arg(long, value_name = "SOURCE-TARGET")]
         install: Option<String>,
@@ -342,7 +362,7 @@ enum Command {
         #[arg(long)]
         no_assemble: bool,
     },
-    /// Make a PDF from JPEG and PNG images, one per page, in the order given.
+    /// Make a PDF from images (JPEG, PNG, WebP, TIFF, GIF or BMP), one per page, in the order given. JPEG data is kept exactly; TIFF and GIF give their first page or frame.
     ImagesToPdf {
         images: Vec<PathBuf>,
         #[arg(short, long)]
@@ -417,7 +437,7 @@ enum Command {
         /// Typed name or initials.
         #[arg(long, conflicts_with = "image")]
         text: Option<String>,
-        /// PNG or JPEG picture of the signature.
+        /// Picture of the signature (PNG, JPEG, WebP, TIFF, GIF or BMP).
         #[arg(long)]
         image: Option<PathBuf>,
     },
@@ -700,8 +720,13 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
         }
         Command::Inspect { file } => Operation::Inspect { input: file.clone() },
         Command::Fields { file } => Operation::FormFields { input: file.clone() },
-        Command::Annotations { file, delete, set_text, output } => {
-            if delete.is_empty() && set_text.is_empty() {
+        Command::Annotations { file, delete, set_text, set_color, move_by, resize, output } => {
+            if delete.is_empty()
+                && set_text.is_empty()
+                && set_color.is_empty()
+                && move_by.is_empty()
+                && resize.is_empty()
+            {
                 Operation::ListAnnotations { input: file.clone() }
             } else {
                 let out = output
@@ -710,7 +735,16 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
                 let mut changes = Vec::new();
                 for d in delete {
                     let (page, index, subtype) = parse_annot_ref(d)?;
-                    changes.push(pw_core::ops::AnnotationChange { page, index, subtype, delete: true, text: None });
+                    changes.push(pw_core::ops::AnnotationChange {
+                        page,
+                        index,
+                        subtype,
+                        delete: true,
+                        text: None,
+                        color: None,
+                        offset: None,
+                        rect: None,
+                    });
                 }
                 for t in set_text {
                     let (r, text) = t.split_once('=').ok_or_else(|| {
@@ -723,7 +757,85 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
                         subtype,
                         delete: false,
                         text: Some(text.to_string()),
+                        color: None,
+                        offset: None,
+                        rect: None,
                     });
+                }
+                for t in set_color {
+                    let (r, color) = t.split_once('=').ok_or_else(|| {
+                        PwError::invalid("annotations.syntax", format!("“{t}”: use PAGE:INDEX:TYPE=#RRGGBB."))
+                    })?;
+                    let (page, index, subtype) = parse_annot_ref(r)?;
+                    // Several changes to one annotation are one change (text and colour together).
+                    match changes.iter_mut().find(|c| c.page == page && c.index == index) {
+                        Some(c) => c.color = Some(color.to_string()),
+                        None => changes.push(pw_core::ops::AnnotationChange {
+                            page,
+                            index,
+                            subtype,
+                            delete: false,
+                            text: None,
+                            color: Some(color.to_string()),
+                            offset: None,
+                            rect: None,
+                        }),
+                    }
+                }
+                for t in resize {
+                    let syntax = || {
+                        PwError::invalid(
+                            "annotations.syntax",
+                            format!("“{t}”: use PAGE:INDEX:TYPE=LEFT,BOTTOM,RIGHT,TOP (points)."),
+                        )
+                    };
+                    let (r, to) = t.split_once('=').ok_or_else(syntax)?;
+                    let (page, index, subtype) = parse_annot_ref(r)?;
+                    let v: Vec<f32> = to
+                        .split(',')
+                        .map(|x| x.trim().parse::<f32>())
+                        .collect::<Result<_, _>>()
+                        .map_err(|_| syntax())?;
+                    let [left, bottom, right, top] = v[..] else { return Err(syntax()) };
+                    let rect = pw_core::ops::RectPt { left, bottom, right, top };
+                    match changes.iter_mut().find(|c| c.page == page && c.index == index) {
+                        Some(c) => c.rect = Some(rect),
+                        None => changes.push(pw_core::ops::AnnotationChange {
+                            page,
+                            index,
+                            subtype,
+                            delete: false,
+                            text: None,
+                            color: None,
+                            offset: None,
+                            rect: Some(rect),
+                        }),
+                    }
+                }
+                for t in move_by {
+                    let syntax = || {
+                        PwError::invalid("annotations.syntax", format!("“{t}”: use PAGE:INDEX:TYPE=DX,DY (points)."))
+                    };
+                    let (r, by) = t.split_once('=').ok_or_else(syntax)?;
+                    let (page, index, subtype) = parse_annot_ref(r)?;
+                    let (dx, dy) = by.split_once(',').ok_or_else(syntax)?;
+                    let offset = [
+                        dx.trim().parse::<f32>().map_err(|_| syntax())?,
+                        dy.trim().parse::<f32>().map_err(|_| syntax())?,
+                    ];
+                    match changes.iter_mut().find(|c| c.page == page && c.index == index) {
+                        Some(c) => c.offset = Some(offset),
+                        None => changes.push(pw_core::ops::AnnotationChange {
+                            page,
+                            index,
+                            subtype,
+                            delete: false,
+                            text: None,
+                            color: None,
+                            offset: Some(offset),
+                            rect: None,
+                        }),
+                    }
                 }
                 Operation::ApplyEdits {
                     input: file.clone(),
@@ -810,6 +922,8 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
             from,
             to: Some(to),
             output: Some(output),
+            bilingual,
+            glossary,
             install: None,
             remove: None,
         } => Operation::TranslateDocument {
@@ -818,6 +932,11 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
             source: from.clone(),
             target: to.clone(),
             output: output.clone(),
+            bilingual: *bilingual,
+            glossary: match glossary {
+                Some(f) => read_glossary(f)?,
+                None => vec![],
+            },
         },
         Command::Translate { .. } => {
             return Err(PwError::invalid(
@@ -839,7 +958,8 @@ fn build_request(cli: &Cli) -> Result<Option<OperationRequest>, PwError> {
             let format = match ext.as_str() {
                 "svg" => pw_core::ops::DesignFormat::Svg,
                 "pdf" => pw_core::ops::DesignFormat::Pdf,
-                _ => return Err(PwError::invalid("usage", "Export to a .svg or .pdf file.")),
+                "png" => pw_core::ops::DesignFormat::Png,
+                _ => return Err(PwError::invalid("usage", "Export to a .svg, .pdf or .png file.")),
             };
             Operation::ExportDesign { input: file.clone(), format, output: output.clone() }
         }
@@ -1703,6 +1823,7 @@ fn run() -> ExitCode {
         };
         if cli.password_stdin {
             req.password = Some(read_line()?);
+            req.keep_protection = cli.keep_protection;
         }
         if let Command::Sign { .. } = &cli.command {
             req.certificate_password = Some(read_line()?);
@@ -1740,6 +1861,26 @@ fn run() -> ExitCode {
             ExitCode::from(e.category.exit_code().clamp(2, 255) as u8)
         }
     }
+}
+
+/// A glossary file: one "term = translation" per line; blank lines and # comments are skipped.
+fn read_glossary(path: &std::path::Path) -> pw_core::PwResult<Vec<pw_core::ops::GlossaryEntry>> {
+    let text = std::fs::read_to_string(path).map_err(|e| PwError::from_io(&e, "glossary file"))?;
+    let mut out = Vec::new();
+    for (n, line) in text.lines().enumerate() {
+        let line = line.trim().trim_start_matches('\u{feff}');
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (s, t) = line.split_once('=').ok_or_else(|| {
+            PwError::invalid(
+                "translate.glossary",
+                format!("Glossary line {}: write it as \"term = translation\".", n + 1),
+            )
+        })?;
+        out.push(pw_core::ops::GlossaryEntry { source: s.trim().to_string(), target: t.trim().to_string() });
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

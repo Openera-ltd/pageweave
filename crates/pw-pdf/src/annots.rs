@@ -1,12 +1,13 @@
-//! Annotations already in a file: list them, delete them (with their pop-ups) and change their
-//! comment text. Changes are made with lopdf in a rewritten copy and checked before they are used:
-//! the copy re-parses, every touched page keeps exactly the expected annotations in order, changed
-//! texts read back, PDFium opens it with the expected counts, and page content renders as before.
+//! Annotations already in a file: list them, delete them (with their pop-ups), change their
+//! comment text or colour, and move them. Changes are made with lopdf in a rewritten copy and
+//! checked before they are used: the copy re-parses, every touched page keeps exactly the expected
+//! annotations in order, changed texts, colours and places read back, PDFium opens it with the
+//! expected counts, and page content renders as before.
 
 use crate::document::OpenOptions;
 use crate::engine;
 use crate::properties::signature_warning;
-use crate::sanitize::{check_pages, dict_of, load_plain};
+use crate::sanitize::{check_pages, dict_of};
 use lopdf::{Dictionary, Document, Object, ObjectId};
 use pdfium_render::prelude::*;
 use pw_core::ops::{AnnotationChange, RectPt};
@@ -132,8 +133,14 @@ fn describe(doc: &Document, page: u32, index: u32, d: &Dictionary) -> Option<Exi
 /// The annotations in `input` that are comments (read-only).
 pub fn list_annotations(input: &Path, opts: &OpenOptions) -> PwResult<AnnotationList> {
     let pdfium = engine()?;
-    let (_src, doc, _raw) =
-        load_plain(&pdfium, input, opts).map_err(|e| if e.code == "sanitize.protected" { protected() } else { e })?;
+    // Listing is read-only: a protected file is read with the password it was opened with.
+    let (_src, doc, _raw) = crate::sanitize::load_readable(&pdfium, input, opts).map_err(|e| {
+        if e.code == "sanitize.protected" {
+            protected()
+        } else {
+            e
+        }
+    })?;
     let mut out = Vec::new();
     for (n, pid) in doc.get_pages() {
         let (entries, _) = annots_of(&doc, pid);
@@ -163,6 +170,68 @@ fn fail(what: &str) -> PwError {
 struct PageExpect {
     subtypes: Vec<String>,
     texts: Vec<(usize, String)>,
+    colors: Vec<(usize, [f32; 3])>,
+    rects: Vec<(usize, [f32; 4])>,
+}
+
+/// Geometry entries given in page coordinates (x, y pairs; /InkList holds arrays of them). The
+/// stored appearance is drawn into /Rect, so it moves with it.
+const GEOMETRY: &[&[u8]] = &[b"Rect", b"QuadPoints", b"Vertices", b"L", b"CL", b"InkList"];
+
+/// `o` (resolved) with every x, y pair mapped by `f`; `None` when it is not numbers.
+fn mapped(doc: &Document, o: &Object, f: &dyn Fn(f32, f32) -> (f32, f32)) -> Option<Object> {
+    let o = doc.dereference(o).ok()?.1;
+    let a = o.as_array().ok()?;
+    if a.iter().all(|v| num(v).is_some()) {
+        let v: Vec<f32> = a.iter().filter_map(num).collect();
+        let pts = v.as_chunks::<2>().0.iter().flat_map(|&[px, py]| {
+            let (x, y) = f(px, py);
+            [Object::Real(x), Object::Real(y)]
+        });
+        return Some(Object::Array(pts.collect()));
+    }
+    a.iter().map(|v| mapped(doc, v, f)).collect::<Option<Vec<_>>>().map(Object::Array)
+}
+
+/// The geometry entries of `entry` fitted from its /Rect into `to` (each point scaled with the box).
+fn fitted_geometry(doc: &Document, entry: &Object, from: [f32; 4], to: [f32; 4]) -> Vec<(&'static [u8], Object)> {
+    let Some(d) = dict_of(doc, entry) else { return vec![] };
+    let sx = (to[2] - to[0]) / (from[2] - from[0]).max(0.01);
+    let sy = (to[3] - to[1]) / (from[3] - from[1]).max(0.01);
+    let f = move |x: f32, y: f32| (to[0] + (x - from[0]) * sx, to[1] + (y - from[1]) * sy);
+    let mut out: Vec<(&'static [u8], Object)> = GEOMETRY
+        .iter()
+        .filter(|k| **k != b"Rect")
+        .filter_map(|k| d.get(k).ok().and_then(|o| mapped(doc, o, &f)).map(|o| (*k, o)))
+        .collect();
+    out.push((b"Rect", Object::Array(to.iter().map(|&v| Object::Real(v)).collect())));
+    out
+}
+
+/// The moved geometry entries of the annotation `entry` (to set on its dictionary).
+fn moved_geometry(doc: &Document, entry: &Object, dx: f32, dy: f32) -> Vec<(&'static [u8], Object)> {
+    let Some(d) = dict_of(doc, entry) else { return vec![] };
+    let f = move |x: f32, y: f32| (x + dx, y + dy);
+    GEOMETRY.iter().filter_map(|k| d.get(k).ok().and_then(|o| mapped(doc, o, &f)).map(|o| (*k, o))).collect()
+}
+
+fn rect_of(doc: &Document, entry: &Object) -> Option<[f32; 4]> {
+    let r: Vec<f32> = dict_of(doc, entry)?
+        .get(b"Rect")
+        .ok()
+        .and_then(|o| doc.dereference(o).ok().map(|x| x.1))
+        .and_then(|o| o.as_array().ok())
+        .map(|a| a.iter().filter_map(num).collect())?;
+    (r.len() == 4).then(|| [r[0].min(r[2]), r[1].min(r[3]), r[0].max(r[2]), r[1].max(r[3])])
+}
+
+fn edit_entry(doc: &mut Document, entry: &mut Object, f: impl FnOnce(&mut Dictionary)) -> PwResult<()> {
+    match entry {
+        Object::Reference(r) => f(doc.get_dictionary_mut(*r).map_err(|_| changed())?),
+        Object::Dictionary(d) => f(d),
+        _ => return Err(changed()),
+    }
+    Ok(())
 }
 
 fn subtype_of(doc: &Document, o: &Object) -> String {
@@ -182,7 +251,13 @@ pub(crate) fn apply_annotation_changes(
 ) -> PwResult<(Vec<u8>, Vec<String>)> {
     let pdfium = engine()?;
     let (source, mut doc, _raw) =
-        load_plain(&pdfium, input, opts).map_err(|e| if e.code == "sanitize.protected" { protected() } else { e })?;
+        crate::sanitize::load_for_change(&pdfium, input, opts, crate::sanitize::Change::Annotate).map_err(|e| {
+            if e.code == "sanitize.protected" {
+                protected()
+            } else {
+                e
+            }
+        })?;
     let pages = doc.get_pages();
     let mut by_page: BTreeMap<u32, Vec<&AnnotationChange>> = BTreeMap::new();
     for c in changes {
@@ -207,6 +282,8 @@ pub(crate) fn apply_annotation_changes(
         let (mut entries, array_obj) = annots_of(&doc, pid);
         let mut remove: HashSet<usize> = HashSet::new();
         let mut new_text: BTreeMap<usize, String> = BTreeMap::new();
+        let mut new_color: BTreeMap<usize, [f32; 3]> = BTreeMap::new();
+        let mut new_rect: BTreeMap<usize, [f32; 4]> = BTreeMap::new();
         for c in list {
             let i = c.index as usize;
             let entry = entries.get(i).cloned().ok_or_else(changed)?;
@@ -223,7 +300,64 @@ pub(crate) fn apply_annotation_changes(
                         remove.insert(pi);
                     }
                 }
-            } else if let Some(t) = &c.text {
+            }
+            if let (false, Some(col)) = (c.delete, &c.color) {
+                let v = u32::from_str_radix(col.trim_start_matches('#'), 16).map_err(|_| changed())?;
+                let rgb =
+                    [(v >> 16) as u8, (v >> 8) as u8, v as u8].map(|b| (b as f32 / 255.0 * 1000.0).round() / 1000.0);
+                // The stored appearance carries the old colour: dropping it makes viewers draw the
+                // annotation from /C (PDFium and Acrobat regenerate it for these types).
+                let set = |d: &mut Dictionary| {
+                    d.set("C", Object::Array(rgb.iter().map(|&x| Object::Real(x)).collect()));
+                    d.remove(b"AP");
+                    d.set("M", Object::string_literal(stamp.clone()));
+                };
+                edit_entry(&mut doc, &mut entries[i], set)?;
+                new_color.insert(i, rgb);
+            }
+            if let (false, Some([dx, dy])) = (c.delete, c.offset) {
+                let before = rect_of(&doc, &entries[i]).ok_or_else(changed)?;
+                let geometry = moved_geometry(&doc, &entries[i], dx, dy);
+                let stamp = stamp.clone();
+                edit_entry(&mut doc, &mut entries[i], |d| {
+                    for (k, v) in geometry {
+                        d.set(k, v);
+                    }
+                    d.set("M", Object::string_literal(stamp));
+                })?;
+                new_rect.insert(i, [before[0] + dx, before[1] + dy, before[2] + dx, before[3] + dy]);
+                // Its pop-up (where the comment opens) moves along.
+                let popup =
+                    dict_of(&doc, &entries[i]).and_then(|d| d.get(b"Popup").ok()).and_then(|p| p.as_reference().ok());
+                if let Some(p) = popup {
+                    let geometry = moved_geometry(&doc, &Object::Reference(p), dx, dy);
+                    if let Ok(pd) = doc.get_dictionary_mut(p) {
+                        for (k, v) in geometry {
+                            pd.set(k, v);
+                        }
+                    }
+                }
+            }
+            if let (false, Some(r)) = (c.delete, &c.rect) {
+                let from = rect_of(&doc, &entries[i]).ok_or_else(changed)?;
+                let to = [r.left, r.bottom, r.right, r.top];
+                let geometry = fitted_geometry(&doc, &entries[i], from, to);
+                let stamp = stamp.clone();
+                // Shapes and drawings are redrawn from their scaled geometry (a stored appearance
+                // would keep the old line widths stretched); a stamp's picture is stretched into /Rect.
+                let redraw = c.subtype != "Stamp";
+                edit_entry(&mut doc, &mut entries[i], |d| {
+                    for (k, v) in geometry {
+                        d.set(k, v);
+                    }
+                    if redraw {
+                        d.remove(b"AP");
+                    }
+                    d.set("M", Object::string_literal(stamp));
+                })?;
+                new_rect.insert(i, to);
+            }
+            if let (false, Some(t)) = (c.delete, &c.text) {
                 if c.subtype == "FreeText" {
                     return Err(PwError::invalid(
                         "annotation.freetext",
@@ -238,15 +372,7 @@ pub(crate) fn apply_annotation_changes(
                     }
                     d.set("M", Object::string_literal(stamp.clone()));
                 };
-                match &mut entries[i] {
-                    Object::Reference(r) => {
-                        let r = *r;
-                        let d = doc.get_dictionary_mut(r).map_err(|_| changed())?;
-                        set(d);
-                    }
-                    Object::Dictionary(d) => set(d),
-                    _ => return Err(changed()),
-                }
+                edit_entry(&mut doc, &mut entries[i], set)?;
                 new_text.insert(i, t.trim().to_string());
             }
         }
@@ -258,7 +384,17 @@ pub(crate) fn apply_annotation_changes(
             .enumerate()
             .filter_map(|(new_i, (old_i, _))| new_text.get(old_i).map(|t| (new_i, t.clone())))
             .collect();
-        expect.insert(*page, PageExpect { subtypes, texts });
+        let colors = kept
+            .iter()
+            .enumerate()
+            .filter_map(|(new_i, (old_i, _))| new_color.get(old_i).map(|c| (new_i, *c)))
+            .collect();
+        let rects = kept
+            .iter()
+            .enumerate()
+            .filter_map(|(new_i, (old_i, _))| new_rect.get(old_i).map(|r| (new_i, *r)))
+            .collect();
+        expect.insert(*page, PageExpect { subtypes, texts, colors, rects });
         let arr = Object::Array(kept.into_iter().map(|(_, o)| o).collect());
         match array_obj {
             Some(id) => {
@@ -292,6 +428,23 @@ pub(crate) fn apply_annotation_changes(
                 return Err(fail(&format!("a comment on page {} did not take its new text", page + 1)));
             }
         }
+        for (i, want_c) in &want.colors {
+            let have: Vec<f32> = dict_of(&back, &entries[*i])
+                .and_then(|d| d.get(b"C").ok())
+                .and_then(|c| c.as_array().ok())
+                .map(|a| a.iter().filter_map(|v| v.as_float().ok()).collect())
+                .unwrap_or_default();
+            if have.len() != 3 || have.iter().zip(want_c).any(|(a, b)| (a - b).abs() > 0.002) {
+                return Err(fail(&format!("an annotation on page {} did not take its new colour", page + 1)));
+            }
+        }
+        for (i, want_r) in &want.rects {
+            let ok =
+                rect_of(&back, &entries[*i]).is_some_and(|r| r.iter().zip(want_r).all(|(a, b)| (a - b).abs() < 0.01));
+            if !ok {
+                return Err(fail(&format!("an annotation on page {} did not move where intended", page + 1)));
+            }
+        }
     }
     let reopened = pdfium.load_pdf_from_byte_slice(&bytes, None).map_err(|_| fail("it could not be reopened"))?;
     for (page, want) in &expect {
@@ -319,4 +472,32 @@ fn changed() -> PwError {
         "annotation.changed",
         "An annotation is not where it was when the list was made; reopen the document and try again.",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drawing_strokes_scale_with_their_box() {
+        let doc = Document::with_version("1.7");
+        let mut d = Dictionary::new();
+        d.set("Rect", Object::Array(vec![10.into(), 10.into(), 30.into(), 20.into()]));
+        let stroke = |p: &[i64]| Object::Array(p.iter().map(|&v| v.into()).collect());
+        d.set("InkList", Object::Array(vec![stroke(&[10, 10, 30, 20]), stroke(&[20, 15])]));
+        let got = fitted_geometry(&doc, &Object::Dictionary(d), [10.0, 10.0, 30.0, 20.0], [100.0, 0.0, 140.0, 40.0]);
+        let ink = got.iter().find(|(k, _)| *k == b"InkList").map(|(_, o)| o.clone()).expect("ink");
+        let pts: Vec<Vec<f32>> = ink
+            .as_array()
+            .expect("strokes")
+            .iter()
+            .map(|s| s.as_array().expect("stroke").iter().filter_map(num).collect())
+            .collect();
+        assert_eq!(pts, vec![vec![100.0, 0.0, 140.0, 40.0], vec![120.0, 20.0]]);
+        let rect = got.iter().find(|(k, _)| *k == b"Rect").map(|(_, o)| o.clone()).expect("rect");
+        assert_eq!(
+            rect.as_array().expect("rect").iter().filter_map(num).collect::<Vec<_>>(),
+            [100.0, 0.0, 140.0, 40.0]
+        );
+    }
 }

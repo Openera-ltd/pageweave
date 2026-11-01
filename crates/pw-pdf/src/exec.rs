@@ -4,10 +4,11 @@
 use crate::document::{open_document, page_count, page_texts, render_page_png, search, OpenOptions};
 use crate::edit;
 use pw_core::job::JobContext;
-use pw_core::ops::{Operation, OperationRequest, OperationResult, OutputInfo, SCHEMA_VERSION};
+use pw_core::ops::{Operation, OperationRequest, OperationResult, OutputInfo, ProtectPermissions, SCHEMA_VERSION};
 use pw_core::output::write_atomic_bytes;
+use pw_core::output::CollisionPolicy;
 use pw_core::range::parse_page_ranges;
-use pw_core::PwResult;
+use pw_core::{PwError, PwResult};
 use serde_json::json;
 use std::time::Instant;
 
@@ -54,8 +55,12 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
         }
         Operation::FormFields { input } => {
             let info = crate::forms::form_fields(input, opts.password)?;
-            if info.has_xfa {
-                warnings.push("This form uses XFA; its fields cannot be filled here.".into());
+            if info.xfa_only {
+                warnings.push("This is a dynamic XFA form; its fields cannot be filled here.".into());
+            } else if info.has_xfa {
+                warnings.push(
+                    "This form also has an XFA layer; filled copies keep the standard form and leave the XFA layer out.".into(),
+                );
             }
             (vec![], serde_json::to_value(&info).unwrap_or_default())
         }
@@ -585,7 +590,7 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             let path = pw_update::download(env!("CARGO_PKG_VERSION"), version, &cancelled, &byte_progress)?;
             (vec![], serde_json::json!({ "version": version, "installer": path }))
         }
-        Operation::TranslateDocument { input, pages, source, target, output } => {
+        Operation::TranslateDocument { input, pages, source, target, output, bilingual, glossary } => {
             let page_progress = |done: u64, total: u64| {
                 if let Some(c) = ctx {
                     c.set_progress(done, total, "paragraphs");
@@ -598,6 +603,8 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
                 source.as_deref(),
                 target,
                 output,
+                *bilingual,
+                glossary,
                 policy,
                 &cancelled,
                 &page_progress,
@@ -776,6 +783,42 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
             (outs, json!({ "parts": n }))
         }
     };
+    let mut outputs = outputs;
+    // A protected source whose new PDFs came out unprotected: say so, and with keep_protection
+    // (the app, D-042) protect them again with the open password and the source's own
+    // permissions (D-010: restrictions are never lifted by a copy).
+    // Protect and Remove password set the protection themselves.
+    let sets_protection = matches!(req.operation, Operation::Protect { .. } | Operation::Unprotect { .. });
+    if let Some(perms) = source_restrictions(req, &opts).filter(|_| !sets_protection) {
+        let plain: Vec<usize> = outputs
+            .iter()
+            .enumerate()
+            .filter(|(_, o)| o.path.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf")))
+            .filter(|(_, o)| open_document(&o.path, &OpenOptions { password: None }).is_ok())
+            .map(|(i, _)| i)
+            .collect();
+        if !plain.is_empty() {
+            warnings.retain(|w| w != crate::edit::PROTECTION_REMOVED);
+            match (req.keep_protection, req.password.as_deref()) {
+                (true, Some(pw)) => match protect_outputs(&mut outputs, &plain, pw, &perms) {
+                    Ok(()) => warnings.push(
+                        if perms == ProtectPermissions::default() {
+                            "The output is protected with the same open password as the original."
+                        } else {
+                            "The output is protected with the same open password and the same restrictions as the original."
+                        }
+                        .into(),
+                    ),
+                    Err(e) => warnings.push(format!(
+                        "{} It could not be protected again: {}",
+                        crate::edit::PROTECTION_REMOVED,
+                        e.message
+                    )),
+                },
+                _ => warnings.push(crate::edit::PROTECTION_REMOVED.into()),
+            }
+        }
+    }
     Ok(OperationResult {
         schema_version: SCHEMA_VERSION,
         operation: req.operation.id().to_string(),
@@ -784,4 +827,58 @@ pub fn execute(req: &OperationRequest, ctx: Option<&JobContext>) -> PwResult<Ope
         warnings,
         duration_ms: started.elapsed().as_millis() as u64,
     })
+}
+
+/// The permissions of the operation's (first) source when it is password protected, `None` when it
+/// is not protected or cannot be opened.
+fn source_restrictions(req: &OperationRequest, opts: &OpenOptions) -> Option<ProtectPermissions> {
+    let input = req.operation.inputs().into_iter().next()?;
+    if !input.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf")) {
+        return None;
+    }
+    let pdfium = crate::engine().ok()?;
+    let doc = crate::document::load(&pdfium, &input, opts).ok()?;
+    if !crate::unprotect::is_protected(&doc) {
+        return None;
+    }
+    drop(doc);
+    drop(pdfium);
+    let bits = crate::forms::permission_bits(&input, opts.password).ok()?;
+    let on = |b: u32| bits & b != 0;
+    Some(ProtectPermissions {
+        print: on(0x4),
+        modify: on(0x8),
+        copy: on(0x10),
+        annotate: on(0x20),
+        fill_forms: on(0x100),
+        assemble: on(0x400),
+    })
+}
+
+/// Protect the PDF outputs `which` with `password` and `perms` in place: a verified protected copy is written next to it
+/// (crate::protect checks it before it is kept) and then takes its name.
+fn protect_outputs(
+    outputs: &mut [OutputInfo],
+    which: &[usize],
+    password: &str,
+    perms: &ProtectPermissions,
+) -> PwResult<()> {
+    for &i in which {
+        let o = &mut outputs[i];
+        let name = o.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let staged = o.path.with_file_name(format!(".{name}.protecting.pdf"));
+        let _ = std::fs::remove_file(&staged);
+        let plain = OpenOptions { password: None };
+        let result = crate::protect::protect(&o.path, &plain, password, None, perms, &staged, CollisionPolicy::Fail);
+        if let Err(e) = result {
+            let _ = std::fs::remove_file(&staged);
+            return Err(e);
+        }
+        std::fs::rename(&staged, &o.path).map_err(|e| {
+            let _ = std::fs::remove_file(&staged);
+            PwError::from_io(&e, "protected output")
+        })?;
+        o.bytes = std::fs::metadata(&o.path).map(|m| m.len()).unwrap_or(o.bytes);
+    }
+    Ok(())
 }

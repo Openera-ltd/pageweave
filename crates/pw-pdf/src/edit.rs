@@ -4,6 +4,7 @@
 use crate::document::{load, OpenOptions};
 use crate::{engine, map_pdfium_error};
 use pdfium_render::prelude::*;
+use pw_core::ops::BookmarkSpec;
 use pw_core::output::{write_atomic_bytes, CollisionPolicy, CommittedOutput};
 use pw_core::range::parse_page_ranges;
 use pw_core::{ErrorCategory, PwError, PwResult};
@@ -216,6 +217,70 @@ pub fn rotate_pages(
 
 /// Combine `inputs` in order. Bookmarks and document metadata of the inputs are not carried over
 /// by the engine's page import; this is reported as a warning.
+/// The merged document with `bookmarks` as its outline, checked: PDFium reads back exactly the
+/// titles, pages and nesting written.
+fn with_outline(pdfium: &Pdfium, bytes: Vec<u8>, bookmarks: &[BookmarkSpec]) -> PwResult<Vec<u8>> {
+    let fail = || PwError::internal("merge.bookmarks", "The combined file's bookmarks could not be written.");
+    let mut doc = lopdf::Document::load_mem(&bytes).map_err(|_| fail())?;
+    crate::outline::write_outline(&mut doc, bookmarks)?;
+    doc.prune_objects();
+    let mut out = Vec::new();
+    doc.save_to(&mut out).map_err(|_| fail())?;
+    let back = pdfium.load_pdf_from_byte_slice(&out, None).map_err(|_| fail())?;
+    let mut got = Vec::new();
+    let mut cut = false;
+    if let Some(root) = back.bookmarks().root() {
+        crate::document::collect_bookmarks(&root, 0, &mut got, &mut cut);
+    }
+    let same = got.len() == bookmarks.len()
+        && got
+            .iter()
+            .zip(bookmarks)
+            .all(|(g, b)| g.title.trim() == b.title && g.page == Some(b.page) && g.depth == b.depth);
+    if !same {
+        return Err(fail());
+    }
+    drop(back);
+    Ok(out)
+}
+
+/// The first file's title, author, subject and keywords (those it has), for the combined file.
+fn properties_of(doc: &PdfDocument) -> Vec<(&'static str, String)> {
+    let tags = [
+        ("Title", PdfDocumentMetadataTagType::Title),
+        ("Author", PdfDocumentMetadataTagType::Author),
+        ("Subject", PdfDocumentMetadataTagType::Subject),
+        ("Keywords", PdfDocumentMetadataTagType::Keywords),
+    ];
+    tags.into_iter()
+        .filter_map(|(k, t)| {
+            let v = doc.metadata().get(t)?.value().trim().to_string();
+            (!v.is_empty()).then_some((k, v))
+        })
+        .collect()
+}
+
+/// `bytes` with `props` in a new document information dictionary, read back with PDFium.
+fn with_properties(pdfium: &Pdfium, bytes: Vec<u8>, props: &[(&'static str, String)]) -> PwResult<Vec<u8>> {
+    let fail = || PwError::internal("merge.properties", "The combined file's properties could not be written.");
+    let mut doc = lopdf::Document::load_mem(&bytes).map_err(|_| fail())?;
+    let mut info = lopdf::Dictionary::new();
+    for (k, v) in props {
+        info.set(*k, lopdf::text_string(v));
+    }
+    let id = doc.add_object(info);
+    doc.trailer.set("Info", id);
+    let mut out = Vec::new();
+    doc.save_to(&mut out).map_err(|_| fail())?;
+    let back = pdfium.load_pdf_from_byte_slice(&out, None).map_err(|_| fail())?;
+    let title = back.metadata().get(PdfDocumentMetadataTagType::Title).map(|t| t.value().trim().to_string());
+    if props.iter().any(|(k, v)| *k == "Title" && title.as_deref() != Some(v.as_str())) {
+        return Err(fail());
+    }
+    drop(back);
+    Ok(out)
+}
+
 pub fn merge(
     inputs: &[PathBuf],
     opts: &OpenOptions,
@@ -230,24 +295,67 @@ pub fn merge(
     let pdfium = engine()?;
     let mut out = pdfium.create_new_pdf().map_err(|e| map_pdfium_error(&e, "create"))?;
     let mut warnings = Vec::new();
-    let mut had_bookmarks = false;
     let mut any_encrypted = false;
+    // Each file's bookmarks, pointed at its pages in the combined document. A bookmark without a
+    // page in its file (an action, another document) opens that file's first page.
+    let mut bookmarks: Vec<BookmarkSpec> = Vec::new();
+    let mut props = Vec::new();
+    let mut truncated = false;
+    let mut offset = 0u32;
     for (n, input) in inputs.iter().enumerate() {
         if cancelled() {
             return Err(PwError::cancelled());
         }
-        let src = load(&pdfium, input, opts)
-            .map_err(|e| PwError { message: format!("File {} of {}: {}", n + 1, inputs.len(), e.message), ..e })?;
-        had_bookmarks |= src.bookmarks().root().is_some();
+        let named = |k: usize, e: PwError| {
+            let name = inputs[k].file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+            PwError { message: format!("File {} of {} ({name}): {}", k + 1, inputs.len(), e.message), ..e }
+        };
+        let src = match load(&pdfium, input, opts) {
+            Ok(d) => d,
+            Err(e) => {
+                // Say which of the other files cannot be opened either, not one per attempt.
+                let first = named(n, e);
+                let others: Vec<String> = (n + 1..inputs.len())
+                    .filter_map(|k| load(&pdfium, &inputs[k], opts).err().map(|e| named(k, e).message))
+                    .collect();
+                if others.is_empty() {
+                    return Err(first);
+                }
+                let count = others.len() + 1;
+                let message = std::iter::once(first.message.clone()).chain(others).collect::<Vec<_>>().join(" ");
+                return Err(PwError { message: format!("{count} files can't be combined. {message}"), ..first });
+            }
+        };
+        if let Some(root) = src.bookmarks().root() {
+            let mut found = Vec::new();
+            crate::document::collect_bookmarks(&root, 0, &mut found, &mut truncated);
+            bookmarks.extend(found.into_iter().filter(|b| !b.title.trim().is_empty()).map(|b| BookmarkSpec {
+                title: b.title.trim().to_string(),
+                page: offset + b.page.unwrap_or(0),
+                depth: b.depth,
+            }));
+        }
+        if n == 0 {
+            props = properties_of(&src);
+        }
         any_encrypted |= source_encrypted(&src);
+        offset += src.pages().len().max(0) as u32;
         out.pages_mut().append(&src).map_err(|e| map_pdfium_error(&e, "append"))?;
         progress(n as u64 + 1, inputs.len() as u64);
     }
-    if had_bookmarks {
-        warnings.push("Bookmarks from the combined files are not included in the output.".into());
-    }
     let total = out.pages().len().max(0) as u32;
-    let bytes = save_bytes(&out)?;
+    let mut bytes = save_bytes(&out)?;
+    if !bookmarks.is_empty() {
+        bytes = with_outline(&pdfium, bytes, &bookmarks)?;
+        warnings.push("Bookmarks of the combined files are kept; each opens its whole page.".into());
+        if truncated {
+            warnings.push("Some files had more bookmarks than PageWeave reads; the rest were left out.".into());
+        }
+    }
+    if !props.is_empty() {
+        bytes = with_properties(&pdfium, bytes, &props)?;
+        warnings.push("The combined file has the first file's title, author, subject and keywords.".into());
+    }
     let expect = Expect { page_count: total, password: opts.password, rotations: None };
     let (c, enc) = commit(&pdfium, &bytes, output, policy, inputs, &expect)?;
     warnings.extend(protection_warnings(any_encrypted, enc));
@@ -1096,4 +1204,28 @@ pub fn annotate(
         verify_annotation_counts(&pdfium, staged, opts.password, &expected)
     })?;
     Ok((c, count, protection_warnings(src_encrypted, encrypted)))
+}
+
+/// Regenerate a page's content after objects were removed or changed, keeping colours.
+///
+/// PDFium writes regenerated colours only for device colour spaces: a fill or stroke set through
+/// an ICC-based space (how Word and many generators write every colour) came out as `0 0 0 rg`, so
+/// table shading turned black after translation or editing. Each path and text object's colour is
+/// set again as the RGB PDFium renders it with before writing; colours it cannot give (patterns)
+/// are left as they are.
+pub(crate) fn regenerate_keeping_colours(page: &mut PdfPage) -> Result<(), PdfiumError> {
+    let n = page.objects().len();
+    for i in 0..n {
+        let Ok(mut o) = page.objects().get(i) else { continue };
+        if !matches!(o, PdfPageObject::Path(_) | PdfPageObject::Text(_)) {
+            continue;
+        }
+        if let Ok(c) = o.fill_color() {
+            let _ = o.set_fill_color(c);
+        }
+        if let Ok(c) = o.stroke_color() {
+            let _ = o.set_stroke_color(c);
+        }
+    }
+    page.regenerate_content()
 }

@@ -20,6 +20,13 @@ Maintain small redistributable/licensed fixtures and a larger controlled evaluat
 - empty, huge, corrupt, truncated, encrypted/password-protected, unsupported, malformed, and adversarial files;
 - output files with same-name conflicts, read-only destinations, nonexistent paths, permission denied, long/Unicode paths, and low-disk conditions.
 
+### Implemented: robustness corpus and sweeps (tools/corpus)
+
+- `python3 tools/corpus/build.py` builds `target/corpus` (not committed): public-domain/W3C documents pinned by SHA-256 in `tools/corpus/sources.json` (IRS forms 1040, W-4, Schedule C with hybrid XFA and usage rights; IRS Publication 15; NIST SP 800-63-3; W3C tagged table), PDFs written by LibreOffice (Writer, Calc, Impress), Chromium (web page with gradients, SVG, columns, RTL Arabic, CJK, a long table), reportlab (300 pages with outlines, links, CMYK, transparency, rotated and odd sizes; a 200-inch page beside 1-inch and 3-pt pages), cairo and ImageMagick, and 27 images (16-bit, palette, bilevel, interlaced, progressive and CMYK JPEG, EXIF-rotated, 1 px, 12 000 px wide, WebP, GIF, TIFF and multi-page TIFF, BMP, empty, truncated, mislabelled, a decompression bomb). Testing only, never training (PRD 15).
+- `python3 tools/corpus/sweep.py --cli target/debug/pageweave` runs ~40 CLI operations per PDF and 2 per image; every run must be a verified success (PDF outputs reopened) or a structured refusal — crashes, timeouts, unstructured errors and unreadable outputs fail it. First full run (2026-10-30): 2425 runs, 0 failures of that kind; reviewed refusals led to fixes D-038–D-040.
+- `python3 tools/corpus/convquality.py --cli …` measures word recall of Word/PowerPoint conversion against the engine's text.
+- E2E "real-world documents" opens every corpus PDF in the app (first/last page, search) and "real IRS Form 1040" fills and saves the real form; both skip when the corpus is not built.
+
 Keep expected extracted text, page/object counts, table data, operation results, and visual baselines where valid. Avoid relying on exact pixel equality where nondeterministic rendering is expected; use justified tolerances and structural checks. Separate tuning/training data from held-out evaluation data.
 
 ## Interaction coverage matrix

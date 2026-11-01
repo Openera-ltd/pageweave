@@ -277,12 +277,21 @@ pub fn ocr_pages(
             return Err(fail("page count changed"));
         }
         let squash = |t: &str| t.chars().filter(|c| !c.is_whitespace()).collect::<String>();
-        // Not `PdfPageText::all()`: it is bounded by the rotated page size and drops text on 90°/270°
-        // pages (the checkpoint-19 extraction bug).
-        let everything = PdfRect::new_from_values(-1.0e6, -1.0e6, 1.0e6, 1.0e6);
         for ((i, lines, _), (_, thumb)) in placed.iter().filter(|p| !p.1.is_empty()).zip(&before) {
             let page = reopened.pages().get(*i as PdfPageIndex).map_err(|_| fail("page unreadable"))?;
-            let got = squash(&page.text().map_err(|_| fail("text unreadable"))?.inside_rect(everything));
+            // The invisible text objects added for the recognised lines, read back object by object:
+            // the page's extracted text interleaves them with visible text at the same place when
+            // the page already had text (--all-pages), so it cannot show a line whole.
+            let added: String = page
+                .objects()
+                .iter()
+                .filter_map(|o| match o {
+                    PdfPageObject::Text(t) if t.render_mode() == PdfPageTextRenderMode::Invisible => Some(t.text()),
+                    _ => None,
+                })
+                .collect();
+            // Line-end hyphens come back as the engine's hyphenation mark (U+0002).
+            let got = squash(&added.replace('\u{2}', "-"));
             if lines.iter().any(|l| !got.contains(&squash(&l.text))) {
                 return Err(fail(&format!("recognised text missing on page {}", i + 1)));
             }

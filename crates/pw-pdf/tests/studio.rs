@@ -3,7 +3,10 @@
 //! again; bad requests are refused. Skipped with a message when the OCR resources are missing.
 use base64::Engine as _;
 use pw_core::output::CollisionPolicy;
-use pw_pdf::studio::{export_design, read_design, reconstruct_design, save_design, Design, DesignFormat, ObjectKind};
+use pw_pdf::studio::{
+    export_design, read_design, reconstruct_design, save_design, Design, DesignFormat, FontFamily, ObjectKind,
+    TextAlign,
+};
 use pw_pdf::{render_page_png, OpenOptions};
 use std::path::{Path, PathBuf};
 
@@ -160,6 +163,13 @@ fn poster_is_rebuilt_as_editable_objects_and_exports_verify() {
         let got = o.font_size.expect("test value") * d.pt_per_px;
         assert!((got - pt).abs() / pt < 0.12, "{} size {got} pt, want {pt}", o.name);
     }
+    // The two 12 pt body lines (baselines 18 pt apart, left edges shared) are one paragraph.
+    assert_eq!(body.text.as_deref(), Some("Music, food and crafts\nRiverside Park, 10:00 to 18:00"));
+    assert_eq!(body.align, TextAlign::Left);
+    let gap = body.line_height.expect("line height") * d.pt_per_px;
+    assert!((gap - 18.0).abs() < 1.0, "line spacing {gap} pt");
+    let k = body.stretch.expect("stretch");
+    assert!((0.9..1.1).contains(&k), "glyph scale {k}");
     // Objects back to front: text above the boxes it sits on.
     let pos = |id: &str| d.objects.iter().position(|o| o.id == id).expect("test value");
     assert!(pos(&title.id) > pos(&banner.id) && pos(&entry.id) > pos(&button.id));
@@ -215,7 +225,9 @@ fn a_png_is_rebuilt_too() {
     let d = read_design(&out).expect("test value");
     assert_eq!((d.width, d.height), (800, 1000));
     assert_eq!(d.source_name, "flyer.png");
-    assert!(s.text >= 6 && s.shapes >= 3 && s.images >= 1, "{s:?}");
+    // The two body lines form one paragraph.
+    assert!(s.text >= 5 && s.shapes >= 3 && s.images >= 1, "{s:?}");
+    assert!(s.mean_text_confidence <= 1.0 && s.mean_text_confidence > 0.9, "{s:?}");
     assert!((d.pt_per_px - 0.75).abs() < 1e-6);
 }
 
@@ -285,4 +297,376 @@ fn bad_requests_are_refused() {
         code(export_design(&fake, DesignFormat::Pdf, &dir.path().join("x.svg"), CollisionPolicy::Fail)),
         "design.extension"
     );
+}
+
+#[test]
+fn rotation_and_groups_survive_export() {
+    let dir = tempfile::tempdir().expect("test value");
+    let bar = pw_pdf::studio::DesignObject {
+        id: "bar".into(),
+        name: "Bar".into(),
+        kind: ObjectKind::Shape,
+        x: 50.0,
+        y: 90.0,
+        w: 100.0,
+        h: 20.0,
+        visible: true,
+        locked: false,
+        confidence: 1.0,
+        note: None,
+        text: None,
+        color: None,
+        font_size: None,
+        bold: false,
+        baseline: None,
+        fill: Some("#000000".into()),
+        png: None,
+        group: Some("g1".into()),
+        rotation: 90.0,
+        ellipse: false,
+        radius: 0.0,
+        stroke: None,
+        stroke_width: 0.0,
+        font: FontFamily::Sans,
+        italic: false,
+        line_height: None,
+        align: TextAlign::Left,
+        stretch: None,
+    };
+    let d = Design {
+        version: 1,
+        width: 200,
+        height: 200,
+        pt_per_px: 1.0,
+        background: "#ffffff".into(),
+        source_png: String::new(),
+        source_name: "t".into(),
+        objects: vec![bar],
+    };
+    let project = dir.path().join("r.pwdesign");
+    save_design(&d, &project, CollisionPolicy::Fail, &[]).expect("test value");
+    assert_eq!(read_design(&project).expect("test value").objects[0].group.as_deref(), Some("g1"));
+    let svg = dir.path().join("r.svg");
+    export_design(&project, DesignFormat::Svg, &svg, CollisionPolicy::Fail).expect("test value");
+    assert!(std::fs::read_to_string(&svg).expect("test value").contains("transform=\"rotate(90 100 100)\""));
+    let pdf = dir.path().join("r.pdf");
+    export_design(&project, DesignFormat::Pdf, &pdf, CollisionPolicy::Fail).expect("test value");
+    // The 100 × 20 bar turned a quarter around its centre (100, 100) is 20 wide and 100 tall.
+    let (png, _, _) = render_page_png(&pdf, &OpenOptions::default(), 0, 1.0).expect("test value");
+    let img = image::load_from_memory(&png).expect("test value").to_luma8();
+    let dark: Vec<(u32, u32)> = img.enumerate_pixels().filter(|p| p.2[0] < 100).map(|p| (p.0, p.1)).collect();
+    let (x0, x1) = (dark.iter().map(|p| p.0).min().expect("ink"), dark.iter().map(|p| p.0).max().expect("ink"));
+    let (y0, y1) = (dark.iter().map(|p| p.1).min().expect("ink"), dark.iter().map(|p| p.1).max().expect("ink"));
+    assert!((x1 - x0 + 1).abs_diff(20) <= 2 && (y1 - y0 + 1).abs_diff(100) <= 2, "box {x0}..{x1} × {y0}..{y1}");
+    assert!((x0 + x1) / 2 >= 98 && (x0 + x1) / 2 <= 102 && (y0 + y1) / 2 >= 98 && (y0 + y1) / 2 <= 102, "centred");
+    // Out-of-range turns and empty group ids are refused.
+    let mut bad = d.clone();
+    bad.objects[0].rotation = 1000.0;
+    assert_eq!(code(save_design(&bad, &dir.path().join("b.pwdesign"), CollisionPolicy::Fail, &[])), "design.invalid");
+    bad.objects[0].rotation = 0.0;
+    bad.objects[0].group = Some(String::new());
+    assert_eq!(code(save_design(&bad, &dir.path().join("c.pwdesign"), CollisionPolicy::Fail, &[])), "design.invalid");
+}
+
+#[test]
+fn circles_ellipses_and_rounded_rectangles_become_vectors() {
+    if !have_resources() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("test value");
+    let project = dir.path().join("badges.pwdesign");
+    let (_, s) =
+        reconstruct_design(&fixture("badges.pdf"), &OpenOptions::default(), 0, &project, CollisionPolicy::Fail, &never)
+            .expect("reconstruct");
+    let d = read_design(&project).expect("test value");
+    for o in &d.objects {
+        eprintln!(
+            "{:?} {} x{:.0} y{:.0} w{:.0} h{:.0} ellipse {} radius {} conf {:.3} {:?}",
+            o.kind, o.name, o.x, o.y, o.w, o.h, o.ellipse, o.radius, o.confidence, o.text
+        );
+    }
+    assert_eq!(s.images, 0, "every one-colour shape is a vector: {s:?}");
+    // Boxes in points from gen_fixtures.py (left, bottom, right, top).
+    let (circle, i1) = best(&d, ObjectKind::Shape, [20.0, 100.0, 100.0, 180.0]);
+    let (oval, i2) = best(&d, ObjectKind::Shape, [130.0, 120.0, 270.0, 180.0]);
+    let (button, i3) = best(&d, ObjectKind::Shape, [20.0, 30.0, 160.0, 80.0]);
+    let (plain, i4) = best(&d, ObjectKind::Shape, [190.0, 30.0, 280.0, 90.0]);
+    assert!(i1 > 0.95 && i2 > 0.95 && i3 > 0.95 && i4 > 0.95, "boxes {i1} {i2} {i3} {i4}");
+    assert!(circle.ellipse && oval.ellipse, "circle and oval are ellipses");
+    assert!(!button.ellipse && !plain.ellipse);
+    let want_r = 16.0 / d.pt_per_px;
+    assert!((button.radius - want_r).abs() / want_r < 0.15, "button radius {} px, want {want_r}", button.radius);
+    assert_eq!(plain.radius, 0.0, "square corners stay square");
+    let sale = d.objects.iter().find(|o| o.kind == ObjectKind::Text).expect("wording");
+    assert_eq!(sale.text.as_deref(), Some("SALE 50%"));
+    assert_eq!(
+        sale.color.as_deref().map(|c| c.to_lowercase()).as_deref().map(|c| c >= "#f0f0f0"),
+        Some(true),
+        "white wording"
+    );
+    // Exports: SVG uses ellipse and rounded rect; the PDF looks like the source.
+    let svg = dir.path().join("b.svg");
+    export_design(&project, DesignFormat::Svg, &svg, CollisionPolicy::Fail).expect("svg");
+    let text = std::fs::read_to_string(&svg).expect("test value");
+    assert_eq!(text.matches("<ellipse ").count(), 2);
+    assert!(text.contains(" rx=\""), "rounded corners in the SVG");
+    let pdf = dir.path().join("b.pdf");
+    export_design(&project, DesignFormat::Pdf, &pdf, CollisionPolicy::Fail).expect("pdf");
+    let diff = difference(&d, &pdf);
+    eprintln!("mean pixel difference {diff:.2}");
+    assert!(diff < 4.0, "export looks different: {diff}");
+}
+
+#[test]
+fn words_over_a_picture_are_painted_out_of_it() {
+    if !have_resources() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("test value");
+    let project = dir.path().join("caption.pwdesign");
+    let (_, s) = reconstruct_design(
+        &fixture("caption.pdf"),
+        &OpenOptions::default(),
+        0,
+        &project,
+        CollisionPolicy::Fail,
+        &never,
+    )
+    .expect("reconstruct");
+    let d = read_design(&project).expect("test value");
+    assert_eq!((s.text, s.images), (2, 1), "two lines over one picture: {s:?}");
+    let texts: Vec<&str> =
+        d.objects.iter().filter(|o| o.kind == ObjectKind::Text).filter_map(|o| o.text.as_deref()).collect();
+    assert!(texts.contains(&"OPEN DAY") && texts.contains(&"Saturday from ten"), "wording {texts:?}");
+    let picture = d.objects.iter().find(|o| o.kind == ObjectKind::Image).expect("picture");
+    let pic = image::load_from_memory(
+        &base64::engine::general_purpose::STANDARD.decode(picture.png.as_deref().expect("picture data")).expect("b64"),
+    )
+    .expect("png")
+    .to_rgba8();
+    // The same page without the words, at the same scale: what the picture should look like.
+    let clean =
+        pw_pdf::studio::load_source(&fixture("caption-clean.pdf"), &OpenOptions::default(), 0).expect("clean").0;
+    let source = pw_pdf::studio::load_source(&fixture("caption.pdf"), &OpenOptions::default(), 0).expect("source").0;
+    assert_eq!((clean.w, clean.h), (source.w, source.h));
+    let px = |img: &pw_pdf::studio::Rgb, x: usize, y: usize| {
+        let i = (y * img.w + x) * 3;
+        [img.px[i] as i32, img.px[i + 1] as i32, img.px[i + 2] as i32]
+    };
+    for t in d.objects.iter().filter(|o| o.kind == ObjectKind::Text) {
+        assert!(
+            t.color.as_deref().is_some_and(|c| c.to_lowercase().as_str() >= "#f0f0f0"),
+            "white wording {:?}",
+            t.color
+        );
+        assert!(t.note.as_deref().is_some_and(|n| n.contains("painted out")), "noted {:?}", t.note);
+        // Inside the line's box: the picture now matches the clean page; the source with the words did not.
+        let (mut painted, mut before, mut n, mut white) = (0i64, 0i64, 0i64, 0);
+        for y in t.y as usize..(t.y + t.h) as usize {
+            for x in t.x as usize..(t.x + t.w) as usize {
+                let p = pic.get_pixel((x as f32 - picture.x) as u32, (y as f32 - picture.y) as u32);
+                let want = px(&clean, x, y);
+                painted += (0..3).map(|k| (p[k] as i32 - want[k]).abs() as i64).sum::<i64>();
+                before += (0..3).map(|k| (px(&source, x, y)[k] - want[k]).abs() as i64).sum::<i64>();
+                white += (p[0] > 230 && p[1] > 230 && p[2] > 230) as i32;
+                n += 3;
+            }
+        }
+        let (painted, before) = (painted as f32 / n as f32, before as f32 / n as f32);
+        eprintln!("{:?}: mean difference to the clean picture {painted:.2} (with the words {before:.2}); white pixels left {white}", t.text);
+        assert!(white == 0, "no white ink left in the picture: {white}");
+        assert!(painted < 4.0 && painted < before / 5.0, "painted out: {painted} vs {before}");
+    }
+    // The export still looks like the source (the words now drawn as text).
+    let pdf = dir.path().join("c.pdf");
+    export_design(&project, DesignFormat::Pdf, &pdf, CollisionPolicy::Fail).expect("pdf");
+    let diff = difference(&d, &pdf);
+    eprintln!("mean pixel difference {diff:.2}");
+    assert!(diff < 4.0, "export looks different: {diff}");
+}
+
+#[test]
+fn fonts_and_slant_reach_svg_and_pdf_and_png_is_the_design_size() {
+    let dir = tempfile::tempdir().expect("test value");
+    let text = |id: &str, y: f32, font: FontFamily, bold: bool, italic: bool| pw_pdf::studio::DesignObject {
+        id: id.into(),
+        name: id.into(),
+        kind: ObjectKind::Text,
+        x: 10.0,
+        y,
+        w: 180.0,
+        h: 20.0,
+        visible: true,
+        locked: false,
+        confidence: 1.0,
+        note: None,
+        text: Some(format!("Wording {id}")),
+        color: Some("#000000".into()),
+        font_size: Some(20.0),
+        bold,
+        baseline: Some(15.0),
+        fill: None,
+        png: None,
+        group: None,
+        rotation: 0.0,
+        ellipse: false,
+        radius: 0.0,
+        stroke: None,
+        stroke_width: 0.0,
+        font,
+        italic,
+        line_height: None,
+        align: TextAlign::Left,
+        stretch: None,
+    };
+    let d = Design {
+        version: 1,
+        width: 200,
+        height: 120,
+        pt_per_px: 0.75,
+        background: "#fff8e0".into(),
+        source_png: String::new(),
+        source_name: "t".into(),
+        objects: vec![
+            text("a", 10.0, FontFamily::Sans, false, false),
+            text("b", 40.0, FontFamily::Serif, true, true),
+            text("c", 70.0, FontFamily::Mono, false, true),
+        ],
+    };
+    let project = dir.path().join("f.pwdesign");
+    save_design(&d, &project, CollisionPolicy::Fail, &[]).expect("save");
+    // Old projects (no font fields) read as sans upright; the default is not written out.
+    let json = std::fs::read_to_string(&project).expect("test value");
+    assert_eq!(json.matches("\"font\"").count(), 2, "only non-default families are stored");
+    assert_eq!(read_design(&project).expect("read").objects, d.objects);
+
+    let svg = dir.path().join("f.svg");
+    export_design(&project, DesignFormat::Svg, &svg, CollisionPolicy::Fail).expect("svg");
+    let svg = std::fs::read_to_string(&svg).expect("test value");
+    assert!(svg.contains("font-family=\"'Times New Roman', Times, serif\" font-size=\"20\" font-weight=\"bold\" font-style=\"italic\""), "{svg}");
+    assert!(svg.contains("monospace\" font-size=\"20\" font-weight=\"normal\" font-style=\"italic\""));
+
+    let pdf = dir.path().join("f.pdf");
+    export_design(&project, DesignFormat::Pdf, &pdf, CollisionPolicy::Fail).expect("pdf");
+    let raw = std::fs::read(&pdf).expect("test value");
+    let has = |name: &str| raw.windows(name.len()).any(|w| w == name.as_bytes());
+    assert!(has("/Helvetica") && has("/Times-BoldItalic") && has("/Courier-Oblique"), "built-in fonts by family");
+
+    let png = dir.path().join("f.png");
+    export_design(&project, DesignFormat::Png, &png, CollisionPolicy::Fail).expect("png");
+    let img = image::open(&png).expect("png").to_rgb8();
+    assert_eq!(img.dimensions(), (200, 120));
+    assert_eq!(img.get_pixel(195, 115).0, [0xff, 0xf8, 0xe0], "background colour");
+    let ink = img.pixels().filter(|p| p.0[0] < 80).count();
+    assert!(ink > 300, "the wording is drawn ({ink} dark pixels)");
+    // The extension must match the format; an existing file is not replaced.
+    assert_eq!(
+        code(export_design(&project, DesignFormat::Png, &dir.path().join("x.jpg"), CollisionPolicy::Fail)),
+        "design.extension"
+    );
+    assert!(export_design(&project, DesignFormat::Png, &dir.path().join("f.png"), CollisionPolicy::Fail).is_err());
+}
+
+/// (serif, size in points, wording) per line, top to bottom, from FONT_LINES / HOLDOUT_FONT_LINES in
+/// gen_fixtures.py. The serif threshold was chosen on fonts.pdf and fixed before fonts-holdout.pdf
+/// was measured (D-034).
+const FONTS: [(bool, f32, &str); 12] = [
+    (true, 12.0, "Minutes of the annual meeting"),
+    (true, 18.0, "The quick brown fox jumps"),
+    (true, 24.0, "Grand Opening Night"),
+    (true, 16.0, "An evening of chamber music"),
+    (true, 36.0, "Certificate"),
+    (true, 14.0, "Hand made in small batches"),
+    (false, 12.0, "Minutes of the annual meeting"),
+    (false, 18.0, "The quick brown fox jumps"),
+    (false, 24.0, "Grand Opening Night"),
+    (false, 16.0, "An evening of chamber music"),
+    (false, 36.0, "Certificate"),
+    (false, 14.0, "Hand made in small batches"),
+];
+const HOLDOUT: [(bool, f32, &str); 10] = [
+    (true, 10.0, "Please reply by the first of June"),
+    (true, 20.0, "Summer Menu"),
+    (true, 28.0, "Winners announced at noon"),
+    (true, 22.0, "with music and dancing"),
+    (true, 48.0, "Diploma"),
+    (false, 10.0, "Please reply by the first of June"),
+    (false, 20.0, "Summer Menu"),
+    (false, 28.0, "Winners announced at noon"),
+    (false, 22.0, "with music and dancing"),
+    (false, 48.0, "Diploma"),
+];
+
+#[test]
+fn serif_and_sans_lines_are_told_apart_and_sized() {
+    if !have_resources() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("test value");
+    for (name, want) in [("fonts.pdf", &FONTS[..]), ("fonts-holdout.pdf", &HOLDOUT[..])] {
+        let project = dir.path().join(format!("{name}.pwdesign"));
+        reconstruct_design(&fixture(name), &OpenOptions::default(), 0, &project, CollisionPolicy::Fail, &never)
+            .expect("reconstruct");
+        let d = read_design(&project).expect("test value");
+        let mut texts: Vec<_> = d.objects.iter().filter(|o| o.kind == ObjectKind::Text).collect();
+        texts.sort_by(|a, b| a.y.total_cmp(&b.y));
+        assert_eq!(texts.len(), want.len(), "{name}: lines");
+        let mut worst = 0f32;
+        for (t, (serif, size, wording)) in texts.iter().zip(want) {
+            assert_eq!(t.text.as_deref(), Some(*wording), "{name}");
+            assert_eq!(t.font == FontFamily::Serif, *serif, "{name}: {wording} ({size} pt) as {:?}", t.font);
+            let got = t.font_size.expect("size") * d.pt_per_px;
+            worst = worst.max((got - size).abs() / size);
+            assert!((got - size).abs() / size < 0.12, "{name}: {wording} {got:.1} pt, want {size}");
+        }
+        eprintln!("{name}: families all right; worst size error {:.1} %", worst * 100.0);
+    }
+}
+
+#[test]
+fn frames_and_rings_become_outlined_shapes() {
+    if !have_resources() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("test value");
+    let project = dir.path().join("frames.pwdesign");
+    let (_, s) =
+        reconstruct_design(&fixture("frames.pdf"), &OpenOptions::default(), 0, &project, CollisionPolicy::Fail, &never)
+            .expect("reconstruct");
+    let d = read_design(&project).expect("test value");
+    for o in &d.objects {
+        eprintln!(
+            "{:?} {} x{:.0} y{:.0} w{:.0} h{:.0} fill {:?} stroke {:?} {} ellipse {} {:?}",
+            o.kind, o.name, o.x, o.y, o.w, o.h, o.fill, o.stroke, o.stroke_width, o.ellipse, o.text
+        );
+    }
+    assert_eq!(s.images, 0, "frames are vectors: {s:?}");
+    // Outer edges in points (left, bottom, right, top) from gen_fixtures.py.
+    let (border, i1) = best(&d, ObjectKind::Shape, [10.0, 10.0, 290.0, 190.0]);
+    let (seal, i2) = best(&d, ObjectKind::Shape, [179.0, 39.0, 271.0, 101.0]);
+    assert!(i1 > 0.95 && i2 > 0.9, "boxes {i1} {i2}");
+    assert!(border.fill.is_none() && !border.ellipse && seal.fill.is_none() && seal.ellipse, "outlines, not fills");
+    assert!(
+        border.confidence >= 0.8 && seal.confidence >= 0.8,
+        "sure of both: {} {}",
+        border.confidence,
+        seal.confidence
+    );
+    let pt = |o: &pw_pdf::studio::DesignObject| o.stroke_width * d.pt_per_px;
+    assert!((pt(border) - 3.0).abs() < 0.6 && (pt(seal) - 2.0).abs() < 0.6, "widths {} {}", pt(border), pt(seal));
+    assert!(
+        border.stroke.as_deref().is_some_and(|c| c.starts_with("#1") || c.starts_with("#2")),
+        "{:?}",
+        border.stroke
+    );
+    let words: Vec<&str> = d.objects.iter().filter_map(|o| o.text.as_deref()).collect();
+    assert!(words.contains(&"Certificate") && words.contains(&"SEAL"), "{words:?}");
+    let pdf = dir.path().join("f.pdf");
+    export_design(&project, DesignFormat::Pdf, &pdf, CollisionPolicy::Fail).expect("pdf");
+    let diff = difference(&d, &pdf);
+    eprintln!("mean pixel difference {diff:.2}");
+    assert!(diff < 3.0, "export looks different: {diff}");
+    let svg = dir.path().join("f.svg");
+    export_design(&project, DesignFormat::Svg, &svg, CollisionPolicy::Fail).expect("svg");
+    assert_eq!(std::fs::read_to_string(&svg).expect("svg").matches("fill=\"none\" stroke=").count(), 2);
 }

@@ -3,9 +3,10 @@
 
 import { DEFAULT_SANITIZE } from "./components/SanitizeDialog";
 import { basename, join, stem } from "./paths";
-import type { Operation } from "./types";
+import { languageName } from "./translate";
+import type { Operation, TranslationDirection } from "./types";
 
-export type BatchAction = "optimize" | "optimize_images" | "ocr" | "sanitize" | "deskew" | "orient" | "text" | "word" | "slides";
+export type BatchAction = "optimize" | "optimize_images" | "ocr" | "sanitize" | "deskew" | "orient" | "text" | "word" | "slides" | "translate";
 
 export const BATCH_ACTIONS: Array<{ id: BatchAction; label: string; suffix: string; ext: "pdf" | "txt" | "docx" | "pptx" }> = [
   { id: "optimize", label: "Reduce file size (lossless)", suffix: "smaller", ext: "pdf" },
@@ -17,17 +18,20 @@ export const BATCH_ACTIONS: Array<{ id: BatchAction; label: string; suffix: stri
   { id: "text", label: "Export as text", suffix: "", ext: "txt" },
   { id: "word", label: "Convert to Word", suffix: "", ext: "docx" },
   { id: "slides", label: "Convert to PowerPoint", suffix: "", ext: "pptx" },
+  // The suffix is the target language ("report-de.pdf"), as in the Translate dialog.
+  { id: "translate", label: "Translate (into a PDF)", suffix: "", ext: "pdf" },
 ];
 
 /** Most files in one batch (beyond this, use the CLI in a script). */
 export const MAX_BATCH_FILES = 500;
 
 /** Output names in `folder`, unique within the batch ("a.pdf" twice from different folders → "a-smaller (2).pdf"). */
-export function batchOutputs(inputs: string[], action: BatchAction, folder: string): string[] {
+export function batchOutputs(inputs: string[], action: BatchAction, folder: string, target = "en"): string[] {
   const a = BATCH_ACTIONS.find((x) => x.id === action)!;
+  const suffix = action === "translate" ? target : a.suffix;
   const used = new Map<string, number>();
   return inputs.map((p) => {
-    const base = a.suffix ? `${stem(p)}-${a.suffix}` : stem(p);
+    const base = suffix ? `${stem(p)}-${suffix}` : stem(p);
     const key = base.toLowerCase();
     const n = (used.get(key) ?? 0) + 1;
     used.set(key, n);
@@ -35,7 +39,8 @@ export function batchOutputs(inputs: string[], action: BatchAction, folder: stri
   });
 }
 
-export function batchOperation(action: BatchAction, input: string, output: string): Operation {
+/** `target`: the language to translate into (translate only; each file's language is detected). */
+export function batchOperation(action: BatchAction, input: string, output: string, target = "en"): Operation {
   switch (action) {
     case "optimize":
       return { op: "optimize", input, images: null, output };
@@ -55,6 +60,8 @@ export function batchOperation(action: BatchAction, input: string, output: strin
       return { op: "convert_to_docx", input, pages: null, output };
     case "slides":
       return { op: "convert_to_pptx", input, pages: null, output };
+    case "translate":
+      return { op: "translate_document", input, pages: null, source: null, target, output };
   }
 }
 
@@ -83,3 +90,14 @@ export function summary(states: ItemState[]): string {
 }
 
 export { basename };
+
+/** Why a batch translation into `target` cannot start: no downloaded model leads into it, directly
+ *  or through English. Files whose own language has no downloaded route fail one by one with the
+ *  engine's message. */
+export function translateBlocker(dirs: TranslationDirection[] | null, target: string): string | null {
+  if (!dirs) return "Reading the translation languages…";
+  const installed = dirs.filter((d) => d.installed);
+  const into = installed.some((d) => d.target === target);
+  if (into) return null;
+  return `No translation into ${languageName(target)} is downloaded yet. Download one in Translate… first.`;
+}

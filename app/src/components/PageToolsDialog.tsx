@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDown, ArrowUp, FolderOpen, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, FolderOpen, Layers, Plus, Trash2 } from "lucide-react";
 import { useApi } from "../api";
 import { basename, dirname, join, siblingOutput, stem } from "../paths";
 import { toPwError, type AnnotationChange, type AnnotationSpec, type BookmarkInfo, type CollisionPolicy, type FieldValue, type PageEdit, type StampPosition, type JobSnapshot, type WatermarkLayer, type OpenedDoc, type Operation, type PwError, type TranslationDirection } from "../types";
 import { Dialog, useDebounced } from "./ui";
-import { languageName, languages, route } from "../translate";
+import { languageName, languages, parseGlossary, route } from "../translate";
 import { TranslationDownload } from "./TranslationDownload";
 
 export type PageTool = "extract" | "delete" | "rotate" | "split" | "merge" | "save" | "stamp" | "images" | "ocr" | "watermark" | "crop" | "text" | "word" | "slides" | "audio" | "translate" | "tables" | "optimize" | "deskew" | "extractImages" | "orient";
@@ -125,6 +125,8 @@ interface Props {
   /** For the audio tool: the read-aloud voice (null = default) and speed. */
   readVoice?: string | null;
   readRate?: number;
+  /** For Combine: the other documents open in tabs (paths), offered with "Add open files". */
+  openPaths?: string[];
 }
 
 type RangeCheck = { state: "idle" | "checking" } | { state: "ok"; count: number } | { state: "error"; message: string };
@@ -151,7 +153,7 @@ function useRangeCheck(docId: number, spec: string, enabled: boolean): RangeChec
   return check;
 }
 
-export function PageToolsDialog({ tool, doc, initialPages, annotations, formValues, objectEdits, annotationChanges, jobs, onClose, onFinished, readVoice = null, readRate = 1 }: Props) {
+export function PageToolsDialog({ tool, doc, initialPages, annotations, formValues, objectEdits, annotationChanges, jobs, onClose, onFinished, readVoice = null, readRate = 1, openPaths = [] }: Props) {
   const nAnnots = annotations?.length ?? 0;
   const nFields = formValues?.length ?? 0;
   const nObjects = (objectEdits ?? []).reduce((n, p) => n + p.edits.length, 0);
@@ -169,6 +171,11 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
   const [trFrom, setTrFrom] = useState<string | null>(null);
   const [trTo, setTrTo] = useState("en");
   const [trFormat, setTrFormat] = useState<"pdf" | "docx" | "txt">("pdf");
+  /** PDF output: each original page next to its translation. */
+  const [trSideBySide, setTrSideBySide] = useState(false);
+  /** Terms translated one fixed way, typed as "term = translation" lines. */
+  const [trGlossary, setTrGlossary] = useState("");
+  const trTerms = parseGlossary(trGlossary);
   const [trDirs, setTrDirs] = useState<TranslationDirection[] | null>(null);
   const [trDirsError, setTrDirsError] = useState<string | null>(null);
   const [trDetected, setTrDetected] = useState<string | null | undefined>(undefined);
@@ -317,6 +324,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
       if (!trSource) return "The document's language could not be recognized: choose it under From.";
       if (typeof trRoute === "string") return trRoute;
       if (trRoute && trRoute.needs.length) return "Download the language first.";
+      if (typeof trTerms === "string") return trTerms;
     }
     if (!output.trim()) return toFolder ? "Choose an output folder." : "Choose where to save the new file.";
     return null;
@@ -377,7 +385,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
       case "slides":
         return { op: "convert_to_pptx", input: doc.path, pages: allPages ? null : pages, output };
       case "translate":
-        return { op: "translate_document", input: doc.path, pages: allPages ? null : pages, source: trFrom, target: trTo, output };
+        return { op: "translate_document", input: doc.path, pages: allPages ? null : pages, source: trFrom, target: trTo, output, bilingual: trFormat === "pdf" && trSideBySide, glossary: typeof trTerms === "string" ? [] : trTerms };
       case "audio":
         return { op: "read_aloud_to_wav", input: doc.path, pages: allPages ? null : pages, voice: readVoice, rate: readRate, output };
       case "tables":
@@ -744,6 +752,30 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
               ))}
             </div>
           </div>
+          <div className="field">
+            <label htmlFor="translate-glossary">Glossary (optional)</label>
+            <textarea
+              id="translate-glossary"
+              className="input"
+              rows={3}
+              spellCheck={false}
+              placeholder={"term = translation\none per line"}
+              value={trGlossary}
+              aria-invalid={typeof trTerms === "string" || undefined}
+              aria-describedby="translate-glossary-msg"
+              onChange={(e) => setTrGlossary(e.target.value)}
+            />
+            <span id="translate-glossary-msg" className={typeof trTerms === "string" ? "error" : "hint"} data-testid="translate-glossary-msg">
+              {typeof trTerms === "string" ? trTerms : trTerms.length ? `${trTerms.length} term${trTerms.length === 1 ? "" : "s"}, used exactly as written` : "Terms in the document's language and how to translate them"}
+            </span>
+          </div>
+          {trFormat === "pdf" && (
+            <div className="field">
+              <label className="row">
+                <input type="checkbox" checked={trSideBySide} onChange={(e) => setTrSideBySide(e.target.checked)} data-testid="translate-side-by-side" /> Original and translation side by side
+              </label>
+            </div>
+          )}
         </>
       )}
       {tool === "tables" && (
@@ -929,7 +961,7 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
               </li>
             ))}
           </ul>
-          <div>
+          <div className="row">
             <button
               type="button"
               className="btn outline"
@@ -940,6 +972,21 @@ export function PageToolsDialog({ tool, doc, initialPages, annotations, formValu
             >
               <Plus /> Add files…
             </button>
+            {(() => {
+              const more = openPaths.filter((p) => !files.includes(p));
+              return (
+                <button
+                  type="button"
+                  className="btn outline"
+                  data-testid="merge-add-open"
+                  aria-disabled={more.length === 0 || undefined}
+                  title={more.length === 0 ? (openPaths.length ? "Every open file is already in the list" : "No other files are open") : more.map(basename).join(", ")}
+                  onClick={() => more.length && setFiles((fs) => [...fs, ...more])}
+                >
+                  <Layers /> Add open files{more.length ? ` (${more.length})` : ""}
+                </button>
+              );
+            })()}
           </div>
         </div>
       )}

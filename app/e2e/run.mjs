@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { inflateRawSync } from "node:zlib";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Session } from "./webdriver.mjs";
 
@@ -115,9 +115,13 @@ async function withApp(args, fn) {
   launchFailuresInARow = 0;
   phase.create += Date.now() - t0;
   try {
-    // PDFs open as tabs; Office files open the convert dialog and design projects the Design
+    // E2E_WINDOW=WIDTHxHEIGHT runs every scenario at that window size (e.g. 1024x768, the Windows
+    // runner's size, where some toolbar groups move into "More tools").
+    const size = /^(\d+)x(\d+)$/.exec(process.env.E2E_WINDOW ?? "");
+    if (size) await s.setWindowRect(Number(size[1]), Number(size[2]));
+    // PDFs open as tabs; Office files open the convert dialog, pictures Create PDF from images and design projects the Design
     // Studio, over the start screen.
-    const pdfArgs = args.filter((a) => !/\.(docx|doc|odt|rtf|txt|xlsx|xls|ods|csv|pptx|ppt|odp|html?|pwdesign)$/i.test(a));
+    const pdfArgs = args.filter((a) => !/\.(docx|doc|odt|rtf|txt|xlsx|xls|ods|csv|pptx|ppt|odp|html?|pwdesign|png|jpe?g)$/i.test(a));
     await s.waitFor(pdfArgs.length ? ".tab-label" : ".home", { timeout: 20000 });
     return await fn(s);
   } catch (e) {
@@ -130,14 +134,14 @@ async function withApp(args, fn) {
   }
 }
 
-// E2E_ONLY=<substring> runs only matching scenarios (local iteration; CI always runs everything).
+// E2E_ONLY=<substring>[|<substring>…] runs only matching scenarios (local iteration; CI always runs everything).
 const ONLY = process.env.E2E_ONLY;
 
 /** Thrown by a scenario that cannot run on this platform; reported as SKIP, never as PASS. */
 class Skip extends Error {}
 
 async function test(name, fn) {
-  if (ONLY && !name.includes(ONLY)) return;
+  if (ONLY && !ONLY.split("|").some((o) => name.includes(o))) return;
   if (launchFailuresInARow >= 3) {
     // Every launch is failing: report the remaining scenarios as not run instead of timing out each.
     results.push({ name, status: "FAIL", error: "not run: the app could not be launched for the previous 3 scenarios" });
@@ -202,6 +206,35 @@ await test("thumbnail click and Ctrl+End / Ctrl+Home navigate pages", async () =
     await s.keys(["Control", "Home"]);
     await s.waitUntil(async () => (await currentPage(s)) === "1", "first page");
   });
+});
+
+await test("real-world documents (test corpus): each opens, first and last pages render, search answers, no error", async () => {
+  // Built by tools/corpus/build.py (public-domain downloads and PDFs from LibreOffice, Chromium,
+  // reportlab, cairo and ImageMagick); not committed, so skipped when it has not been built.
+  const corpus = resolve(fileURLToPath(new URL("../../target/corpus", import.meta.url)));
+  const files = ["real", "made"].flatMap((d) => (existsSync(join(corpus, d)) ? readdirSync(join(corpus, d)).filter((f) => f.endsWith(".pdf")).map((f) => join(corpus, d, f)) : []));
+  if (!files.length || !CLI) throw new Skip("test corpus not built (python3 tools/corpus/build.py) or no CLI");
+  for (const f of files) {
+    const pages = pdfPages(f);
+    await withApp([f], async (s) => {
+      await s.waitUntil(() => s.exec("return !!document.querySelector('[data-page=\"0\"] img') || !!document.querySelector('.banner.error, [role=alert]')"), `${basename(f)}: first page or an error`, 60000);
+      const error = await s.exec("return document.querySelector('.banner.error, [role=alert]')?.innerText ?? null");
+      assert(error === null, `${basename(f)}: error shown: ${error}`);
+      await pageLoaded(s, 0);
+      if (pages > 1) {
+        await s.keys(["Control", "g"]);
+        await s.type(".statusbar .page-input", String(pages));
+        await s.keys(["Enter"]);
+        await s.waitUntil(async () => (await currentPage(s)) === String(pages), `${basename(f)}: page ${pages}`, 30000);
+        await pageLoaded(s, pages - 1);
+      }
+      await s.keys(["Control", "f"]);
+      await s.type('input[aria-label="Find in document"]', "the");
+      await s.keys(["Enter"]);
+      await s.waitUntil(async () => /of \d+|No matches/.test(await s.exec("return document.querySelector('.searchbar .count')?.textContent ?? ''")), `${basename(f)}: search answered`, 60000);
+      assert(!(await s.exec("return !!document.querySelector('.banner.error')")), `${basename(f)}: no error after viewing`);
+    });
+  }
 });
 
 await test("go to page via status bar input", async () => {
@@ -429,16 +462,14 @@ await test("password-protected PDF: dialog, wrong password, then correct passwor
 await test("unsupported file shows a specific error and app stays usable", async () => {
   const fake = join(work, "fake.pdf");
   copyFileSync(join(FIX, "not-a-pdf.pdf"), fake);
-  const s = await Session.create(DRIVER, APP, appArgs([fake, join(FIX, "single-page.pdf")]));
-  try {
-    await s.waitFor('.tab-label', { timeout: 20000 });
+  // withApp: the same launch retry and failure capture as other scenarios (a launch that timed out
+  // once under load failed this scenario before it ran).
+  await withApp([fake, join(FIX, "single-page.pdf")], async (s) => {
     await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Couldn’t open fake.pdf") && t.includes("not a PDF")), "error notice");
     const tabs = await s.exec("return document.querySelectorAll('.tab-label').length");
     assert(tabs === 1, `only the valid file opened (${tabs})`);
     writeFileSync(join(ART, "error-notice.png"), await s.screenshot());
-  } finally {
-    await s.delete();
-  }
+  });
 });
 
 await test("disabled controls explain why (no document open)", async () => {
@@ -633,6 +664,22 @@ await test("text layer is aligned on a 90°-rotated page", async () => {
 
 // Accessibility (Gate 3): axe-core is injected only into the test session; it is not part of the app.
 const AXE = (await import("node:fs")).readFileSync(new URL("../node_modules/axe-core/axe.min.js", import.meta.url), "utf8");
+// A main-toolbar command: its button when its group fits the window, otherwise the same command
+// in "More tools" (groups move there by priority at narrower widths, e.g. the Windows runner's
+// window). Returns the element's selector for further checks.
+async function toolbarCommand(s, id, { click = true } = {}) {
+  const button = `.toolbar [data-command="${id}"]`;
+  if (await s.exec(`return !!document.querySelector('${button}')`)) {
+    if (click) await s.click(button);
+    return button;
+  }
+  await s.click('[data-testid="toolbar-more"]');
+  const item = `[role="menu"] [role="menuitem"][data-command="${id}"]`;
+  await s.waitFor(item);
+  if (click) await s.click(item);
+  return item;
+}
+
 async function axeCheck(s, name) {
   // Measure the settled UI: colours sampled mid-fade (dialogs animate opacity) are not what users see.
   // Two consecutive checks, each after two animation frames, so an animation that has not started
@@ -853,6 +900,60 @@ await test("annotate: highlight/underline/strike/note from selection and menus; 
   assert(n === null || n === 1, `copy keeps its page (got ${n})`);
 });
 
+await test("markup colours: chosen in Settings, used by new highlights and notes, saved in the copy, kept after restart, Default restores", async () => {
+  const src = join(FIX, "single-page.pdf");
+  const out = join(work, "markup-colours.pdf");
+  const setColour = (s, label, v) => s.exec(`const i=document.querySelector('[aria-label="${label}"]');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(i, '${v}');
+      i.dispatchEvent(new Event('input', { bubbles: true })); return 1`);
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", ","]);
+    await s.waitFor('[aria-label="Highlight color"]');
+    assert((await s.exec("return document.querySelector('[aria-label=\"Highlight color\"]').value")) === "#ffd400", "built-in highlight colour shown");
+    await setColour(s, "Highlight color", "#22cc88");
+    await setColour(s, "Note color", "#3355ff");
+    await axeCheck(s, "settings-markup-colours");
+    writeFileSync(join(ART, "settings-markup-colours.png"), await s.screenshot());
+    await s.click(".dialog .dialog-footer .btn.primary");
+    await s.waitUntil(async () => await s.exec("return !document.querySelector('[role=dialog]')"), "settings saved");
+    const w = await markSpan(s, 0, "PWMARK001");
+    await s.doubleClick('[data-e2e="target"]', w * 0.3, 0);
+    await s.waitUntil(async () => (await selection(s)).trim() === "PWMARK001", "word selected");
+    // The context menu (the toolbar group may sit in More tools at the comfortable density).
+    await s.contextClick('[data-e2e="target"]', w * 0.3, 0);
+    await s.click('[role="menuitem"][data-command="annotate.highlight"]');
+    await s.waitUntil(async () => (await annotCount(s, "highlight")) === 1, "highlight drawn");
+    const shown = await s.exec("return getComputedStyle(document.querySelector('.annot.highlight')).backgroundColor + '|' + document.querySelector('.annot.highlight').getAttribute('style')");
+    assert(/34,\s*204,\s*136|#22cc88/i.test(shown), `pending highlight drawn in the chosen colour (${shown})`);
+    await s.contextClick('[data-e2e="target"]', 0, 48);
+    await s.click('[role="menuitem"][data-command="annotate.note"]');
+    await s.type("#note-text", "Colour note");
+    await s.keys(["Control", "Enter"]);
+    await s.waitUntil(async () => (await annotCount(s, "note")) === 1, "note added");
+    await s.keys(["Control", "s"]);
+    await s.waitFor("#output");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved markup-colours.pdf")), "saved notice");
+  });
+  if (CLI) {
+    const listed = JSON.parse(execFileSync(CLI, ["--json", "annotations", out], { encoding: "utf8" })).result.data.annotations;
+    const colours = Object.fromEntries(listed.map((a) => [a.subtype, a.color]));
+    assert(colours.Highlight === "#22cc88" && colours.Text === "#3355ff", `saved colours: ${JSON.stringify(colours)}`);
+  }
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", ","]);
+    await s.waitFor('[aria-label="Highlight color"]');
+    assert((await s.exec("return document.querySelector('[aria-label=\"Highlight color\"]').value")) === "#22cc88", "chosen colour kept after restart");
+    await s.exec("[...document.querySelectorAll('.dialog button')].find(b => b.title === 'Use the built-in colors for new markup').click(); return 1");
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[aria-label=\"Highlight color\"]').value")) === "#ffd400", "Default restores the built-in colour");
+    await s.click(".dialog .dialog-footer .btn.primary");
+    await s.waitUntil(async () => await s.exec("return !document.querySelector('[role=dialog]')"), "settings saved again");
+  });
+});
+
 await test("unsaved annotations: closing the tab asks (Save focused); Cancel keeps it; discard can be undone; Discard closes", async () => {
   await withApp([join(FIX, "single-page.pdf")], async (s) => {
     await pageLoaded(s, 0);
@@ -1063,6 +1164,54 @@ await test("forms: fill text, checkbox, radio, choice and multiline; Ctrl+S save
   }
 });
 
+await test("XFA forms: a hybrid form (like government forms) fills and saves without its stale XFA layer; a dynamic one is not offered", async () => {
+  const field = (name) => `[data-formlayer="0"] [data-field="${name}"]`;
+  const out = join(work, "xfa-filled.pdf");
+  await withApp([join(FIX, "form-xfa-hybrid.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.waitFor(field("full_name"));
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("XFA layer")), "the XFA layer is explained");
+    await s.type(field("full_name"), "Ada Lovelace");
+    await s.keys(["Control", "s"]);
+    await s.waitFor("#output");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved xfa-filled.pdf")), "saved notice");
+  });
+  if (CLI) {
+    const f = JSON.parse(execFileSync(CLI, ["--json", "fields", out], { encoding: "utf8" })).result.data;
+    assert(!f.has_xfa && f.fields.find((x) => x.name === "full_name").value === "Ada Lovelace", `saved: xfa ${f.has_xfa}`);
+  }
+  await withApp([join(FIX, "form-xfa-dynamic.pdf")], async (s) => {
+    await pageLoaded(s, 0);
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("dynamic XFA form")), "dynamic XFA explained");
+    assert(!(await s.exec(`return !!document.querySelector('${field("full_name")}')`)), "no fillable controls for a dynamic XFA form");
+  });
+});
+
+await test("real IRS Form 1040 (test corpus): fill name fields in the app, save, values read back", async () => {
+  const src = resolve(fileURLToPath(new URL("../../target/corpus/real/irs-f1040.pdf", import.meta.url)));
+  if (!existsSync(src) || !CLI) throw new Skip("test corpus not built (python3 tools/corpus/build.py) or no CLI");
+  const names = JSON.parse(execFileSync(CLI, ["--json", "fields", src], { encoding: "utf8" })).result.data.fields.filter((f) => f.kind === "text" && f.widgets[0]?.page === 0).slice(0, 2).map((f) => f.name);
+  const out = join(work, "f1040-filled.pdf");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    for (const [i, n] of names.entries()) {
+      const sel = `[data-formlayer="0"] [data-field="${n}"]`;
+      await s.waitFor(sel);
+      await s.type(sel, ["Ada", "Lovelace"][i]);
+    }
+    await s.keys(["Control", "s"]);
+    await s.waitFor("#output");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved f1040-filled.pdf")), "saved notice", 60000);
+  });
+  const f = JSON.parse(execFileSync(CLI, ["--json", "fields", out], { encoding: "utf8" })).result.data;
+  const got = names.map((n) => f.fields.find((x) => x.name === n).value);
+  assert(JSON.stringify(got) === '["Ada","Lovelace"]' && !f.has_xfa, `saved ${JSON.stringify(got)} xfa ${f.has_xfa}`);
+});
+
 await test("form data: export XFDF with unsaved values; import JSON with preview, Undo, then save a verified copy", async () => {
   const src = join(FIX, "form-nested.pdf");
   const before = sha(src);
@@ -1150,7 +1299,7 @@ await test("form data: export XFDF with unsaved values; import JSON with preview
   }
 });
 
-await test("clear form fields: text and checkboxes emptied as unsaved edits, choices kept and said so; Undo", async () => {
+await test("clear form fields: text, checkboxes, choices and radio groups emptied as unsaved edits; Undo; a saved copy has nothing chosen", async () => {
   const field = (name) => `[data-formlayer="0"] [data-field="${name}"]`;
   await withApp([join(FIX, "form-nested.pdf")], async (s) => {
     await pageLoaded(s, 0);
@@ -1163,13 +1312,39 @@ await test("clear form fields: text and checkboxes emptied as unsaved edits, cho
     await s.keys(["Control", "k"]);
     await s.type('[role="dialog"] input', "Clear form");
     await s.click('[role="option"][data-command="edit.clearForm"]');
-    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Cleared 2 fields") && t.includes("1 choice field keeps its option")), "cleared notice");
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Cleared 3 fields")), "cleared notice");
     const state = () => s.exec(`const q = (n) => document.querySelector('[data-formlayer="0"] [data-field="' + n + '"]'); return [q('applicant.name').value, q('agree').checked, q('colour').value, q('ref_no').value]`);
-    assert(JSON.stringify(await state()) === JSON.stringify(["", false, "Green", "R-1001"]), `after clear: ${JSON.stringify(await state())}`);
-    await s.waitUntil(async () => (await unsavedText(s)) === "1 unsaved change", "only the kept choice remains an edit");
+    assert(JSON.stringify(await state()) === JSON.stringify(["", false, "", "R-1001"]), `after clear (the read-only field kept): ${JSON.stringify(await state())}`);
+    await s.waitUntil(async () => (await unsavedText(s)) === "", "back to the file's empty values: nothing unsaved");
     await s.click('.notice button[data-action="Undo"]');
     await s.waitUntil(async () => JSON.stringify(await state()) === JSON.stringify(["Ada", true, "Green", "R-1001"]), "Undo restores");
   });
+  // A copy where a radio button is on and a country chosen: Clear form, save, nothing chosen.
+  if (!CLI) throw new Skip("needs the CLI to make the filled copy");
+  const chosen = join(work, "form-chosen.pdf");
+  const cleared = join(work, "form-cleared.pdf");
+  const req = join(work, "fill-chosen.json");
+  writeFileSync(req, JSON.stringify({ schema_version: 1, operation: { op: "fill_form", input: join(FIX, "form-fields.pdf"), values: [{ name: "plan", value: "pro" }, { name: "country", value: "Germany" }], output: chosen } }));
+  execFileSync(CLI, ["run", req]);
+  await withApp([chosen], async (s) => {
+    await pageLoaded(s, 0);
+    await s.waitFor(field("country"));
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Clear form");
+    await s.click('[role="option"][data-command="edit.clearForm"]');
+    await s.waitUntil(async () => (await s.exec("return [...document.querySelectorAll('[data-formlayer=\"0\"] [data-field=\"plan\"]')].some((r) => r.checked)")) === false, "no radio button on");
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-formlayer=\"0\"] [data-field=\"country\"]').value")) === "", "no country chosen");
+    await s.keys(["Control", "s"]);
+    await s.waitFor("#output");
+    await s.replaceText("#output", cleared);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved form-cleared.pdf")), "saved notice");
+  });
+  const f = JSON.parse(execFileSync(CLI, ["--json", "fields", cleared], { encoding: "utf8" })).result.data.fields;
+  const plan = f.find((x) => x.name === "plan");
+  const country = f.find((x) => x.name === "country");
+  assert(!plan.widgets.some((w) => w.checked) && (country.value ?? "") === "", `saved copy: plan ${JSON.stringify(plan.widgets.map((w) => w.checked))}, country ${country.value}`);
 });
 
 await test("reset form: fields return to the document's default values as unsaved edits; Undo; saved copy verified", async () => {
@@ -1527,7 +1702,70 @@ await test("convert to PowerPoint: one slide per page with text boxes, table and
   assert(s2.includes("<a:tbl>") && s2.includes("Station"), "slide 2: table");
 });
 
-await test("translate: page to German as Word (layout kept), language detected; pairs through English are said; source unchanged", async () => {
+// Installed copies have no models until first use (D-023): the Translate dialog offers the
+// one-time download, which runs for real on a clean machine (Windows CI); development builds use
+// the fetched models. Whichever translation scenario runs first downloads it.
+async function downloadLanguageIfOffered(s) {
+  await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=tool-start]').title")) !== "Recognizing the document's language…", "language recognized", 60000);
+  if (await s.exec("return !!document.querySelector('[data-testid=translate-download]')")) {
+    assert(/one-time download/.test(await s.text('[data-testid="translate-download"]')), "download offered with its size");
+    assert((await s.exec("return document.querySelector('[data-testid=tool-start]').title")) === "Download the language first.", "start waits for the download");
+    await s.click('[data-testid="translate-download-start"]');
+    await s.waitFor('[data-testid="translate-download-cancel"]');
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=translate-download]')")), "language downloaded", 600000);
+    console.log("  note: the English → German model was downloaded and verified in the app");
+  }
+}
+
+await test("translate side by side: page 1 into German as a PDF with the original next to its translation, with a glossary; option only for PDF", async () => {
+  const src = join(FIX, "five-pages.pdf");
+  const out = join(work, "five-pages-de-side.pdf");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Translate");
+    await s.click('[role="option"][data-command="file.translate"]');
+    await s.waitFor("#translate-to");
+    await s.exec("const t = document.querySelector('#translate-to'); t.value = 'de'; t.dispatchEvent(new Event('change', { bubbles: true }));");
+    await s.waitFor('[data-testid="translate-side-by-side"]');
+    // Word and text output have no side-by-side option.
+    await s.click('[data-testid="translate-format-docx"]');
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=translate-side-by-side]')")), "no option for Word");
+    await s.click('[data-testid="translate-format-pdf"]');
+    await s.click('[data-testid="translate-side-by-side"]');
+    await s.exec("const c = [...document.querySelectorAll('[role=dialog] input[type=checkbox]')].find((x) => x.checked && x.dataset.testid !== 'translate-side-by-side'); if (c) c.click();");
+    await s.type("#pages", "1");
+    await s.waitUntil(async () => (await s.text("#pages-msg")) === "1 page selected", "page 1 chosen");
+    await s.replaceText("#output", out);
+    await downloadLanguageIfOffered(s);
+    // Glossary: a line without "=" blocks Translate with its reason; then a valid term.
+    await s.type("#translate-glossary", "fox");
+    await s.waitUntil(async () => (await s.text('[data-testid="translate-glossary-msg"]')).includes("Glossary line 1"), "glossary line refused");
+    // Earlier reasons (recognising the language) come first; once they are gone the glossary's shows.
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=tool-start]').title")).includes("Glossary line 1"), "start blocked with the reason", 60000);
+    await s.replaceText("#translate-glossary", "fox = Wolf");
+    await s.waitUntil(async () => (await s.text('[data-testid="translate-glossary-msg"]')).startsWith("1 term"), "one term");
+    await axeCheck(s, "translate-side-by-side");
+    writeFileSync(join(ART, "translate-glossary.png"), await s.screenshot());
+    await s.waitUntil(async () => !["Recognizing the document's language…", "Download the language first."].includes(await s.exec("return document.querySelector('[data-testid=tool-start]').title")), "ready to translate", 60000);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved five-pages-de-side.pdf")), "saved notice", 180000);
+  });
+  if (CLI) {
+    const info = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data;
+    const orig = JSON.parse(execFileSync(CLI, ["--json", "inspect", src], { encoding: "utf8" })).result.data;
+    assert(info.page_count === 1 && Math.abs(info.pages[0].width_pt - 2 * orig.pages[0].width_pt) < 0.5, `one sheet twice the page's width: ${JSON.stringify(info.pages)}`);
+    const text = JSON.parse(execFileSync(CLI, ["--json", "text", out], { encoding: "utf8" })).result.data.pages[0].text;
+    const original = JSON.parse(execFileSync(CLI, ["--json", "text", "--pages", "1", src], { encoding: "utf8" })).result.data.pages[0].text;
+    const firstLine = original.split("\n").map((l) => l.trim()).find((l) => l.length > 10);
+    assert(text.includes(firstLine), `original kept on the sheet: ${firstLine}`);
+    assert(/\b(und|der|die|das|Seite|Kapitel)\b/i.test(text), `German on the sheet: ${text.slice(0, 400)}`);
+    assert(text.includes("Wolf") && !text.includes("Fuchs"), `the glossary's translation used: ${text.slice(0, 400)}`);
+  }
+});
+
+await test("translate: page to German as Word (layout kept), language detected; six languages, pairs direct; source unchanged", async () => {
   const src = join(FIX, "five-pages.pdf");
   const before = sha(src);
   const out = join(work, "five-pages-de.docx");
@@ -1538,11 +1776,12 @@ await test("translate: page to German as Word (layout kept), language detected; 
     await s.type('[role="dialog"] input', "Translate");
     await s.click('[role="option"][data-command="file.translate"]');
     await s.waitFor("#translate-to");
-    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('#translate-to option').length")) === 5, "five languages offered");
-    // French → German has no direct model: the dialog says it goes through English.
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('#translate-to option').length")) === 6, "six languages offered");
+    // French → German is a direct pair (D-027): no "through English" notice.
     await s.exec("const f = document.querySelector('#translate-from'); f.value = 'fr'; f.dispatchEvent(new Event('change', { bubbles: true }));");
     await s.exec("const t = document.querySelector('#translate-to'); t.value = 'de'; t.dispatchEvent(new Event('change', { bubbles: true }));");
-    await s.waitFor('[data-testid="translate-via"]');
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('#translate-to').value")) === "de", "French to German chosen");
+    assert(!(await s.exec("return !!document.querySelector('[data-testid=translate-via]')")), "direct pair: no route through English");
     // Same language on both sides is refused with a reason.
     await s.exec("const f = document.querySelector('#translate-from'); f.value = 'de'; f.dispatchEvent(new Event('change', { bubbles: true }));");
     await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=tool-start]').title")) === "Choose two different languages.", "same language refused");
@@ -1557,17 +1796,7 @@ await test("translate: page to German as Word (layout kept), language detected; 
     await s.waitUntil(async () => (await s.text("#pages-msg")) === "1 page selected", "page 1 chosen");
     await s.type("#output", out);
     await axeCheck(s, "translate-dialog");
-    // Installed copies have no models until first use (D-023): the dialog offers the one-time
-    // download, which runs for real here (Windows CI); development builds use the fetched models.
-    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-testid=tool-start]').title")) !== "Recognizing the document's language…", "language recognized", 60000);
-    if (await s.exec("return !!document.querySelector('[data-testid=translate-download]')")) {
-      assert(/one-time download/.test(await s.text('[data-testid="translate-download"]')), "download offered with its size");
-      assert((await s.exec("return document.querySelector('[data-testid=tool-start]').title")) === "Download the language first.", "start waits for the download");
-      await s.click('[data-testid="translate-download-start"]');
-      await s.waitFor('[data-testid="translate-download-cancel"]');
-      await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=translate-download]')")), "language downloaded", 600000);
-      console.log("  note: the English → German model was downloaded and verified in the app");
-    }
+    await downloadLanguageIfOffered(s);
     await s.click('[data-testid="tool-start"]');
     await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved five-pages-de.docx")), "saved notice", 180000);
     await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Machine translation from English to German")), "review note");
@@ -1615,7 +1844,7 @@ await test("read aloud: words highlighted as heard, pause/resume, next sentence,
     await s.click('[data-testid="read-follow"]');
     await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=read-follow]')")), "following again");
     // Stop from the toolbar button.
-    await s.click('[data-command="read.stop"]');
+    await toolbarCommand(s, "read.stop");
     await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('[data-testid=readbar]')")), "bar closed");
     assert(!(await s.exec("return !!document.querySelector('.reading-mark')")), "highlight removed");
     // Read from a page's context menu, then stop with the palette command.
@@ -1653,7 +1882,7 @@ await test("read aloud: words highlighted as heard, pause/resume, next sentence,
   // The speed is kept across a restart.
   await withApp([src], async (s) => {
     await pageLoaded(s, 0);
-    await s.click('[data-command="read.aloud"]');
+    await toolbarCommand(s, "read.aloud");
     await s.waitFor('[data-testid="readbar"]');
     assert((await s.exec("return document.querySelector('#read-rate').value")) === "1.5", "speed restored");
     await s.click('[data-testid="read-stop"]');
@@ -2265,6 +2494,160 @@ await test("edit text and pictures: inline text edit, drag and turn a picture, a
   }
 });
 
+await test("edit pictures: resize by a corner and with Ctrl+arrows, then move; the saved copy has the new box", async () => {
+  const src = join(FIX, "embedded-font.pdf");
+  const out = join(work, "picture-resized.pdf");
+  const box = (s) => s.exec("const b = document.querySelector('[data-edit-image=\"0\"]').getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height }");
+  const before = CLI ? JSON.parse(execFileSync(CLI, ["--json", "objects", "--page", "1", src], { encoding: "utf8" })).result.data.images[0].rect : null;
+  let k = 1;
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.keys(["Control", "e"]);
+    await s.waitFor('[data-edit-image="0"]');
+    await s.click('[data-edit-image="0"]');
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.edit-handle').length")) === 4, "four corner handles on the selected picture");
+    const b0 = await box(s);
+    if (before) k = b0.w / (before.right - before.left);
+    // Bottom-right corner 60 px right and 30 px down; the top-left corner stays.
+    const se = await s.exec("const r = document.querySelector('.edit-handle[data-corner=se]').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]");
+    await s.dragAt(se[0], se[1], se[0] + 60, se[1] + 30);
+    await s.waitUntil(async () => { const b = await box(s); return Math.abs(b.w - (b0.w + 60)) < 1.5 && Math.abs(b.h - (b0.h + 30)) < 1.5 && Math.abs(b.x - b0.x) < 1; }, "corner drag resized the box");
+    await s.waitUntil(async () => (await unsavedText(s)) === "1 unsaved change", "resize recorded");
+    // Ctrl+Shift+Right: 10 pt wider (the picture keeps the focus).
+    await s.click('[data-edit-image="0"]');
+    await s.keys(["Control", "Shift", "ArrowRight"]);
+    await s.waitUntil(async () => Math.abs((await box(s)).w - (b0.w + 60 + 10 * k)) < 1.5, "10 pt wider from the keyboard");
+    // A move after the resize still applies.
+    const b1 = await box(s);
+    await s.dragAt(b1.x + b1.w / 2, b1.y + b1.h / 2, b1.x + b1.w / 2 + 50, b1.y + b1.h / 2, 10);
+    await s.waitUntil(async () => Math.abs((await box(s)).x - (b1.x + 50)) < 1.5 && Math.abs((await box(s)).w - b1.w) < 1, "moved, size kept");
+    await s.waitFor('[data-testid="edit-preview"]');
+    await axeCheck(s, "edit-picture-resize");
+    writeFileSync(join(ART, "edit-picture-resized.png"), await s.screenshot());
+    await s.keys(["Escape"]);
+    await s.keys(["Control", "s"]);
+    await s.waitFor("#output");
+    await s.replaceText("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved picture-resized.pdf")), "saved notice");
+  });
+  if (CLI) {
+    const r = JSON.parse(execFileSync(CLI, ["--json", "objects", "--page", "1", out], { encoding: "utf8" })).result.data.images[0].rect;
+    const near = (a, b) => Math.abs(a - b) < 0.8;
+    const ok = near(r.left, before.left + 50 / k) && near(r.top, before.top) && near(r.right - r.left, before.right - before.left + 60 / k + 10) && near(r.top - r.bottom, before.top - before.bottom + 30 / k);
+    assert(ok, `picture ${JSON.stringify(before)} → ${JSON.stringify(r)} (k ${k})`);
+  }
+});
+
+await test("combine: open files added with one button, reordered, combined; first file's title and every page kept", async () => {
+  const files = [join(FIX, "single-page.pdf"), join(FIX, "article.pdf")];
+  const out = join(work, "combined-open.pdf");
+  const names = (s) => s.exec("return [...document.querySelectorAll('[aria-label=\"Files to combine\"] li .name')].map(n => n.textContent.replace(/^\\d+\\. /, ''))");
+  let movedFirst = "";
+  await withApp(files, async (s) => {
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label').length")) === 2, "two tabs");
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "Shift", "M"]);
+    await s.waitFor('[data-testid="merge-add-open"]');
+    const first = (await names(s))[0];
+    assert((await s.text('[data-testid="merge-add-open"]')).includes("(1)"), "one other open file offered");
+    await s.click('[data-testid="merge-add-open"]');
+    await s.waitUntil(async () => (await names(s)).length === 2, "the open file added");
+    assert((await s.attr('[data-testid="merge-add-open"]', "aria-disabled")) === "true", "nothing more to add");
+    // Put the other file first.
+    const second = (await names(s))[1];
+    movedFirst = second;
+    await s.click(`[aria-label="Move ${second} up"]`);
+    await s.waitUntil(async () => (await names(s))[0] === second && (await names(s))[1] === first, "reordered");
+    await s.replaceText("#output", out);
+    await axeCheck(s, "combine-dialog");
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved combined-open.pdf")), "saved notice");
+  });
+  if (CLI) {
+    const info = (f) => JSON.parse(execFileSync(CLI, ["--json", "inspect", f], { encoding: "utf8" })).result.data;
+    const pageText = (f) => JSON.parse(execFileSync(CLI, ["--json", "text", "--pages", "1", f], { encoding: "utf8" })).result.data.pages[0].text.trim();
+    const firstFile = join(FIX, movedFirst);
+    const got = info(out);
+    assert(got.page_count === files.reduce((n, f) => n + info(f).page_count, 0), `every page kept: ${got.page_count}`);
+    assert(got.title === info(firstFile).title, `the first file's title: ${got.title}`);
+    assert(pageText(out) === pageText(firstFile), "page 1 comes from the file moved to the top");
+  }
+});
+
+await test("password-protected PDF: comments listed; pages taken out stay protected with the same password", async () => {
+  const src = join(FIX, "encrypted-rc4-user-password.pdf");
+  const out = join(work, "protected-extract.pdf");
+  const s = await Session.create(DRIVER, APP, appArgs([src]));
+  try {
+    await s.waitFor("#pdf-password", { timeout: 20000 });
+    await s.type("#pdf-password", "pw-user-test");
+    await s.keys(["Enter"]);
+    await pageLoaded(s, 0);
+    // Read-only views work with the password it was opened with (they used to refuse).
+    await s.click("#sb-tab-comments");
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('#sb-panel')?.innerText ?? ''")).includes("No comments or markup."), "Comments panel lists (none) instead of an error");
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "Shift", "E"]);
+    await s.waitFor("#pages");
+    await s.type("#pages", "1");
+    await s.waitUntil(async () => (await s.text("#pages-msg")) === "1 page selected", "page 1 chosen");
+    await s.replaceText("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("same open password")), "notice says the copy keeps the password");
+    assert(!(await noticeTexts(s)).some((t) => t.includes("not password protected")), "no unprotected-output warning");
+  } finally {
+    await s.delete();
+  }
+  if (CLI) {
+    let refused = false;
+    try {
+      execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8", stdio: "pipe" });
+    } catch (e) {
+      refused = JSON.parse(e.stdout || e.stderr).error.code === "pdf.password";
+    }
+    assert(refused, "the copy needs a password");
+    const info = JSON.parse(execFileSync(CLI, ["--json", "inspect", "--password-stdin", out], { encoding: "utf8", input: "pw-user-test\n" })).result.data;
+    assert(info.page_count === 1 && info.encrypted, `opens with the original password: ${JSON.stringify({ n: info.page_count, enc: info.encrypted })}`);
+  }
+});
+
+await test("a protected file without restrictions: its title is changed in the app and the copy keeps the password", async () => {
+  const src = join(FIX, "encrypted-rc4-user-password.pdf");
+  const out = join(work, "protected-retitled.pdf");
+  const s = await Session.create(DRIVER, APP, appArgs([src]));
+  try {
+    await s.waitFor("#pdf-password", { timeout: 20000 });
+    await s.type("#pdf-password", "pw-user-test");
+    await s.keys(["Enter"]);
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "d"]);
+    await s.waitFor('[data-command="file.editProperties"]');
+    await s.click('[data-command="file.editProperties"]');
+    await s.waitFor("#prop-title");
+    await s.replaceText("#prop-title", "Protected and retitled");
+    await s.replaceText("#props-output", out);
+    await s.waitUntil(async () => (await s.attr('[data-testid="props-start"]', "aria-disabled")) === null, "ready");
+    await s.click('[data-testid="props-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("same open password")), "notice: the copy keeps the password", 30000);
+  } finally {
+    await s.delete();
+  }
+  if (CLI) {
+    let refused = false;
+    try {
+      execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8", stdio: "pipe" });
+    } catch (e) {
+      refused = JSON.parse(e.stdout || e.stderr).error.code === "pdf.password";
+    }
+    assert(refused, "the copy needs the password");
+    const info = JSON.parse(execFileSync(CLI, ["--json", "inspect", "--password-stdin", out], { encoding: "utf8", input: "pw-user-test\n" })).result.data;
+    assert(info.title === "Protected and retitled", `title: ${info.title}`);
+  }
+});
+
 await test("protect with password: AES-256 copy needs the password; wrong password refused; content intact", async () => {
   const src = join(FIX, "five-pages.pdf");
   const before = sha(src);
@@ -2313,6 +2696,38 @@ await test("protect with password: AES-256 copy needs the password; wrong passwo
   }
 });
 
+/** A pointer drag with Alt held throughout. Alt is pressed in its own action call and stays down
+ *  (WebDriver keeps input state between calls) until the release: when key and pointer actions
+ *  share one call, their order within a tick is up to the driver, and the last move sometimes went
+ *  out without Alt (snapping then moved the object 2.5 px). */
+async function altDrag(s, x0, y0, x1, y1) {
+  await s.cmd("POST", "/actions", { actions: [{ type: "key", id: "kb", actions: [{ type: "keyDown", value: "\uE00A" }] }] });
+  await s.cmd("POST", "/actions", { actions: [
+    { type: "pointer", id: "mouse", parameters: { pointerType: "mouse" }, actions: [
+      { type: "pointerMove", origin: "viewport", x: Math.round(x0), y: Math.round(y0) },
+      { type: "pointerDown", button: 0 },
+      { type: "pointerMove", origin: "viewport", duration: 100, x: Math.round(x1), y: Math.round(y1) },
+      { type: "pointerUp", button: 0 },
+    ] },
+  ] });
+  await s.cmd("POST", "/actions", { actions: [{ type: "key", id: "kb", actions: [{ type: "keyUp", value: "\uE00A" }] }] });
+  await s.cmd("DELETE", "/actions");
+}
+
+/** Ctrl+S in the Studio, then wait until the project on disk has changed and the status says so
+ *  (a status left over from an earlier save must not count). */
+async function studioSave(s, file) {
+  const before = readFileSync(file, "utf8");
+  const size = () => s.exec("const r=document.querySelector('[data-testid=studio-stage]').getBoundingClientRect(); return [r.width, r.height]");
+  const [w0, h0] = await size();
+  await s.keys(["Control", "s"]);
+  await s.waitUntil(async () => readFileSync(file, "utf8") !== before && (await s.text('[data-testid="studio-status"]')).startsWith("Saved"), "saved");
+  // The "Saved" message must not re-fit the page (it once added a row and shrank the canvas).
+  await new Promise((r) => setTimeout(r, 100));
+  const [w1, h1] = await size();
+  assert(Math.abs(w1 - w0) < 0.5 && Math.abs(h1 - h0) < 0.5, `page size unchanged by the save message (${w0}×${h0} → ${w1}×${h1})`);
+}
+
 await test("design studio: rebuild a page, edit text with undo, nudge, drag, lock, hide, compare, save; the project reopens", async () => {
   const src = join(work, "studio-poster.pdf");
   copyFileSync(join(FIX, "poster.pdf"), src);
@@ -2321,13 +2736,24 @@ await test("design studio: rebuild a page, edit text with undo, nudge, drag, loc
   await withApp([src], async (s) => {
     await pageLoaded(s, 0);
     // Disabled reasons are explained elsewhere; here it is available with a document.
-    assert((await s.attr('.toolbar [data-command="studio.rebuildPage"]', "aria-disabled")) === null, "rebuild available");
-    await s.click('.toolbar [data-command="studio.rebuildPage"]');
+    const rebuild = await toolbarCommand(s, "studio.rebuildPage", { click: false });
+    assert((await s.attr(rebuild, "aria-disabled")) === null, "rebuild available");
+    await s.click(rebuild);
     await s.waitFor('[data-testid="studio"]');
     await s.waitFor('[data-testid="studio-layers"] [data-layer]', { timeout: 60000 });
     const layers = await s.exec("return [...document.querySelectorAll('[data-layer]')].map(b => b.dataset.layer)");
-    assert(layers.length === 10 && layers.includes("picture-1"), `layers ${layers}`);
-    assert((await s.text('[data-testid="studio-summary"]')).includes("6 text · 3 shapes · 1 pictures"), "summary counts");
+    assert(layers.length === 9 && layers.includes("picture-1"), `layers ${layers}`);
+    assert((await s.text('[data-testid="studio-summary"]')).includes("5 text · 3 shapes · 1 pictures"), "summary counts");
+    // The two body lines are one paragraph, drawn line by line; it can be centred (and undone).
+    const para = await s.exec("const t=[...document.querySelectorAll('[data-testid=studio-stage] text')].find(t => t.textContent.startsWith('Music')); return t ? [t.dataset.object, [...t.querySelectorAll('tspan')].map(x => x.textContent)] : null");
+    assert(para && para[1].join("|") === "Music, food and crafts|Riverside Park, 10:00 to 18:00", `paragraph ${JSON.stringify(para)}`);
+    await s.click(`[data-layer="${para[0]}"]`);
+    await s.click('[role="radio"][aria-label="Align centre"]');
+    await s.waitUntil(async () => (await s.exec(`return document.querySelector('[data-object="${para[0]}"]').getAttribute('text-anchor')`)) === "middle", "centred");
+    await s.exec("document.querySelector('[data-testid=studio-stage]').focus()");
+    await s.keys(["Control", "z"]);
+    await s.waitUntil(async () => (await s.exec(`return document.querySelector('[data-object="${para[0]}"]').getAttribute('text-anchor')`)) === "start", "undo alignment");
+    await s.keys(["Escape"]);
     assert(existsSync(project), "project saved next to the PDF");
     await axeCheck(s, "design-studio");
     writeFileSync(join(ART, "design-studio.png"), await s.screenshot());
@@ -2376,14 +2802,69 @@ await test("design studio: rebuild a page, edit text with undo, nudge, drag, loc
     assert((await s.exec("return getComputedStyle(document.querySelector('.studio-source')).mixBlendMode")) === "difference", "differences");
     await s.click('[data-compare="design"]');
 
+    // Add text and a rectangle from the Studio toolbar; drop the rectangle 3 screen px off the canvas
+    // centre: it snaps (nearest target wins), so one of its edges or its centre lands exactly on a
+    // canvas or object edge/centre, read back from the drawn SVG. No guide is left after the drag.
+    await s.click('[data-testid="studio-add-text"]');
+    await s.waitUntil(async () => (await s.exec("return document.querySelector('[data-layer][aria-current]')?.textContent ?? ''")).includes("New text"), "text added and selected");
+    await s.click('[data-testid="studio-add-rect"]');
+    const rectId = await s.exec("return document.querySelector('[data-layer][aria-current]').dataset.layer");
+    assert(rectId.startsWith("shape-new"), `rectangle added and selected (${rectId})`);
+    const at = (id) => s.exec(`const r=document.querySelector('[data-object="${id}"]').getBoundingClientRect(); return [r.left, r.top, r.width, r.height]`);
+    const [rl, rt, rw, rh] = await at(rectId);
+    const [sl, st, sw, sh] = await s.exec("const r=document.querySelector('[data-testid=studio-stage]').getBoundingClientRect(); return [r.left, r.top, r.width, r.height]");
+    await s.dragAt(rl + rw / 2, rt + rh / 2, sl + sw / 2 + 3, st + sh * 0.85, 12);
+    // Exact boxes from the saved project (a paragraph's drawn <text> carries no box attributes).
+    await studioSave(s, project);
+    const snapped = JSON.parse(readFileSync(project, "utf8"));
+    const span = (o) => [o.x, o.x + o.w / 2, o.x + o.w];
+    const me = span(snapped.objects.find((o) => o.id === rectId));
+    const targets = [0, snapped.width / 2, snapped.width, ...snapped.objects.filter((o) => o.id !== rectId && o.visible).flatMap(span)];
+    const aligned = me.some((v) => targets.some((t) => Math.abs(v - t) < 0.06));
+    assert(aligned, "the dropped rectangle lines up exactly with a canvas or object edge/centre");
+    assert(!(await s.exec("return !!document.querySelector('[data-testid=studio-guide]')")), "guides gone after the drag");
+    // Alt places freely: a drop 3 px off is kept as dropped (not pulled onto a guide).
+    const [al, at2, aw, ah] = await at(rectId);
+    await altDrag(s, al + aw / 2, at2 + ah / 2, al + aw / 2 + 40, at2 + ah / 2);
+    const [al2] = await at(rectId);
+    assert(Math.abs(al2 - (al + 40)) < 0.75, `with Alt the rectangle moved exactly as dragged (${al2 - al} px)`);
+
+    // Several objects: Shift+click two layers, drag one on the canvas → both move by the same amount
+    // (Alt: no snapping). Then turn one 90° from its properties.
+    await s.click('[data-layer="text-4"]');
+    await s.exec("document.querySelector('[data-layer=\"text-5\"]').dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }))");
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('[data-layer][aria-current]').length")) === 2, "two selected");
+    const [a0] = await at("text-4");
+    const [b0] = await at("text-5");
+    const [, t4top, t4w, t4h] = await at("text-4");
+    await altDrag(s, a0 + t4w / 2, t4top + t4h / 2, a0 + t4w / 2 + 30, t4top + t4h / 2);
+    const [a1] = await at("text-4");
+    const [b1] = await at("text-5");
+    assert(Math.abs(a1 - a0 - 30) < 0.75 && Math.abs(b1 - b0 - 30) < 0.75, `both moved 30 px (${a1 - a0}, ${b1 - b0})`);
+    await s.click('[data-layer="shape-2"]');
+    await s.click('[aria-label="Rotate 90° clockwise"]');
+    await s.waitUntil(async () => ((await s.exec("return document.querySelector('[data-object=\"shape-2\"]').getAttribute('transform')")) ?? "").startsWith("rotate(90 "), "turned 90°");
+    // A turned object keeps its handles: dragging the "se" handle 40 px down lengthens it along its
+    // own (now vertical) width; its opposite corner stays where it was.
+    const turned = () => s.exec("const e=document.querySelector('[data-object=\"shape-2\"]'), r=e.getBoundingClientRect(); return [Number(e.getAttribute('width')), r.top, r.height]");
+    const [tw0, top0, th0] = await turned();
+    const [hx, hy] = await s.exec("const r=document.querySelector('[data-corner=\"se\"]').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]");
+    await s.dragAt(hx, hy, hx, hy + 40);
+    const [tw1, top1, th1] = await turned();
+    const k = th0 / tw0; // screen pixels per design pixel
+    assert(Math.abs(tw1 - tw0 - 40 / k) < 1.5 && Math.abs(top1 - top0) < 1 && Math.abs(th1 - th0 - 40) < 1.5, `turned resize: width ${tw0}→${tw1}, top ${top0}→${top1}, height ${th0}→${th1}`);
+
     // Save; the project on disk holds the edits.
-    await s.keys(["Control", "s"]);
-    await s.waitUntil(async () => (await s.text('[data-testid="studio-status"]')).startsWith("Saved"), "saved");
+    await studioSave(s, project);
     const saved = JSON.parse(readFileSync(project, "utf8"));
     const t1 = saved.objects.find((o) => o.id === "text-1");
     assert(t1.text === "SUMMER FAIR" && t1.x === x0 + 11, `saved text ${t1.text} x ${t1.x}`);
     assert(saved.objects.find((o) => o.id === "picture-1").locked && !saved.objects.find((o) => o.id === "shape-1").visible, "lock and visibility saved");
+    assert(saved.objects.find((o) => o.id === "shape-2").rotation === 90, `rotation saved: ${JSON.stringify(saved.objects.filter((o) => o.kind === "shape").map(({ png, ...o }) => o))}`);
     if (CLI) {
+      const svgOut = join(work, "studio-export.svg");
+      execFileSync(CLI, ["design-export", project, "-o", svgOut]);
+      assert(/id="shape-2" transform="rotate\(90 /.test(readFileSync(svgOut, "utf8")), "SVG export carries the turn");
       const out = join(work, "studio-export.pdf");
       execFileSync(CLI, ["design-export", project, "-o", out]);
       const text = JSON.parse(execFileSync(CLI, ["--json", "text", out], { encoding: "utf8" })).result.data.pages[0].text;
@@ -2418,6 +2899,189 @@ await test("design studio: rebuild a page, edit text with undo, nudge, drag, loc
   });
 });
 
+await test("design studio: circles, ellipses and rounded boxes come back as shapes; corners and ellipse are editable", async () => {
+  const src = join(work, "studio-badges.pdf");
+  copyFileSync(join(FIX, "badges.pdf"), src);
+  const project = join(work, "studio-badges-page1.pwdesign");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await toolbarCommand(s, "studio.rebuildPage");
+    await s.waitFor('[data-testid="studio-layers"] [data-layer]', { timeout: 60000 });
+    const forms = () =>
+      s.exec("return [...document.querySelectorAll('[data-testid=studio-stage] [data-object]')].map(e => [e.dataset.object, e.tagName.toLowerCase(), Number(e.getAttribute('rx') || 0)])");
+    const f = await forms();
+    const ellipses = f.filter((x) => x[1] === "ellipse");
+    const rounded = f.filter((x) => x[1] === "rect" && x[2] > 0);
+    assert(ellipses.length === 2 && rounded.length === 1 && !f.some((x) => x[1] === "image"), `forms ${JSON.stringify(f)}`);
+    // A wide page must not shrink the Studio: the body fills the window below the bar.
+    const fill = await s.exec("const b=document.querySelector('.studio-body').getBoundingClientRect(), h=document.querySelector('.studio-bar').getBoundingClientRect(); return [b.top - h.bottom, innerHeight - b.bottom]");
+    assert(fill[0] === 0 && fill[1] < 40, `studio body fills the window (${fill})`);
+    await axeCheck(s, "design-studio-shapes");
+    writeFileSync(join(ART, "design-studio-shapes.png"), await s.screenshot());
+
+    // The rounded box: its radius field is shown and editable; it can become an ellipse and back (undo).
+    const id = rounded[0][0];
+    await s.click(`[data-layer="${id}"]`);
+    assert((await s.exec("return document.querySelector('[data-testid=studio-radius]').disabled")) === false, "radius editable");
+    await s.exec("const i=document.querySelector('[data-testid=studio-radius]'); i.focus(); i.select(); return 1");
+    await s.keys(["8"]);
+    await s.waitUntil(async () => (await forms()).find((x) => x[0] === id)[2] === 8, "radius 8 drawn");
+    await s.click('[data-testid="studio-ellipse"]');
+    await s.waitUntil(async () => (await forms()).find((x) => x[0] === id)[1] === "ellipse", "turned into an ellipse");
+    assert((await s.exec("return document.querySelector('[data-testid=studio-radius]').disabled")) === true, "radius disabled for an ellipse");
+    await s.exec("document.querySelector('[data-testid=studio-stage]').focus()");
+    await s.keys(["Control", "z"]);
+    await s.waitUntil(async () => (await forms()).find((x) => x[0] === id)[1] === "rect", "undo restores the box");
+    await studioSave(s, project);
+    const saved = JSON.parse(readFileSync(project, "utf8")).objects.find((o) => o.id === id);
+    assert(saved.radius === 8 && !saved.ellipse, `saved ${JSON.stringify(saved)}`);
+    if (CLI) {
+      const svgOut = join(work, "studio-badges.svg");
+      execFileSync(CLI, ["design-export", project, "-o", svgOut]);
+      const svg = readFileSync(svgOut, "utf8");
+      assert((svg.match(/<ellipse /g) || []).length === 2 && new RegExp(`id="${id}"[^>]*rx="8"`).test(svg), "SVG export keeps the forms");
+      const pdfOut = join(work, "studio-badges.pdf.out.pdf");
+      execFileSync(CLI, ["design-export", project, "-o", pdfOut]);
+      const text = JSON.parse(execFileSync(CLI, ["--json", "text", pdfOut], { encoding: "utf8" })).result.data.pages[0].text;
+      assert(text.includes("SALE 50%"), `exported text: ${text}`);
+    }
+  });
+});
+
+await test("design studio: words over a picture become text and are painted out of the picture", async () => {
+  const src = join(work, "studio-caption.pdf");
+  copyFileSync(join(FIX, "caption.pdf"), src);
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await toolbarCommand(s, "studio.rebuildPage");
+    await s.waitFor('[data-testid="studio-layers"] [data-layer]', { timeout: 60000 });
+    assert((await s.text('[data-testid="studio-summary"]')).includes("2 text · 0 shapes · 1 pictures"), "summary counts");
+    const words = await s.exec("return [...document.querySelectorAll('[data-testid=studio-stage] text')].map(t => t.textContent)");
+    assert(words.includes("OPEN DAY") && words.includes("Saturday from ten"), `words ${words}`);
+    await s.click('[data-layer="text-1"]');
+    assert((await s.text(".studio-note")).includes("painted out"), "the note says the wording was painted out");
+    // Font family and slant: drawn on the canvas, saved, and exported (PNG at the design's size).
+    await s.exec("const e=document.querySelector('[data-testid=studio-font]'); e.focus(); return 1");
+    await s.click('[data-testid="studio-font"]');
+    await s.click('[data-testid="studio-font"] option[value="serif"]');
+    await s.click('[data-testid="studio-italic"]');
+    await s.waitUntil(async () => (await s.exec("const t=document.querySelector('[data-object=\"text-1\"]'); return t.getAttribute('font-style') + '|' + t.getAttribute('font-family')")).startsWith("italic|'Times"), "serif italic drawn");
+    const projectFile = join(work, "studio-caption-page1.pwdesign");
+    await studioSave(s, projectFile);
+    const t1 = JSON.parse(readFileSync(projectFile, "utf8")).objects.find((o) => o.id === "text-1");
+    assert(t1.font === "serif" && t1.italic === true, `saved font ${t1.font} italic ${t1.italic}`);
+    if (CLI) {
+      const out = join(work, "studio-caption.png");
+      execFileSync(CLI, ["design-export", projectFile, "-o", out]);
+      const png = readFileSync(out);
+      const [w, h] = [png.readUInt32BE(16), png.readUInt32BE(20)];
+      const d = JSON.parse(readFileSync(projectFile, "utf8"));
+      assert(png.subarray(1, 4).toString() === "PNG" && w === d.width && h === d.height, `PNG ${w}×${h}`);
+    }
+    // Hide both lines: the picture underneath shows no words.
+    for (const name of ["OPEN DAY", "Saturday from ten"]) {
+      await s.click(`[data-layer="${await s.exec(`return [...document.querySelectorAll('[data-layer]')].find(b => b.textContent.includes(${JSON.stringify(name)})).dataset.layer`)}"]`);
+      await s.click(`[aria-label="Hide ${name}"]`);
+    }
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('[data-testid=studio-stage] text').length")) === 0, "text hidden");
+    writeFileSync(join(ART, "design-studio-painted-out.png"), await s.screenshot());
+    // Crop the picture: 20 px off the left and 10 off the bottom; the rest stays where it was.
+    await s.click('[data-layer="picture-1"]');
+    const pic = () => s.exec("const e=document.querySelector('[data-object=\"picture-1\"]'); return ['x','y','width','height'].map(a => Number(e.getAttribute(a)))");
+    const [px0, py0, pw0, ph0] = await pic();
+    for (const [side, v] of [["l", "20"], ["b", "10"]]) {
+      await s.exec(`const i=document.querySelector('[data-crop="${side}"]'); i.focus(); i.select(); return 1`);
+      await s.keys([...v]);
+    }
+    await s.waitFor('[data-testid="studio-crop-box"]');
+    await s.click('[data-testid="studio-crop-apply"]');
+    await s.waitUntil(async () => (await pic())[2] === pw0 - 20, "cropped");
+    const [px1, py1, , ph1] = await pic();
+    assert(px1 === px0 + 20 && py1 === py0 && ph1 === ph0 - 10, `crop kept the rest in place (${px0},${py0},${pw0},${ph0} → ${await pic()})`);
+    assert(!(await s.exec("return !!document.querySelector('[data-testid=studio-crop-box]')")), "preview gone after cropping");
+  });
+});
+
+await test("design studio: borders and rings come back as outlined shapes; outline and fill are editable", async () => {
+  const src = join(work, "studio-frames.pdf");
+  copyFileSync(join(FIX, "frames.pdf"), src);
+  const project = join(work, "studio-frames-page1.pwdesign");
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await toolbarCommand(s, "studio.rebuildPage");
+    await s.waitFor('[data-testid="studio-layers"] [data-layer]', { timeout: 60000 });
+    const shapes = () => s.exec("return [...document.querySelectorAll('[data-testid=studio-stage] [data-object^=shape]')].map(e => [e.dataset.object, e.tagName.toLowerCase(), e.getAttribute('fill'), Number(e.getAttribute('stroke-width'))])");
+    const f = await shapes();
+    assert(f.length === 2 && f.every((x) => x[2] === "none" && x[3] > 3) && f.some((x) => x[1] === "ellipse"), `frames ${JSON.stringify(f)}`);
+    await axeCheck(s, "design-studio-frames");
+    writeFileSync(join(ART, "design-studio-frames.png"), await s.screenshot());
+    // At the smallest window (720 px) every Studio control stays on the bar, uncovered: the title
+    // gives way and the bar turns compact (seen at 1024 px on Windows: the compare buttons covered
+    // the title; at 720 px Save and Close were pushed off the window).
+    const before = await s.cmd("GET", "/window/rect");
+    await s.setWindowRect(720, 600);
+    await s.waitUntil(async () => (await s.exec("return innerWidth")) <= 720, "window at its minimum width");
+    const bar = await s.exec(`const b = document.querySelector('.studio-bar');
+      const kids = [...b.children].filter((k) => k.getBoundingClientRect().width > 0).map((k) => k.getBoundingClientRect());
+      const overlap = kids.slice(1).some((r, i) => r.left < kids[i].right - 0.5);
+      const clipped = [...b.querySelectorAll('button')].some((x) => { const r = x.getBoundingClientRect(); return r.right > innerWidth || r.left < 0 || x.scrollWidth > x.clientWidth + 1; });
+      return [b.scrollWidth <= b.clientWidth, overlap, clipped, document.querySelector('[data-testid=studio-save] .studio-save-label')?.textContent];`);
+    assert(bar[0] && !bar[1] && !bar[2], `Studio bar fits at 720 px (fits ${bar[0]}, overlap ${bar[1]}, clipped ${bar[2]})`);
+    assert(bar[3] === "Save", "Save keeps its name for screen readers");
+    // Compact bar: the compare buttons became one list, which still switches the view.
+    await s.exec("const c = document.querySelector('[data-testid=studio-compare-select]'); c.value = 'difference'; c.dispatchEvent(new Event('change', { bubbles: true })); return 1");
+    await s.waitUntil(async () => (await s.exec("return getComputedStyle(document.querySelector('.studio-source')).mixBlendMode")) === "difference", "compare list switches the view");
+    writeFileSync(join(ART, "design-studio-720.png"), await s.screenshot());
+    await s.setWindowRect(before.width, before.height);
+    // Wide again: the full bar comes back with the same choice.
+    await s.waitFor('[data-compare="difference"][aria-checked="true"]');
+    await s.click('[data-compare="design"]');
+    // Zoom in from the keyboard: the page grows and its top-left corner stays reachable by scrolling.
+    await s.exec("document.querySelector('[data-testid=studio-stage]').focus()");
+    const stageW = () => s.exec("return document.querySelector('[data-testid=studio-stage]').getBoundingClientRect().width");
+    const w0 = await stageW();
+    for (let i = 0; i < 4; i++) await s.keys(["Control", "="]);
+    await s.waitUntil(async () => (await stageW()) > w0 * 2, "zoomed in");
+    const reach = await s.exec("const c=document.querySelector('[data-testid=studio-canvas]'); c.scrollLeft=0; c.scrollTop=0; const a=c.getBoundingClientRect(), b=document.querySelector('[data-testid=studio-stage]').getBoundingClientRect(); return [b.left - a.left, b.top - a.top, c.scrollWidth > c.clientWidth]");
+    assert(reach[0] >= 0 && reach[1] >= 0 && reach[2], `zoomed page reachable from its top-left (${reach})`);
+    // Pan: hold Space and drag left by 120 px → the canvas scrolls right by 120.
+    const [cx, cy] = await s.exec("const r=document.querySelector('[data-testid=studio-canvas]').getBoundingClientRect(); return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)]");
+    await s.cmd("POST", "/actions", { actions: [
+      { type: "key", id: "kb", actions: [{ type: "keyDown", value: " " }, { type: "pause", duration: 0 }, { type: "pause", duration: 0 }, { type: "pause", duration: 0 }, { type: "pause", duration: 0 }, { type: "keyUp", value: " " }] },
+      { type: "pointer", id: "mouse", parameters: { pointerType: "mouse" }, actions: [
+        { type: "pointerMove", origin: "viewport", x: cx, y: cy },
+        { type: "pointerDown", button: 0 },
+        { type: "pointerMove", origin: "viewport", duration: 150, x: cx - 120, y: cy },
+        { type: "pointerUp", button: 0 },
+        { type: "pause", duration: 0 },
+      ] },
+    ] });
+    await s.cmd("DELETE", "/actions");
+    const scrolled = await s.exec("return document.querySelector('[data-testid=studio-canvas]').scrollLeft");
+    assert(Math.abs(scrolled - 120) <= 2, `Space+drag panned (${scrolled})`);
+    await s.keys(["Control", "0"]);
+    await s.waitUntil(async () => Math.abs((await stageW()) - w0) < 1, "back to fit");
+    const border = f.find((x) => x[1] === "rect")[0];
+    await s.click(`[data-layer="${border}"]`);
+    // Fill the frame, then take the fill away again; thicken the outline.
+    await s.click('[data-testid="studio-no-fill"]');
+    await s.waitUntil(async () => (await shapes()).find((x) => x[0] === border)[2] !== "none", "filled");
+    await s.click('[data-testid="studio-no-fill"]');
+    await s.waitUntil(async () => (await shapes()).find((x) => x[0] === border)[2] === "none", "fill removed");
+    await s.exec("const i=document.querySelector('[data-testid=studio-stroke-width]'); i.focus(); i.select(); return 1");
+    await s.keys(["1", "2"]);
+    await s.waitUntil(async () => (await shapes()).find((x) => x[0] === border)[3] === 12, "outline 12 px");
+    await studioSave(s, project);
+    const saved = JSON.parse(readFileSync(project, "utf8")).objects.find((o) => o.id === border);
+    assert(saved.fill === undefined && saved.stroke_width === 12, `saved ${JSON.stringify(saved)}`);
+    if (CLI) {
+      const out = join(work, "studio-frames.svg");
+      execFileSync(CLI, ["design-export", project, "-o", out]);
+      assert(new RegExp(`id="${border}"[^>]*fill="none" stroke="[^"]+" stroke-width="12"`).test(readFileSync(out, "utf8")), "SVG keeps the outline");
+    }
+  });
+});
+
 await test("images to PDF: opens from the start screen; explains what is missing; accessible", async () => {
   await withApp([], async (s) => {
     await s.click('[data-command="file.imagesToPdf"]');
@@ -2435,6 +3099,27 @@ await test("images to PDF: opens from the start screen; explains what is missing
     execFileSync(CLI, ["images-to-pdf", join(FIX, "../images/photo-exif-rotate.jpg"), join(FIX, "../images/alpha.png"), "-o", out]);
     const v = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data;
     assert(v.page_count === 2 && v.pages[0].rotation === 90, `converted: ${JSON.stringify(v.pages.map((p) => p.rotation))}`);
+  }
+});
+
+await test("images given at launch go to Create PDF from images (both listed); the PDF is made", async () => {
+  const dir = mkdtempSync(join(work, "launch-images-"));
+  const a = join(dir, "first.jpg");
+  const b = join(dir, "second.png");
+  copyFileSync(join(FIX, "../images/photo-exif-rotate.jpg"), a);
+  copyFileSync(join(FIX, "../images/alpha.png"), b);
+  const out = join(dir, "together.pdf");
+  await withApp([a, b], async (s) => {
+    await s.waitFor('[data-testid="images-start"]', { timeout: 20000 });
+    await s.waitUntil(async () => (await s.exec("return [...document.querySelectorAll('.file-list .name')].map(n => n.textContent).join('|')")) === "1. first.jpg|2. second.png", "both pictures listed in order");
+    assert(!(await s.exec("return !!document.querySelector('.notice')?.innerText.includes('not a PDF')")), "no 'not a PDF' error");
+    await s.type("#images-output", out);
+    await s.click('[data-testid="images-start"]');
+    await s.waitUntil(() => existsSync(out), "PDF written", 60000);
+  });
+  if (CLI) {
+    const v = JSON.parse(execFileSync(CLI, ["--json", "inspect", out], { encoding: "utf8" })).result.data;
+    assert(v.page_count === 2, `two pages (${v.page_count})`);
   }
 });
 
@@ -2690,23 +3375,29 @@ await test("remove password: copy opens without a password; unavailable with a r
   }
 });
 
-await test("remove hidden information: findings listed, verified copy has none, kept content stays; protected files refused with a reason", async () => {
+await test("remove hidden information: findings listed, verified copy has none, kept content stays; a file whose owner forbids changes refused with a reason", async () => {
   const src = join(FIX, "hidden-info.pdf");
   const before = sha(src);
   const out = join(work, "cleaned.pdf");
   // Null until the dialog has rendered (the palette closes first), so waitUntil keeps polling.
   const finding = (s, k) => s.exec(`return document.querySelector('[data-finding=${k}]')?.textContent ?? null`);
-  await withApp([src, join(FIX, "encrypted-rc4-user-password.pdf")], async (s) => {
-    // The protected file opens with its password first; the dialog refuses it with a reason.
+  // A protected copy whose owner forbids changes (made with the CLI): opened with its open
+  // password, the dialog refuses to clean it and says why. (Unrestricted protected files are
+  // cleaned and keep their password — engine tests.)
+  if (!CLI) throw new Skip("needs the CLI to make the restricted copy");
+  const restricted = join(work, "restricted-hidden.pdf");
+  rmSync(restricted, { force: true });
+  execFileSync(CLI, ["protect", "--owner-password-stdin", "--no-modify", src, "-o", restricted], { input: "reader\nowner\n" });
+  await withApp([src, restricted], async (s) => {
     await s.waitFor("#pdf-password");
-    await s.type("#pdf-password", "pw-user-test");
+    await s.type("#pdf-password", "reader");
     await s.keys(["Enter"]);
     await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label .name').length")) === 2, "both open");
     await pageLoaded(s, 0);
     await s.keys(["Control", "k"]);
     await s.type('[role="dialog"] input', "Remove hidden");
     await s.click('[role="option"][data-command="file.sanitize"]');
-    await s.waitUntil(async () => ((await s.attr('[data-testid="sanitize-start"]', "title")) ?? "").includes("Password-protected"), "protected file refused with a reason");
+    await s.waitUntil(async () => ((await s.attr('[data-testid="sanitize-start"]', "title")) ?? "").includes("does not allow"), "restricted file refused with a reason");
     await s.keys(["Escape"]);
     // Switch to the file with hidden information.
     await s.exec("[...document.querySelectorAll('.tab-label .name')].find(n => n.textContent === 'hidden-info.pdf').click(); return 1");
@@ -2986,6 +3677,106 @@ await test("page labels: roman front matter then prefixed numbers; preview; save
   }
 });
 
+await test("comments panel: move a highlight with the keyboard and by dragging; Escape cancels a move; saved copy has it moved", async () => {
+  const src = join(FIX, "hidden-info.pdf");
+  const before = sha(src);
+  const out = join(work, "comments-moved.pdf");
+  const frame = (s) => s.exec("const f=document.querySelector('.annot-frame.active'); if (!f) return null; const r=f.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height, focused: document.activeElement === f }");
+  let k = 1;
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click("#sb-tab-comments");
+    await s.waitFor('[aria-label="Move Highlight on page 1"]');
+    // Pixels per point of the page as drawn.
+    k = await s.exec("return document.querySelector('.page[data-page=\"0\"]').getBoundingClientRect().width / 612");
+    await s.click('[aria-label="Move Highlight on page 1"]');
+    await s.waitUntil(async () => (await frame(s))?.focused === true, "the frame is on the page and has the focus");
+    const f0 = await frame(s);
+    assert((await unsavedText(s)) === "", "picking it up changes nothing yet");
+    // Keyboard: Shift+Down twice = 20 pt down.
+    await s.keys(["Shift", "ArrowDown"]);
+    await s.keys(["Shift", "ArrowDown"]);
+    await s.waitUntil(async () => Math.abs((await frame(s)).y - (f0.y + 20 * k)) < 1.5, "moved 20 pt down by keyboard");
+    // Drag 60 px to the right (released there).
+    const f1 = await frame(s);
+    await s.dragAt(f1.x + f1.w / 2, f1.y + f1.h / 2, f1.x + f1.w / 2 + 60, f1.y + f1.h / 2);
+    await s.waitUntil(async () => Math.abs((await frame(s)).x - (f1.x + 60)) < 1.5, "dragged 60 px right");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('.annot-frame.active, [data-testid=move-actions]')")), "Enter keeps the move");
+    assert(await s.exec("return !!document.querySelector('.annot-frame:not(.active)')"), "the new place stays marked until saved");
+    await s.waitUntil(async () => (await unsavedText(s)) === "1 unsaved change", "one unsaved change");
+    // Escape puts a move back.
+    await s.click('[aria-label="Move Rectangle on page 1"]');
+    await s.waitUntil(async () => (await frame(s))?.focused === true, "rectangle picked up");
+    await s.keys(["ArrowRight"]);
+    await s.waitUntil(async () => (await unsavedText(s)) === "2 unsaved changes", "nudge recorded");
+    await s.keys(["Escape"]);
+    await s.waitUntil(async () => (await unsavedText(s)) === "1 unsaved change", "Escape cancelled the rectangle's move");
+    assert(await s.exec("return !document.querySelector('[role=dialog]')"), "Escape did not open or close anything else");
+    await axeCheck(s, "comments-moving");
+    writeFileSync(join(ART, "comments-moved.png"), await s.screenshot());
+    await s.keys(["Control", "s"]);
+    await s.waitFor("#output");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved comments-moved.pdf")), "saved notice");
+    await s.waitUntil(async () => !(await s.exec("return !!document.querySelector('.annot-frame')")), "frames gone after saving");
+  });
+  assert(sha(src) === before, "source unchanged");
+  if (CLI) {
+    const rects = (f) => Object.fromEntries(JSON.parse(execFileSync(CLI, ["--json", "annotations", f], { encoding: "utf8" })).result.data.annotations.map((a) => [a.subtype, a.rect]));
+    const [a, b] = [rects(src), rects(out)];
+    const dx = b.Highlight.left - a.Highlight.left;
+    const dy = b.Highlight.bottom - a.Highlight.bottom;
+    assert(Math.abs(dy + 20) < 0.05 && Math.abs(dx - 60 / k) < 0.6, `highlight moved by (${dx}, ${dy})`);
+    assert(JSON.stringify(b.Square) === JSON.stringify(a.Square), "rectangle not moved");
+  }
+});
+
+await test("comments panel: resize a rectangle by its corner and with Ctrl+arrows; highlights offer no handles; saved copy has the new box", async () => {
+  const src = join(FIX, "hidden-info.pdf");
+  const out = join(work, "comments-resized.pdf");
+  const frame = (s) => s.exec("const f=document.querySelector('.annot-frame.active'); if (!f) return null; const r=f.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height, handles: f.querySelectorAll('[data-corner]').length }");
+  let k = 1;
+  await withApp([src], async (s) => {
+    await pageLoaded(s, 0);
+    await s.click("#sb-tab-comments");
+    await s.waitFor('[aria-label="Move Highlight on page 1"]');
+    k = await s.exec("return document.querySelectorAll('.page')[0].getBoundingClientRect().width / 612");
+    // A highlight follows its text: it moves but has no resize handles.
+    await s.click('[aria-label="Move Highlight on page 1"]');
+    await s.waitUntil(async () => (await frame(s))?.handles === 0, "no handles on a highlight");
+    await s.keys(["Control", "ArrowRight"]);
+    assert((await unsavedText(s)) === "", "Ctrl+arrow does not resize a highlight");
+    await s.keys(["Escape"]);
+    await s.click('[aria-label="Move Rectangle on page 1"]');
+    await s.waitUntil(async () => (await frame(s))?.handles === 4, "four corner handles on the rectangle");
+    const f0 = await frame(s);
+    // Bottom-right corner 40 px right and 30 px down.
+    const se = await s.exec("const r=document.querySelector('.annot-frame.active [data-corner=se]').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]");
+    await s.dragAt(se[0], se[1], se[0] + 40, se[1] + 30);
+    await s.waitUntil(async () => { const f = await frame(s); return Math.abs(f.w - (f0.w + 40)) < 1.5 && Math.abs(f.h - (f0.h + 30)) < 1.5 && Math.abs(f.x - f0.x) < 1; }, "corner drag resized the frame, top-left kept");
+    // Ctrl+Shift+Right: 10 pt wider.
+    await s.keys(["Control", "Shift", "ArrowRight"]);
+    await s.waitUntil(async () => Math.abs((await frame(s)).w - (f0.w + 40 + 10 * k)) < 1.5, "10 pt wider from the keyboard");
+    await s.keys(["Enter"]);
+    await s.waitUntil(async () => (await unsavedText(s)) === "1 unsaved change", "one unsaved change");
+    await axeCheck(s, "comments-resizing");
+    writeFileSync(join(ART, "comments-resized.png"), await s.screenshot());
+    await s.keys(["Control", "s"]);
+    await s.waitFor("#output");
+    await s.type("#output", out);
+    await s.click('[data-testid="tool-start"]');
+    await s.waitUntil(async () => (await noticeTexts(s)).some((t) => t.includes("Saved comments-resized.pdf")), "saved notice");
+  });
+  if (CLI) {
+    const rects = (f) => Object.fromEntries(JSON.parse(execFileSync(CLI, ["--json", "annotations", f], { encoding: "utf8" })).result.data.annotations.map((a) => [a.subtype, a.rect]));
+    const [a, b] = [rects(src).Square, rects(out).Square];
+    const near = (x, y, tol = 0.6) => Math.abs(x - y) < tol;
+    assert(near(b.left, a.left) && near(b.top, a.top) && near(b.right, a.right + 40 / k + 10) && near(b.bottom, a.bottom - 30 / k), `rectangle ${JSON.stringify(a)} → ${JSON.stringify(b)}`);
+  }
+});
+
 await test("comments panel: delete a note and change a highlight's comment; closing asks; saved copy verified", async () => {
   const src = join(FIX, "hidden-info.pdf");
   const before = sha(src);
@@ -3002,7 +3793,11 @@ await test("comments panel: delete a note and change a highlight's comment; clos
     await s.type('[aria-label="Comment for Highlight on page 1"]', "Checked by QA");
     await s.click('[data-testid="comment-apply"]');
     await s.waitUntil(async () => (await items(s))[1].includes("Checked by QA") && (await items(s))[1].includes("Changed"), "pending text shown");
-    await s.waitUntil(async () => (await unsavedText(s)) === "2 unsaved changes", "two unsaved changes");
+    // Recolour the rectangle (the native colour picker cannot be driven: set its value as the browser does).
+    await s.exec(`const i=document.querySelector('[aria-label="Colour of Rectangle on page 1"]');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(i, '#0000ff');
+      i.dispatchEvent(new Event('input', { bubbles: true })); return 1`);
+    await s.waitUntil(async () => (await unsavedText(s)) === "3 unsaved changes", "three unsaved changes");
     await axeCheck(s, "comments-panel");
     writeFileSync(join(ART, "comments-panel.png"), await s.screenshot());
     // Closing the tab asks first.
@@ -3027,6 +3822,45 @@ await test("comments panel: delete a note and change a highlight's comment; clos
   if (CLI) {
     const list = execFileSync(CLI, ["annotations", out], { encoding: "utf8" });
     assert(!list.includes("PWCOMMENT") && list.includes("Checked by QA") && list.includes("3 annotation(s)"), `CLI listing:\n${list}`);
+    const listed = JSON.parse(execFileSync(CLI, ["--json", "annotations", out], { encoding: "utf8" })).result.data.annotations;
+    const square = listed.find((x) => x.subtype === "Square");
+    assert(square && square.color === "#0000ff", `rectangle recoloured: ${JSON.stringify(square)}`);
+  }
+});
+
+await test("batch translation: two English files into German, each named -de.pdf, German text inside", async () => {
+  const dir = mkdtempSync(join(work, "batch-tr-"));
+  const outDir = join(dir, "out");
+  mkdirSync(outDir);
+  await withApp([join(FIX, "article.pdf"), join(FIX, "five-pages.pdf")], async (s) => {
+    await s.waitUntil(async () => (await s.exec("return document.querySelectorAll('.tab-label').length")) === 2, "two tabs");
+    await pageLoaded(s, 0);
+    await s.click('[data-testid="viewer"]');
+    await s.keys(["Control", "k"]);
+    await s.type('[role="dialog"] input', "Process several");
+    await s.click('[role="option"][data-command="file.batch"]');
+    await s.waitFor('[data-testid="batch-start"]');
+    await s.click('[data-testid="batch-add-open"]');
+    await s.type("#batch-folder", outDir);
+    await s.exec("const el = document.querySelector('#batch-action'); el.value = 'translate'; el.dispatchEvent(new Event('change', { bubbles: true })); return 1");
+    await s.waitFor("#batch-target");
+    await s.waitUntil(async () => !(await s.exec("return document.querySelector('#batch-target').disabled")), "languages read");
+    await s.exec("const el = document.querySelector('#batch-target'); el.value = 'de'; el.dispatchEvent(new Event('change', { bubbles: true })); return 1");
+    const blocked = await s.attr('[data-testid="batch-start"]', "title");
+    if (blocked) throw new Skip(`translation models not installed here: ${blocked}`);
+    await axeCheck(s, "batch-translate");
+    await s.click('[data-testid="batch-start"]');
+    await s.waitUntil(async () => /2 done|failed/.test(await s.text('[data-testid="batch-summary"]')), "results", 600000);
+    const rows = await s.exec("return [...document.querySelectorAll('[data-testid=batch-results] li')].map(l => l.dataset.state + '|' + l.textContent)");
+    assert(rows.every((r) => r.startsWith("done|")), `rows: ${JSON.stringify(rows)}`);
+  });
+  for (const name of ["article-de.pdf", "five-pages-de.pdf"]) {
+    const out = join(outDir, name);
+    assert(existsSync(out), `${name} written`);
+    if (CLI) {
+      const text = JSON.parse(execFileSync(CLI, ["--json", "text", out], { encoding: "utf8" })).result.data.pages.map((p) => p.text).join(" ");
+      assert(/\b(der|die|das|und|ist)\b/i.test(text), `${name} is German: ${text.slice(0, 160)}`);
+    }
   }
 });
 

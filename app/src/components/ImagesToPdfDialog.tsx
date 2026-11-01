@@ -12,9 +12,9 @@ interface Props {
   onFinished: (job: JobSnapshot) => void;
 }
 
-const IMAGE_EXT = /\.(jpe?g|png)$/i;
+const IMAGE_EXT = /\.(jpe?g|png|webp|tiff?|gif|bmp)$/i;
 
-/** True for files this dialog takes (JPEG and PNG, by name). */
+/** True for files this dialog takes (JPEG, PNG, WebP, TIFF, GIF, BMP, by name). */
 export function isImagePath(p: string): boolean {
   return IMAGE_EXT.test(p);
 }
@@ -30,6 +30,8 @@ const MM = 72 / 25.4;
 export function ImagesToPdfDialog({ initialFiles, jobs, onClose, onFinished }: Props) {
   const api = useApi();
   const [files, setFiles] = useState<string[]>(initialFiles);
+  // More pictures can arrive while the dialog is open (several given at launch): add the new ones.
+  useEffect(() => setFiles((f) => [...f, ...initialFiles.filter((x) => !f.includes(x))]), [initialFiles]);
   const [size, setSize] = useState<ImagePageSize>("a4");
   const [marginMm, setMarginMm] = useState("0");
   const [output, setOutput] = useState(defaultImagesOutput(initialFiles));
@@ -112,7 +114,7 @@ export function ImagesToPdfDialog({ initialFiles, jobs, onClose, onFinished }: P
       <div className="field">
         <span className="label">Images</span>
         {files.length === 0 ? (
-          <p className="hint">No images yet. Add JPEG or PNG files, or drop them on the window.</p>
+          <p className="hint">No images yet. Add pictures (JPEG, PNG, WebP, TIFF, GIF, BMP), or drop them on the window.</p>
         ) : (
           <ul className="file-list" aria-label="Images, in page order">
             {files.map((f, i) => (

@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { FolderOpen, Plus, Trash2 } from "lucide-react";
 import { useApi } from "../api";
-import { addFiles, BATCH_ACTIONS, batchOperation, batchOutputs, MAX_BATCH_FILES, summary, type BatchAction, type ItemState } from "../batch";
+import { addFiles, BATCH_ACTIONS, batchOperation, batchOutputs, MAX_BATCH_FILES, summary, translateBlocker, type BatchAction, type ItemState } from "../batch";
+import { languageName, languages } from "../translate";
 import { basename, dirname } from "../paths";
-import { toPwError, type JobSnapshot } from "../types";
+import { toPwError, type JobSnapshot, type TranslationDirection } from "../types";
 import { Dialog } from "./ui";
 
 interface Props {
@@ -40,23 +41,30 @@ export function BatchDialog({ openFiles, jobs, onClose }: Props) {
   const [folder, setFolder] = useState("");
   const [items, setItems] = useState<Item[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [target, setTarget] = useState("en");
+  const [dirs, setDirs] = useState<TranslationDirection[] | null>(null);
+  useEffect(() => {
+    if (action !== "translate" || dirs) return;
+    api.translationDirections().then(setDirs, (e) => setError(toPwError(e).message));
+  }, [action, dirs, api]);
 
   const states = useMemo(() => (items ? items.map((i) => stateOf(i, jobs)) : []), [items, jobs]);
   const running = states.some((s) => s === "waiting" || s === "running");
   const outFolder = folder.trim() || (files[0] ? dirname(files[0]) : "");
 
-  const blocker = files.length === 0 ? "Add PDF files first." : !outFolder ? "Choose an output folder." : null;
+  const blocker =
+    files.length === 0 ? "Add PDF files first." : !outFolder ? "Choose an output folder." : action === "translate" ? translateBlocker(dirs, target) : null;
 
   const start = async () => {
     if (blocker || running) return;
     setError(null);
-    const outputs = batchOutputs(files, action, outFolder);
+    const outputs = batchOutputs(files, action, outFolder, target);
     const list: Item[] = files.map((input, i) => ({ input, output: outputs[i]!, jobId: null, startError: null }));
     setItems(list);
     // Submitted in order; the host runs a few at a time and queues the rest.
     for (let i = 0; i < list.length; i++) {
       try {
-        const id = await api.startOperation({ schema_version: 1, operation: batchOperation(action, list[i]!.input, list[i]!.output), collision: "rename" });
+        const id = await api.startOperation({ schema_version: 1, operation: batchOperation(action, list[i]!.input, list[i]!.output, target), collision: "rename" });
         list[i] = { ...list[i]!, jobId: id };
       } catch (e) {
         list[i] = { ...list[i]!, startError: toPwError(e).message };
@@ -131,6 +139,19 @@ export function BatchDialog({ openFiles, jobs, onClose }: Props) {
               ))}
             </select>
           </div>
+          {action === "translate" && (
+            <div className="field">
+              <label htmlFor="batch-target">Translate into</label>
+              <select id="batch-target" className="select" value={target} onChange={(e) => setTarget(e.target.value)} disabled={!dirs}>
+                {(dirs ? languages(dirs) : ["en"]).map((l) => (
+                  <option key={l} value={l}>
+                    {languageName(l)}
+                  </option>
+                ))}
+              </select>
+              <span className="hint">Each file's language is recognised. Machine translation: review the results.</span>
+            </div>
+          )}
           <div className="field">
             <span className="label">Files ({files.length})</span>
             {files.length > 0 && (

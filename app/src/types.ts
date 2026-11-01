@@ -74,6 +74,9 @@ export interface DocumentInfo {
   producer?: string | null;
   signature_count?: number;
   encrypted: boolean;
+  /** What the file's owner allows with the password it was opened with (true when not protected). */
+  can_modify?: boolean;
+  can_annotate?: boolean;
   has_xfa: boolean;
   /** "none", "acrobat", "xfa_full", "xfa_foreground". */
   form_type?: string;
@@ -175,6 +178,8 @@ export interface Settings {
   read_voice: string | null;
   read_rate: number;
   check_updates: boolean;
+  /** Colour of new markup by kind, `#rrggbb`; a missing kind uses the built-in colour. */
+  markup_colors?: Partial<Record<AnnotationKind, string>>;
 }
 
 export type CollisionPolicy = "fail" | "rename" | "replace";
@@ -226,7 +231,10 @@ export interface FormField {
 
 export interface FormInfo {
   fields: FormField[];
+  /** The document carries an XFA form. */
   has_xfa: boolean;
+  /** Only XFA (dynamic): its fields cannot be filled. A hybrid form is filled through its standard form. */
+  xfa_only?: boolean;
   truncated: boolean;
 }
 
@@ -273,6 +281,12 @@ export interface AnnotationChange {
   subtype: string;
   delete: boolean;
   text: string | null;
+  /** New colour "#rrggbb" (markup, shapes, ink and notes). */
+  color?: string | null;
+  /** Move by [dx, dy] PDF points in unrotated page space (+y up); its pop-up moves with it. */
+  offset?: [number, number] | null;
+  /** New bounds for shapes, drawings and stamps (scaled into them); not together with `offset`. */
+  rect?: SearchRect | null;
 }
 
 export type Operation =
@@ -337,12 +351,12 @@ export type Operation =
   | { op: "optimize"; input: string; images: { max_dpi: number; quality: number } | null; output: string }
   | { op: "export_text"; input: string; pages: string | null; output: string }
   | { op: "reconstruct_design"; input: string; page: number; output: string }
-  | { op: "export_design"; input: string; format: "svg" | "pdf"; output: string }
+  | { op: "export_design"; input: string; format: DesignFormat; output: string }
   | { op: "convert_to_docx"; input: string; pages: string | null; output: string }
   | { op: "install_translation"; source: string; target: string }
   | { op: "download_update"; version: string }
   | { op: "install_office" }
-  | { op: "translate_document"; input: string; pages: string | null; source: string | null; target: string; output: string }
+  | { op: "translate_document"; input: string; pages: string | null; source: string | null; target: string; output: string; bilingual?: boolean; glossary?: Array<{ source: string; target: string }> }
   | { op: "read_aloud_to_wav"; input: string; pages: string | null; voice: string | null; rate: number; output: string }
   | { op: "convert_to_pptx"; input: string; pages: string | null; output: string }
   | { op: "convert_office_to_pdf"; input: string; output: string }
@@ -532,6 +546,8 @@ export type PageEdit =
   | { kind: "move_objects"; objects: number[]; dx: number; dy: number }
   | { kind: "replace_image"; object: number; path: string }
   | { kind: "rotate_image"; object: number; degrees: 90 | 180 | 270 }
+  /** New box (unrotated page space) as before this request's moves, which still apply. */
+  | { kind: "resize_image"; object: number; rect: SearchRect }
   | { kind: "add_text"; x: number; y: number; text: string; size: number; color: string };
 
 export interface PdfRect {
@@ -642,10 +658,34 @@ export interface DesignObject {
   bold: boolean;
   /** Text baseline below the top of the box. */
   baseline?: number;
-  fill?: string;
+  fill?: string | null;
   /** PNG, base64. */
   png?: string;
+  /** Objects with the same group id are selected and moved together. */
+  group?: string | null;
+  /** Clockwise turn in degrees around the box's centre. */
+  rotation?: number;
+  /** Shape: an ellipse filling the box. */
+  ellipse?: boolean;
+  /** Shape: corner radius in design pixels. */
+  radius?: number;
+  /** Shape: outline colour and width (drawn inside the box); `fill` absent = no fill. */
+  stroke?: string | null;
+  stroke_width?: number;
+  /** Text: typeface family (absent: sans) and slant. */
+  font?: DesignFont;
+  italic?: boolean;
+  /** Text with several lines ("\n"): baseline distance (absent: 1.2 × size), alignment and the
+   *  glyphs' horizontal scale measured from the original (absent: 1). */
+  line_height?: number;
+  align?: TextAlign;
+  stretch?: number;
 }
+
+export type TextAlign = "left" | "center" | "right";
+
+export type DesignFont = "sans" | "serif" | "mono";
+export type DesignFormat = "svg" | "pdf" | "png";
 
 export interface Design {
   version: number;

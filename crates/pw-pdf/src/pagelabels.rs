@@ -6,7 +6,7 @@
 use crate::document::OpenOptions;
 use crate::engine;
 use crate::properties::signature_warning;
-use crate::sanitize::{check_pages, has_earlier_versions, load_plain};
+use crate::sanitize::{check_pages, has_earlier_versions};
 use lopdf::{Dictionary, Object};
 use pw_core::labels::label_for;
 use pw_core::ops::{LabelStyle, PageLabelRange};
@@ -43,18 +43,8 @@ pub fn set_page_labels(
     progress: &dyn Fn(u64, u64),
 ) -> PwResult<(CommittedOutput, u32, Vec<String>)> {
     let pdfium = engine()?;
-    {
-        let src = crate::document::load(&pdfium, input, opts)?;
-        if crate::unprotect::is_protected(&src) {
-            return Err(PwError::new(
-                ErrorCategory::UnsupportedOperation,
-                "labels.protected",
-                "Page labels of a password-protected file cannot be changed here.",
-            )
-            .with_action("Remove the password first (Remove password…), then label that copy."));
-        }
-    }
-    let (source, mut doc, raw) = load_plain(&pdfium, input, opts)?;
+    let (source, mut doc, raw) =
+        crate::sanitize::load_for_change(&pdfium, input, opts, crate::sanitize::Change::Modify)?;
     let count = source.pages().len().max(0) as u32;
     if let Some(r) = ranges.iter().find(|r| r.start >= count) {
         return Err(PwError::invalid(

@@ -89,7 +89,11 @@ export function SanitizeDialog({ doc, jobs, onClose, onFinished }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job?.state]);
 
-  const blocker = inspectError
+  // Cleaning a protected file needs its owner's permission to change it (D-010): say so before
+  // anything starts. The cleaned copy keeps the open password (D-042).
+  const blocker = doc.info.can_modify === false
+    ? "The owner of this file does not allow changing it. Open it with its permissions password, or ask its owner for an unrestricted copy."
+    : inspectError
     ? inspectError.message
     : !findings
       ? "Checking the file…"

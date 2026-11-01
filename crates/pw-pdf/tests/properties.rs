@@ -103,9 +103,12 @@ fn bad_requests_write_nothing() {
         keywords: None,
         output: out.clone(),
     });
+    // A protected file without restrictions is changed now (D-010 update); without keep_protection
+    // the copy is unprotected and says so. Restricted files: tests/protected_changes.rs.
     req.password = Some("pw-user-test".into());
-    assert_eq!(execute(&req, None).expect_err("protected").code, "properties.protected");
-    assert!(!out.exists());
+    let r = execute(&req, None).expect("protected file without restrictions");
+    assert!(r.warnings.iter().any(|w| w.contains("not password protected")), "{:?}", r.warnings);
+    std::fs::remove_file(&out).expect("remove");
     std::fs::write(&out, b"keep").expect("write");
     let err = set(&src, &out, Some("t"), None, None, None).expect_err("exists");
     assert_eq!(err.category, ErrorCategory::OutputConflict);

@@ -89,6 +89,14 @@ pub const TOOLS: &[Tool] = &[
         schema: || obj(json!({ "path": path_prop("PDF file") }), &["path"]),
     },
     Tool {
+        name: "list_annotations",
+        title: "List comments and markup",
+        description: "The comments, notes and markup already in the PDF (highlights, underlines, shapes, drawings, stamps…): kind, page, position, comment text, author, date and colour. Read-only.",
+        effect: Effect::ReadOnly,
+        long: false,
+        schema: || obj(json!({ "path": path_prop("PDF file") }), &["path"]),
+    },
+    Tool {
         name: "compare_documents",
         title: "Compare two PDFs",
         description: "Differences between an older and a newer PDF: aligned pages, inserted/deleted/changed words, moved passages, formatting and visual changes.",
@@ -297,7 +305,7 @@ pub const TOOLS: &[Tool] = &[
     Tool {
         name: "translate_document",
         title: "Translate a document",
-        description: "Translate all or chosen pages with PageWeave's own local translation models (nothing leaves the computer) into a Word document (.docx, layout kept: headings, columns, tables, pictures) or a text file (.txt). Languages: en, de, fr, es, it (pairs without English go through English). The source language is detected when not given. The result reports numbers, dates, codes and addresses the translation did not keep exactly.",
+        description: "Translate all or chosen pages with PageWeave's own local translation models (nothing leaves the computer) into a PDF in the same layout (.pdf; with bilingual, each original page next to its translation), a Word document (.docx, layout kept: headings, columns, tables, pictures) or a text file (.txt). Languages: en, de, fr, es, it, pt (every pair translated directly). An optional glossary fixes how chosen terms are translated. The source language is detected when not given. The result reports numbers, dates, codes and addresses the translation did not keep exactly.",
         effect: Effect::WritesNewFiles,
         long: true,
         schema: || {
@@ -305,9 +313,16 @@ pub const TOOLS: &[Tool] = &[
                 json!({
                     "path": path_prop("Source PDF"),
                     "pages": { "type": "string", "description": PAGES },
-                    "source": { "type": "string", "enum": ["en", "de", "fr", "es", "it"], "description": "Language of the document (detected when absent)" },
-                    "target": { "type": "string", "enum": ["en", "de", "fr", "es", "it"], "description": "Language to translate into" },
-                    "output": path_prop("New .docx or .txt file (must not exist)")
+                    "source": { "type": "string", "enum": ["en", "de", "fr", "es", "it", "pt"], "description": "Language of the document (detected when absent)" },
+                    "target": { "type": "string", "enum": ["en", "de", "fr", "es", "it", "pt"], "description": "Language to translate into" },
+                    "output": path_prop("New .pdf, .docx or .txt file (must not exist)"),
+                    "bilingual": { "type": "boolean", "description": "PDF output only: each original page next to its translation" },
+                    "glossary": {
+                        "type": "array",
+                        "maxItems": 1000,
+                        "description": "Terms (in the document's language) and their fixed translations; whole words, any case",
+                        "items": obj(json!({ "source": { "type": "string" }, "target": { "type": "string" } }), &["source", "target"])
+                    }
                 }),
                 &["path", "target", "output"],
             )
@@ -361,7 +376,7 @@ pub const TOOLS: &[Tool] = &[
     Tool {
         name: "reconstruct_design",
         title: "Rebuild a flat design as editable objects",
-        description: "Rebuild a flat picture (PNG or JPEG, or one page of a PDF) as separately editable text, shapes and pictures, saved as a design project (.pwdesign). Wording comes only from text recognition, with its confidence; regions that are neither text nor a plain shape stay pictures and are marked uncertain. Original layers are not recovered (a flat picture has none).",
+        description: "Rebuild a flat picture (PNG, JPEG, WebP, TIFF, GIF or BMP, or one page of a PDF) as separately editable text, shapes and pictures, saved as a design project (.pwdesign). Wording comes only from text recognition, with its confidence; regions that are neither text nor a plain shape stay pictures and are marked uncertain. Original layers are not recovered (a flat picture has none).",
         effect: Effect::WritesNewFiles,
         long: true,
         schema: || {
@@ -374,12 +389,12 @@ pub const TOOLS: &[Tool] = &[
     Tool {
         name: "export_design",
         title: "Export a design project",
-        description: "Export a design project (.pwdesign) as editable SVG (text, rectangles, embedded pictures; nothing external) or as PDF (real text), chosen by the output's extension. The file is read back and checked before it appears.",
+        description: "Export a design project (.pwdesign) as editable SVG (text, shapes, embedded pictures; nothing external), as PDF (real text) or as a PNG picture at the design's size, chosen by the output's extension. The file is read back and checked before it appears.",
         effect: Effect::WritesNewFiles,
         long: false,
         schema: || {
             obj(
-                json!({ "path": path_prop("Design project (.pwdesign)"), "output": path_prop("New .svg or .pdf file (must not exist)") }),
+                json!({ "path": path_prop("Design project (.pwdesign)"), "output": path_prop("New .svg, .pdf or .png file (must not exist)") }),
                 &["path", "output"],
             )
         },
@@ -475,6 +490,10 @@ struct TranslateArg {
     source: Option<String>,
     target: String,
     output: String,
+    #[serde(default)]
+    glossary: Vec<pw_core::ops::GlossaryEntry>,
+    #[serde(default)]
+    bilingual: bool,
 }
 
 #[derive(Deserialize)]
@@ -556,6 +575,7 @@ pub fn operation(tool: &Tool, a: &Value, roots: &Roots) -> PwResult<Operation> {
     Ok(match tool.name {
         "inspect_document" => Operation::Inspect { input: roots.input(&args::<PathArg>(a)?.path)? },
         "list_form_fields" => Operation::FormFields { input: roots.input(&args::<PathArg>(a)?.path)? },
+        "list_annotations" => Operation::ListAnnotations { input: roots.input(&args::<PathArg>(a)?.path)? },
         "check_signatures" => {
             Operation::VerifySignatures { input: roots.input(&args::<PathArg>(a)?.path)?, trusted: vec![] }
         }
@@ -698,7 +718,9 @@ pub fn operation(tool: &Tool, a: &Value, roots: &Roots) -> PwResult<Operation> {
                 pages: x.pages,
                 source: x.source,
                 target: x.target,
-                output: roots.output(&x.output, &["docx", "txt"])?,
+                output: roots.output(&x.output, &["pdf", "docx", "txt"])?,
+                bilingual: x.bilingual,
+                glossary: x.glossary,
             }
         }
         "read_aloud_to_wav" => {
@@ -741,13 +763,14 @@ pub fn operation(tool: &Tool, a: &Value, roots: &Roots) -> PwResult<Operation> {
         }
         "export_design" => {
             let x: PathOutArg = args(a)?;
-            let output = roots.output(&x.output, &["svg", "pdf"])?;
-            let svg = output.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg"));
-            Operation::ExportDesign {
-                input: roots.input(&x.path)?,
-                format: if svg { pw_core::ops::DesignFormat::Svg } else { pw_core::ops::DesignFormat::Pdf },
-                output,
-            }
+            let output = roots.output(&x.output, &["svg", "pdf", "png"])?;
+            let ext = output.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+            let format = match ext.as_str() {
+                "svg" => pw_core::ops::DesignFormat::Svg,
+                "png" => pw_core::ops::DesignFormat::Png,
+                _ => pw_core::ops::DesignFormat::Pdf,
+            };
+            Operation::ExportDesign { input: roots.input(&x.path)?, format, output }
         }
         other => {
             return Err(PwError::new(

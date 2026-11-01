@@ -176,6 +176,7 @@ fn read_only_server_lists_and_runs_read_tools_and_refuses_writing() {
             "extract_text",
             "search_text",
             "list_form_fields",
+            "list_annotations",
             "compare_documents",
             "check_signatures",
             "check_accessibility",
@@ -195,6 +196,8 @@ fn read_only_server_lists_and_runs_read_tools_and_refuses_writing() {
 
     let info = c.ok("inspect_document", json!({ "path": "five-pages.pdf" }));
     assert_eq!(info["data"]["page_count"], 5);
+    let comments = c.ok("list_annotations", json!({ "path": "five-pages.pdf" }));
+    assert!(comments["data"]["annotations"].is_array(), "{comments}");
     let text = c.ok("extract_text", json!({ "path": "five-pages.pdf", "pages": "2" }));
     assert!(text["data"]["pages"][0]["text"].as_str().unwrap_or("").contains("PWMARK002"), "{text}");
     let hits = c.ok("search_text", json!({ "path": "search-terms.pdf", "query": "alpha", "whole_word": true }));
@@ -283,7 +286,7 @@ fn write_tools_create_verified_new_files_and_leave_sources_alone() {
     let before = std::fs::read(root.path().join("five-pages.pdf")).expect("read");
     let mut c = Client::start(&[root.path()], true);
     let names = tool_names(&mut c);
-    assert_eq!(names.len(), 26, "{names:?}");
+    assert_eq!(names.len(), 27, "{names:?}");
 
     let r = c.ok("extract_pages", json!({ "path": "five-pages.pdf", "pages": "4, 2", "output": "ex.pdf" }));
     assert_eq!(r["outputs"][0]["pages"], 2);
@@ -353,8 +356,17 @@ fn write_tools_create_verified_new_files_and_leave_sources_alone() {
     );
     assert_eq!(tr["data"]["target"], "fr", "{tr}");
     assert!(std::fs::read_to_string(root.path().join("p1-fr.txt")).expect("txt").contains("PWMARK001"));
+    // A PDF in the same layout, here each page next to its translation.
+    let side = c.ok(
+        "translate_document",
+        json!({ "path": "five-pages.pdf", "pages": "1", "source": "en", "target": "fr", "output": "p1-fr.pdf", "bilingual": true }),
+    );
+    assert!(side["outputs"][0]["path"].as_str().is_some_and(|p| p.ends_with("p1-fr.pdf")), "{side}");
+    let sheet = c.ok("inspect_document", json!({ "path": "p1-fr.pdf" }));
+    assert_eq!(sheet["data"]["page_count"], 1, "one sheet: {sheet}");
+    assert_eq!(sheet["data"]["pages"][0]["width_pt"], 1224.0, "twice the page's width: {sheet}");
     assert_eq!(
-        c.err("translate_document", json!({ "path": "five-pages.pdf", "target": "fr", "output": "p1.pdf" })),
+        c.err("translate_document", json!({ "path": "five-pages.pdf", "target": "fr", "output": "p1.odt" })),
         "mcp.output_extension"
     );
     let t = c.ok("export_tables", json!({ "path": "tables.pdf", "output": "t.xlsx" }));
@@ -439,13 +451,15 @@ fn design_tools_rebuild_and_export_inside_the_approved_folder() {
     copy_fixtures(root.path(), &["poster.pdf"]);
     let mut c = Client::start(&[root.path()], true);
     let r = c.ok("reconstruct_design", json!({ "path": "poster.pdf", "output": "poster.pwdesign" }));
-    assert!(r["data"]["text"].as_u64() >= Some(6), "{r}");
+    // Five text objects: the two body lines are one paragraph.
+    assert!(r["data"]["text"].as_u64() >= Some(5), "{r}");
     assert!(r["data"]["editable_ratio"].as_f64() >= Some(0.85), "{r}");
     c.ok("export_design", json!({ "path": "poster.pwdesign", "output": "poster.svg" }));
     assert!(std::fs::read_to_string(root.path().join("poster.svg")).expect("svg").contains("SPRING FAIR"));
     c.ok("export_design", json!({ "path": "poster.pwdesign", "output": "poster-design.pdf" }));
     assert_eq!(page_count(&root.path().join("poster-design.pdf")), 1);
-    assert_eq!(c.err("export_design", json!({ "path": "poster.pwdesign", "output": "x.png" })), "mcp.output_extension");
+    assert_eq!(c.err("export_design", json!({ "path": "poster.pwdesign", "output": "x.jpg" })), "mcp.output_extension");
+    c.ok("export_design", json!({ "path": "poster.pwdesign", "output": "x.png" }));
     assert_eq!(
         c.err("reconstruct_design", json!({ "path": "poster.pdf", "output": "x.json" })),
         "mcp.output_extension"
@@ -454,8 +468,12 @@ fn design_tools_rebuild_and_export_inside_the_approved_folder() {
         c.err("reconstruct_design", json!({ "path": "poster.pdf", "page": 0, "output": "y.pwdesign" })),
         "mcp.arguments"
     );
+    // A real file outside the approved folder (an absolute path like /etc/hostname does not exist
+    // on Windows and would be refused as not found first).
+    let outside = tempfile::tempdir().expect("tmp");
+    copy_fixtures(outside.path(), &["single-page.pdf"]);
     assert_eq!(
-        c.err("reconstruct_design", json!({ "path": "/etc/hostname", "output": "z.pwdesign" })),
+        c.err("reconstruct_design", json!({ "path": outside.path().join("single-page.pdf"), "output": "z.pwdesign" })),
         "mcp.path_denied"
     );
 }

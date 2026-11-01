@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EMPTY_HISTORY, netMove, normalize, push, redoLast, toPageEdits, undoLast, type ObjEntry } from "./objectEdits";
+import { EMPTY_HISTORY, netMove, netSize, normalize, push, redoLast, toPageEdits, undoLast, type ObjEntry } from "./objectEdits";
 
 const text = (objects: number[], t: string, dx = 0, dy = 0): ObjEntry => ({ page: 0, edit: { kind: "text", objects, text: t, size: null, color: null, dx, dy } });
 
@@ -27,6 +27,24 @@ describe("pending object edits", () => {
     ]);
     expect(normalize(items, 1)).toEqual([{ kind: "delete_objects", objects: [3] }]);
     expect(toPageEdits(items).map((p) => p.page)).toEqual([0, 1]);
+  });
+
+  it("keeps a picture's last size next to its moves; a delete wins", () => {
+    const box = (right: number) => ({ left: 100, bottom: 500, right, top: 580 });
+    const items: ObjEntry[] = [
+      { page: 0, edit: { kind: "resize_image", object: 7, rect: box(200) } },
+      { page: 0, edit: { kind: "move_objects", objects: [7], dx: 10, dy: 0 } },
+      { page: 0, edit: { kind: "resize_image", object: 7, rect: box(260) } },
+      { page: 1, edit: { kind: "resize_image", object: 3, rect: box(200) } },
+      { page: 1, edit: { kind: "delete_objects", objects: [3] } },
+    ];
+    expect(normalize(items, 0)).toEqual([
+      { kind: "move_objects", objects: [7], dx: 10, dy: 0 },
+      { kind: "resize_image", object: 7, rect: box(260) },
+    ]);
+    expect(netSize(items, 0, 7)).toEqual(box(260));
+    expect(netSize(items, 0, 8)).toBeNull();
+    expect(normalize(items, 1)).toEqual([{ kind: "delete_objects", objects: [3] }]);
   });
 
   it("drops pages whose edits cancel out", () => {

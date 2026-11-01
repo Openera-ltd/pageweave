@@ -36,6 +36,12 @@ fn human_output_and_exit_codes() {
     let out = bin().arg("inspect").arg(fixture("not-a-pdf.pdf")).output().expect("run");
     assert_eq!(out.status.code(), Some(3), "unsupported format exit code");
     assert!(String::from_utf8_lossy(&out.stderr).contains("not a PDF"));
+    // A picture says what it is and what to do with it, not "even if its name ends in .pdf".
+    let png = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/images/alpha.png");
+    let out = bin().arg("inspect").arg(&png).output().expect("run");
+    assert_eq!(out.status.code(), Some(3));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("This is a picture") && !err.contains("ends in .pdf"), "{err}");
 
     let out = bin().args(["--json", "inspect"]).arg(fixture("missing.pdf")).output().expect("run");
     assert_eq!(out.status.code(), Some(7));
@@ -1001,6 +1007,77 @@ fn annotations_list_delete_and_retext() {
 }
 
 #[test]
+fn annotations_resize_a_shape_and_refuse_text_markup() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let copy = dir.path().join("r.pdf");
+    let r = bin()
+        .args(["annotations", "--resize", "1:7:Square=290,-0,420.5,580", "-o"])
+        .arg(&copy)
+        .arg(fixture("hidden-info.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let v = json(&bin().args(["--json", "annotations"]).arg(&copy).output().expect("run"));
+    let sq = v["result"]["data"]["annotations"]
+        .as_array()
+        .expect("list")
+        .iter()
+        .find(|a| a["index"] == 7)
+        .cloned()
+        .expect("square");
+    let r = &sq["rect"];
+    let got =
+        [r["left"].as_f64(), r["bottom"].as_f64(), r["right"].as_f64(), r["top"].as_f64()].map(|x| x.unwrap_or(-1.0));
+    assert!(got.iter().zip([290.0, 0.0, 420.5, 580.0]).all(|(a, b)| (a - b).abs() < 0.01), "{got:?}");
+    for bad in ["1:2:Highlight=0,0,100,100", "1:7:Square=1,2,3", "1:7:Square=a,b,c,d"] {
+        let r = bin()
+            .args(["annotations", "--resize", bad, "-o"])
+            .arg(dir.path().join("x.pdf"))
+            .arg(fixture("hidden-info.pdf"))
+            .output()
+            .expect("run");
+        assert_eq!(r.status.code(), Some(2), "{bad} is invalid input");
+    }
+}
+
+#[test]
+fn annotations_move_with_negative_offsets_and_bad_syntax_is_invalid() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let copy = dir.path().join("m.pdf");
+    let r = bin()
+        .args(["annotations", "--move", "1:2:Highlight=-10,-100.5", "--set-color", "1:2:Highlight=#00ff00", "-o"])
+        .arg(&copy)
+        .arg(fixture("hidden-info.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let rect = |f: &std::path::Path| {
+        let v = json(&bin().args(["--json", "annotations"]).arg(f).output().expect("run"));
+        let a = v["result"]["data"]["annotations"]
+            .as_array()
+            .expect("list")
+            .iter()
+            .find(|a| a["index"] == 2)
+            .cloned()
+            .expect("highlight");
+        (a["rect"]["left"].as_f64().unwrap_or(0.0), a["rect"]["bottom"].as_f64().unwrap_or(0.0), a["color"].clone())
+    };
+    let (l0, b0, _) = rect(&fixture("hidden-info.pdf"));
+    let (l1, b1, c1) = rect(&copy);
+    assert!((l1 - (l0 - 10.0)).abs() < 0.01 && (b1 - (b0 - 100.5)).abs() < 0.01, "({l0},{b0}) → ({l1},{b1})");
+    assert_eq!(c1, "#00ff00", "move and colour in one change");
+    for bad in ["1:2:Highlight=10", "1:2:Highlight=a,b", "1:2:Highlight"] {
+        let r = bin()
+            .args(["annotations", "--move", bad, "-o"])
+            .arg(dir.path().join("x.pdf"))
+            .arg(fixture("hidden-info.pdf"))
+            .output()
+            .expect("run");
+        assert_eq!(r.status.code(), Some(2), "{bad} is invalid input");
+    }
+}
+
+#[test]
 fn resources_reports_each_capability() {
     let r = bin().args(["--json", "resources"]).output().expect("run");
     let v = json(&r);
@@ -1087,7 +1164,8 @@ fn translate_lists_directions_and_translates_pages() {
     let r = bin().args(["--json", "translate"]).output().expect("run");
     let v = json(&r);
     assert!(r.status.success(), "{v}");
-    assert_eq!(v["result"]["directions"].as_array().expect("dirs").len(), 8);
+    // Six languages, every pair direct (D-027).
+    assert_eq!(v["result"]["directions"].as_array().expect("dirs").len(), 30);
     let out = dir.path().join("p1-it.txt");
     let r = bin()
         .args(["--json", "translate", "--pages", "1", "--to", "it", "-o"])
@@ -1101,6 +1179,51 @@ fn translate_lists_directions_and_translates_pages() {
     assert!(std::fs::read_to_string(&out).expect("txt").contains("PWMARK001"));
     let r = bin().args(["--json", "translate", "--to", "it"]).arg(fixture("five-pages.pdf")).output().expect("run");
     assert_eq!(r.status.code(), Some(2), "missing -o is a usage error");
+    // --bilingual: one sheet per page, twice as wide; only for PDF output.
+    let side = dir.path().join("p1-it.pdf");
+    let r = bin()
+        .args(["--json", "translate", "--pages", "1", "--to", "it", "--bilingual", "-o"])
+        .arg(&side)
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", json(&r));
+    let info = json(&bin().args(["--json", "inspect"]).arg(&side).output().expect("run"));
+    assert_eq!(info["result"]["data"]["page_count"], 1);
+    assert_eq!(info["result"]["data"]["pages"][0]["width_pt"].as_f64(), Some(1224.0));
+    let r = bin()
+        .args(["--json", "translate", "--pages", "1", "--to", "it", "--bilingual", "-o"])
+        .arg(dir.path().join("p1.docx"))
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert_eq!(json(&r)["error"]["code"], "translate.bilingual");
+    // --glossary: "term = translation" lines; a line without "=" is refused with its number.
+    let g = dir.path().join("g.txt");
+    std::fs::write(&g, "# terms\n\nfox = Wolf\n").expect("glossary");
+    let out = dir.path().join("g-de.txt");
+    let r = bin()
+        .args(["--json", "translate", "--pages", "1", "--to", "de", "--glossary"])
+        .arg(&g)
+        .arg("-o")
+        .arg(&out)
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    assert!(r.status.success(), "{}", json(&r));
+    assert!(std::fs::read_to_string(&out).expect("txt").contains("Wolf"));
+    std::fs::write(&g, "fox = Wolf\nno equals sign\n").expect("glossary");
+    let r = bin()
+        .args(["--json", "translate", "--pages", "1", "--to", "de", "--glossary"])
+        .arg(&g)
+        .arg("-o")
+        .arg(dir.path().join("g2.txt"))
+        .arg(fixture("five-pages.pdf"))
+        .output()
+        .expect("run");
+    let v = json(&r);
+    assert_eq!(v["error"]["code"], "translate.glossary");
+    assert!(v["error"]["message"].as_str().unwrap_or("").contains("line 2"), "{v}");
 }
 
 #[test]
@@ -1197,9 +1320,13 @@ fn design_rebuilds_a_page_and_exports_svg_and_pdf() {
         .output()
         .expect("run");
     assert_eq!(zero.status.code(), Some(2));
+    let jpg =
+        bin().args(["design-export"]).arg(&project).arg("-o").arg(dir.path().join("x.jpg")).output().expect("run");
+    assert_eq!(jpg.status.code(), Some(2), "only .svg, .pdf and .png");
     let png =
         bin().args(["design-export"]).arg(&project).arg("-o").arg(dir.path().join("x.png")).output().expect("run");
-    assert_eq!(png.status.code(), Some(2));
+    assert!(png.status.success(), "{}", String::from_utf8_lossy(&png.stderr));
+    assert_eq!(&std::fs::read(dir.path().join("x.png")).expect("png")[1..4], b"PNG");
     let far = bin()
         .args(["--json", "design", "--page", "9"])
         .arg(fixture("poster.pdf"))
@@ -1208,4 +1335,27 @@ fn design_rebuilds_a_page_and_exports_svg_and_pdf() {
         .output()
         .expect("run");
     assert_eq!(json(&far)["error"]["code"], "design.page");
+}
+
+#[test]
+fn keep_protection_writes_a_copy_that_needs_the_same_password() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("p1.pdf");
+    let mut child = bin()
+        .args(["--json", "--password-stdin", "--keep-protection", "extract", "--pages", "1", "-o"])
+        .arg(&out)
+        .arg(fixture("encrypted-rc4-user-password.pdf"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("run");
+    child.stdin.take().expect("stdin").write_all(b"pw-user-test\n").expect("write");
+    let r = child.wait_with_output().expect("wait");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stdout));
+    let v = json(&bin().args(["--json", "inspect"]).arg(&out).output().expect("run"));
+    assert_eq!(v["error"]["code"], "pdf.password", "{v}");
+    // Only together with --password-stdin (a usage error, exit 1).
+    let r = bin().args(["--keep-protection", "inspect"]).arg(fixture("single-page.pdf")).output().expect("run");
+    assert_eq!(r.status.code(), Some(1));
 }

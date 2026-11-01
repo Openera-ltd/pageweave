@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Bookmark, Download, LayoutGrid, MessageSquare, Paperclip, Pencil, Plus, ShieldCheck, Trash2, Undo2 } from "lucide-react";
+import { Bookmark, Download, LayoutGrid, MessageSquare, Move, Paperclip, Pencil, Plus, ShieldCheck, Trash2, Undo2 } from "lucide-react";
 import { useApi } from "../api";
 import { toPwError, type AttachmentInfo, type ExistingAnnotation, type OpenedDoc, type PwError, type SignatureReport } from "../types";
-import { keyOf, kindName, markDeleted, revert, setText, type AnnotChanges } from "../annotationChanges";
+import { keyOf, kindName, markDeleted, RECOLOURABLE, revert, setColor, setText, type AnnotChanges } from "../annotationChanges";
 import { formatDate, formatTime, statusLabel } from "../signatures";
 import { formatBytes } from "../format";
 import { Thumbnails } from "./Thumbnails";
@@ -28,10 +28,15 @@ interface Props {
   /** Pending changes to the file's own annotations. */
   annotChanges?: AnnotChanges;
   onAnnotChanges?: (c: AnnotChanges) => void;
+  /** Key of the annotation being moved on the page, and moving it (start, keep, cancel). */
+  moving?: string | null;
+  onMove?: (a: ExistingAnnotation) => void;
+  onMoveDone?: () => void;
+  onMoveCancel?: () => void;
 }
 
 /** Left panel: page thumbnails or the document outline (bookmarks). */
-export function Sidebar({ doc, view, onView, currentPage, onSelectPage, onPageContextMenu, onSaveAttachment, onAttachFiles, onEditBookmarks, signatures, signaturesError, onTrustSigner, onManageTrust, annotChanges, onAnnotChanges }: Props) {
+export function Sidebar({ doc, view, onView, currentPage, onSelectPage, onPageContextMenu, onSaveAttachment, onAttachFiles, onEditBookmarks, signatures, signaturesError, onTrustSigner, onManageTrust, annotChanges, onAnnotChanges, moving, onMove, onMoveDone, onMoveCancel }: Props) {
   const hasBookmarks = doc.info.bookmarks.length > 0;
   const shown: SidebarView = view === "bookmarks" ? (hasBookmarks ? "bookmarks" : "pages") : view;
   return (
@@ -76,7 +81,7 @@ export function Sidebar({ doc, view, onView, currentPage, onSelectPage, onPageCo
             </div>
           </div>
         ) : shown === "comments" ? (
-          <Comments doc={doc} changes={annotChanges ?? {}} onChanges={onAnnotChanges ?? (() => undefined)} onSelect={onSelectPage} />
+          <Comments doc={doc} changes={annotChanges ?? {}} onChanges={onAnnotChanges ?? (() => undefined)} onSelect={onSelectPage} moving={moving ?? null} onMove={onMove} onMoveDone={onMoveDone} onMoveCancel={onMoveCancel} />
         ) : shown === "signatures" ? (
           <Signatures report={signatures} error={signaturesError ?? null} onSelect={onSelectPage} onTrust={onTrustSigner} onManage={onManageTrust} />
         ) : (
@@ -87,8 +92,19 @@ export function Sidebar({ doc, view, onView, currentPage, onSelectPage, onPageCo
   );
 }
 
-/** Comments and markup already in the file: go to, change the comment, delete (pending until saved). */
-function Comments({ doc, changes, onChanges, onSelect }: { doc: OpenedDoc; changes: AnnotChanges; onChanges: (c: AnnotChanges) => void; onSelect: (p: number) => void }) {
+interface CommentsProps {
+  doc: OpenedDoc;
+  changes: AnnotChanges;
+  onChanges: (c: AnnotChanges) => void;
+  onSelect: (p: number) => void;
+  moving: string | null;
+  onMove?: (a: ExistingAnnotation) => void;
+  onMoveDone?: () => void;
+  onMoveCancel?: () => void;
+}
+
+/** Comments and markup already in the file: go to, change the comment, colour or place, delete (pending until saved). */
+function Comments({ doc, changes, onChanges, onSelect, moving, onMove, onMoveDone, onMoveCancel }: CommentsProps) {
   const api = useApi();
   const [items, setItems] = useState<ExistingAnnotation[] | null>(null);
   const [truncated, setTruncated] = useState(false);
@@ -134,12 +150,17 @@ function Comments({ doc, changes, onChanges, onSelect }: { doc: OpenedDoc; chang
     );
   return (
     <div className="panel-scroll comments-pane">
+      {doc.info.can_annotate === false && (
+        <p className="hint comments-locked" data-testid="comments-locked">
+          The owner of this file does not allow changing its comments. Open it with its permissions password to change them.
+        </p>
+      )}
       <ul className="comments" aria-label="Comments">
         {items.map((a) => {
           const k = keyOf(a);
           const c = changes[k];
           const deleted = c?.delete === true;
-          const text = c && !c.delete ? (c.text ?? "") : (a.text ?? "");
+          const text = c && !c.delete && c.text !== null ? c.text : (a.text ?? "");
           return (
             <li key={k} data-annot={k} className={deleted ? "deleted" : undefined}>
               <button type="button" className="comment-main" onClick={() => onSelect(a.page)} title={`Go to page ${a.page + 1}`}>
@@ -180,7 +201,17 @@ function Comments({ doc, changes, onChanges, onSelect }: { doc: OpenedDoc; chang
                     </button>
                   </div>
                 </div>
-              ) : (
+              ) : moving === k ? (
+                <div className="row comment-actions" data-testid="move-actions">
+                  <span className="hint grow">Drag it on the page or use the arrow keys</span>
+                  <button type="button" className="btn primary" data-testid="move-done" onClick={onMoveDone}>
+                    Done
+                  </button>
+                  <button type="button" className="btn outline" onClick={onMoveCancel}>
+                    Cancel
+                  </button>
+                </div>
+              ) : doc.info.can_annotate === false ? null : (
                 <div className="row comment-actions">
                   {c ? (
                     <button type="button" className="btn icon" aria-label={`Undo change to ${kindName(a.subtype)} on page ${a.page + 1}`} title="Undo this change" onClick={() => onChanges(revert(changes, a))}>
@@ -201,6 +232,21 @@ function Comments({ doc, changes, onChanges, onSelect }: { doc: OpenedDoc; chang
                       }}
                     >
                       <Pencil />
+                    </button>
+                  )}
+                  {!deleted && RECOLOURABLE.has(a.subtype) && (
+                    <input
+                      type="color"
+                      className="comment-color"
+                      aria-label={`Colour of ${kindName(a.subtype)} on page ${a.page + 1}`}
+                      title="Colour (when you save a copy)"
+                      value={c?.color ?? a.color ?? "#000000"}
+                      onChange={(e) => onChanges(setColor(changes, a, e.target.value))}
+                    />
+                  )}
+                  {!deleted && onMove && (
+                    <button type="button" className="btn icon" aria-label={`Move ${kindName(a.subtype)} on page ${a.page + 1}`} title="Move on the page (when you save a copy)" onClick={() => onMove(a)}>
+                      <Move />
                     </button>
                   )}
                   {!deleted && (

@@ -60,6 +60,10 @@ pub struct DocumentInfo {
     pub creator: Option<String>,
     pub producer: Option<String>,
     pub encrypted: bool,
+    /// What the file's owner allows with the password it was opened with (always true when it is
+    /// not protected): changing it (properties, bookmarks, cleaning…) and changing its comments.
+    pub can_modify: bool,
+    pub can_annotate: bool,
     pub form_type: String,
     /// XFA forms are not supported by the pinned engine (no XFA support built in).
     pub has_xfa: bool,
@@ -91,11 +95,16 @@ pub(crate) fn preflight(path: &Path) -> PwResult<u64> {
     let mut head = vec![0u8; 1024.min(len as usize)];
     fs::File::open(path).and_then(|mut f| f.read_exact(&mut head)).map_err(|e| PwError::from_io(&e, "file"))?;
     if !head.windows(5).any(|w| w == b"%PDF-") {
-        return Err(PwError::new(
-            ErrorCategory::UnsupportedFormat,
-            "pdf.not_pdf",
-            "This file is not a PDF, even if its name ends in .pdf.",
-        ));
+        let named_pdf = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf"));
+        let picture = image::guess_format(&head).is_ok();
+        let message = if named_pdf {
+            "This file is not a PDF, even if its name ends in .pdf."
+        } else if picture {
+            "This is a picture, not a PDF. Make a PDF from it with Create PDF from images, or rebuild it in the Design Studio."
+        } else {
+            "This file is not a PDF."
+        };
+        return Err(PwError::new(ErrorCategory::UnsupportedFormat, "pdf.not_pdf", message));
     }
     Ok(len)
 }
@@ -199,14 +208,18 @@ pub fn open_document(path: &Path, opts: &OpenOptions) -> PwResult<DocumentInfo> 
         |t: PdfDocumentMetadataTagType| meta.get(t).map(|v| v.value().trim().to_string()).filter(|v| !v.is_empty());
     let form_type = doc.form().map(|f| f.form_type()).unwrap_or(PdfFormType::None);
     let has_xfa = matches!(form_type, PdfFormType::XfaFull | PdfFormType::XfaForeground);
-    if has_xfa {
-        warnings.push("This document contains an XFA form, which PageWeave cannot display or fill.".into());
+    // A hybrid form (XFA in front of a complete standard form) is shown and filled through its
+    // standard form (D-038); only a dynamic XFA form cannot be.
+    if form_type == PdfFormType::XfaFull {
+        warnings.push("This document contains a dynamic XFA form, which PageWeave cannot display or fill.".into());
     }
     // `Unprotected` means no security handler. Revisions 5/6 (AES-256) are unknown to the binding and
     // come back as an error, which still means the file is encrypted.
     let encrypted =
         !matches!(doc.permissions().security_handler_revision(), Ok(PdfSecurityHandlerRevision::Unprotected));
 
+    let bits = if encrypted { crate::forms::permission_bits(path, opts.password).unwrap_or(0) } else { u32::MAX };
+    let (can_modify, can_annotate) = (bits & 0x8 != 0, bits & 0x20 != 0);
     Ok(DocumentInfo {
         page_count: count,
         file_bytes,
@@ -219,6 +232,8 @@ pub fn open_document(path: &Path, opts: &OpenOptions) -> PwResult<DocumentInfo> 
         creator: tag(PdfDocumentMetadataTagType::Creator),
         producer: tag(PdfDocumentMetadataTagType::Producer),
         encrypted,
+        can_modify,
+        can_annotate,
         form_type: format!("{form_type:?}").to_lowercase(),
         has_xfa,
         signature_count: doc.signatures().len() as u32,
@@ -264,11 +279,82 @@ pub(crate) fn page_texts(path: &Path, opts: &OpenOptions, pages: &[u32]) -> PwRe
         let page = doc.pages().get(i as PdfPageIndex).map_err(|e| map_pdfium_error(&e, "page"))?;
         // Not `PdfPageText::all()`: it bounds extraction by the page's *rotated* size, which drops
         // all text of a 90°/270° page. Text is in unrotated page space; take everything.
-        let everything = PdfRect::new_from_values(-1.0e6, -1.0e6, 1.0e6, 1.0e6);
-        let text = page.text().map_err(|e| map_pdfium_error(&e, "text"))?.inside_rect(everything);
-        out.push((i, text));
+        let text = page.text().map_err(|e| map_pdfium_error(&e, "text"))?;
+        out.push((i, spaced_text(&text)));
     }
     Ok(out)
+}
+
+/// The page's text in the engine's order, with the separators the engine leaves out where the
+/// glyphs show them: a space between neighbours on one baseline that are visibly apart (over a
+/// quarter em) with none in between — table cells written as separate objects come out as
+/// "Row928.26" otherwise — and no line break between glyphs that carry on along one baseline
+/// (some producers write every glyph as its own object, and the engine breaks the line between
+/// objects). Right-to-left letters step leftwards.
+fn spaced_text(text: &PdfPageText) -> String {
+    struct Prev {
+        left: f32,
+        right: f32,
+        base: f32,
+        size: f32,
+        ch: char,
+    }
+    let mut out = String::new();
+    let mut pending = String::new(); // characters the engine generated since the last real one
+    let mut prev: Option<Prev> = None;
+    for c in text.chars().iter() {
+        let Some(ch) = c.unicode_char() else { continue };
+        // The engine reports a hyphenation point as U+0002: a hyphen where the line breaks there,
+        // nothing (the word whole, so it can be found) where it does not.
+        if ch == '\u{2}' {
+            pending.push('\u{2}');
+            continue;
+        }
+        if c.is_generated().unwrap_or(false) {
+            pending.push(ch);
+            continue;
+        }
+        let Ok(b) = c.loose_bounds() else {
+            out.push_str(&std::mem::take(&mut pending));
+            out.push(ch);
+            prev = None;
+            continue;
+        };
+        let size = c.scaled_font_size().value.max(1.0);
+        let base = c.origin().map(|(_, y)| y.value).unwrap_or(b.bottom().value);
+        let flat = c.angle_degrees().map(|a| a.rem_euclid(360.0) < 1.0 || a.rem_euclid(360.0) > 359.0).unwrap_or(true);
+        let (left, right) = (b.left().value, b.right().value);
+        let mut sep = hyphenation(std::mem::take(&mut pending));
+        if let (Some(p), true) = (&prev, flat && !ch.is_whitespace()) {
+            let em = size.max(p.size);
+            let same_line = (base - p.base).abs() <= 0.3 * em;
+            let rtl = crate::docx::layout::is_rtl(ch) || crate::docx::layout::is_rtl(p.ch);
+            let gap = if rtl && right <= p.left + 0.6 * size { p.left - right } else { left - p.right };
+            let breaks = sep.contains('\n') || sep.contains('\r');
+            if same_line && breaks && gap > -0.6 * size && gap < 0.5 * em {
+                sep = if gap > 0.25 * em { " ".into() } else { String::new() };
+            } else if same_line && sep.is_empty() && gap > 0.25 * em && !p.ch.is_whitespace() {
+                sep.push(' ');
+            }
+        }
+        out.push_str(&sep);
+        out.push(ch);
+        prev = Some(Prev { left, right, base, size, ch });
+    }
+    out.push_str(&hyphenation(pending));
+    out
+}
+
+/// Generated characters between two glyphs with the engine's hyphenation marks resolved: a hyphen
+/// before a line break, dropped otherwise.
+fn hyphenation(sep: String) -> String {
+    if !sep.contains('\u{2}') {
+        return sep;
+    }
+    // The engine also joins a word hyphenated across lines and leaves the mark where the hyphen
+    // was: the joined word ("wages", not "wa-ges") is what can be searched and read.
+    let breaks = sep.contains('\n') || sep.contains('\r');
+    sep.chars().filter_map(|c| if c == '\u{2}' { breaks.then_some('-') } else { Some(c) }).collect()
 }
 
 pub(crate) fn page_count(path: &Path, opts: &OpenOptions) -> PwResult<u32> {
@@ -317,7 +403,8 @@ pub fn page_text_segments(path: &Path, opts: &OpenOptions, page_index: u32) -> P
             truncated = true;
             break;
         }
-        let t = seg.text();
+        // A segment is one line: the engine's hyphenation mark there is the hyphen drawn at its end.
+        let t = seg.text().replace('\u{2}', "-");
         if t.trim().is_empty() {
             continue;
         }

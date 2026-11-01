@@ -19,12 +19,25 @@ fn translate(
     target: &str,
     output: &Path,
 ) -> PwResult<OperationResult> {
+    translate_as(name, pages, source, target, output, false)
+}
+
+fn translate_as(
+    name: &str,
+    pages: Option<&str>,
+    source: Option<&str>,
+    target: &str,
+    output: &Path,
+    bilingual: bool,
+) -> PwResult<OperationResult> {
     let mut req = OperationRequest::new(Operation::TranslateDocument {
         input: fixture(name),
         pages: pages.map(str::to_string),
         source: source.map(str::to_string),
         target: target.into(),
         output: output.into(),
+        bilingual,
+        glossary: vec![],
     });
     req.collision = CollisionPolicy::Fail;
     execute(&req, None)
@@ -63,9 +76,10 @@ fn tables_to_word_and_text_with_detection_and_pivot() {
     assert_eq!(r.data["detected"], false);
     let via = dir.path().join("via.txt");
     std::fs::write(dir.path().join("de.txt"), "unused").expect("w");
-    let r = translate("five-pages.pdf", Some("1"), Some("de"), "fr", &via).expect("pivot");
-    assert_eq!(r.data["via_english"], true, "{}", r.data);
-    assert!(r.warnings.iter().any(|w| w.contains("(through English)")));
+    // German → French is a direct pair (D-027): no route through English, nothing said about one.
+    let r = translate("five-pages.pdf", Some("1"), Some("de"), "fr", &via).expect("direct");
+    assert_eq!(r.data["via_english"], false, "{}", r.data);
+    assert!(!r.warnings.iter().any(|w| w.contains("(through English)")));
 }
 
 #[test]
@@ -125,4 +139,90 @@ fn pdf_output_keeps_the_layout_and_replaces_the_text() {
     // Page 2 was not asked for: unchanged.
     let src = lopdf::Document::load(fixture("article.pdf")).expect("src");
     assert_eq!(doc.extract_text(&[2]).expect("p2"), src.extract_text(&[2]).expect("p2"));
+}
+
+#[test]
+fn bilingual_pdf_puts_each_page_next_to_its_translation() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("side.pdf");
+    let o = pw_pdf::OpenOptions::default();
+    // Pages 2 and 3 of the article: two sheets, each twice the page's width.
+    translate_as("article.pdf", Some("2-3"), Some("en"), "de", &out, true).expect("bilingual");
+    let info = pw_pdf::open_document(&out, &o).expect("open");
+    let src = pw_pdf::open_document(&fixture("article.pdf"), &o).expect("src");
+    assert_eq!(info.pages.len(), 2);
+    for (sheet, page) in [(0u32, 1u32), (1, 2)] {
+        let (s, p) = (&info.pages[sheet as usize], &src.pages[page as usize]);
+        assert!((s.width_pt - 2.0 * p.width_pt).abs() < 0.5 && (s.height_pt - p.height_pt).abs() < 0.5, "sheet size");
+        let half = |right: bool| {
+            let t = pw_pdf::page_text_segments(&out, &o, sheet).expect("segments");
+            let mid = s.width_pt / 2.0;
+            t.segments
+                .iter()
+                .filter(|g| (g.left >= mid) == right)
+                .map(|g| g.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let (left, right) = (half(false), half(true));
+        // The original's English on the left, the German on the right.
+        let original = pw_pdf::page_text_segments(&fixture("article.pdf"), &o, page).expect("original");
+        let lines: Vec<&str> =
+            original.segments.iter().map(|g| g.text.trim()).filter(|t| t.len() > 20).take(4).collect();
+        assert!(
+            lines.iter().all(|l| left.contains(l)),
+            "sheet {sheet} left half is the original: {lines:?} in {left:?}"
+        );
+        assert!(
+            right.contains(" und ") || right.contains(" die ") || right.contains(" der "),
+            "sheet {sheet} right half is German: {right:?}"
+        );
+        assert!(!right.contains("while upstream"), "sheet {sheet} right half is translated: {right:?}");
+    }
+    // Not for Word or text output.
+    let e = translate_as("article.pdf", Some("1"), Some("en"), "de", &dir.path().join("x.docx"), true)
+        .expect_err("refused");
+    assert_eq!(e.code, "translate.bilingual");
+}
+
+#[test]
+fn glossary_terms_are_translated_one_fixed_way() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("g.txt");
+    let mut req = OperationRequest::new(Operation::TranslateDocument {
+        input: fixture("five-pages.pdf"),
+        pages: Some("1".into()),
+        source: Some("en".into()),
+        target: "de".into(),
+        output: out.clone(),
+        bilingual: false,
+        glossary: vec![pw_core::ops::GlossaryEntry { source: "FOX".into(), target: "Wolf".into() }],
+    });
+    req.collision = CollisionPolicy::Fail;
+    execute(&req, None).expect("translate");
+    let t = std::fs::read_to_string(&out).expect("text");
+    assert!(t.contains("Wolf") && !t.contains("Fuchs"), "the glossary's word, any case: {t}");
+    // An empty term is refused before anything runs.
+    let mut bad = req.clone();
+    if let Operation::TranslateDocument { glossary, output, .. } = &mut bad.operation {
+        glossary.push(pw_core::ops::GlossaryEntry { source: " ".into(), target: "x".into() });
+        *output = dir.path().join("bad.txt");
+    }
+    assert_eq!(execute(&bad, None).expect_err("refused").code, "translate.glossary");
+}
+
+#[test]
+fn a_page_with_an_inline_image_keeps_its_pictures_when_translated() {
+    // redaction-hard.pdf page 1 draws an inline image and an image XObject; the translated page
+    // used to lose the inline one.
+    let dir = tempfile::tempdir().expect("tmp");
+    let out = dir.path().join("t.pdf");
+    translate("redaction-hard.pdf", Some("1"), Some("en"), "de", &out).expect("translate");
+    let o = pw_pdf::OpenOptions::default();
+    let before = pw_pdf::objects::editable_objects(&fixture("redaction-hard.pdf"), &o, 0).expect("source");
+    let after = pw_pdf::objects::editable_objects(&out, &o, 0).expect("translated");
+    assert_eq!(after.images.len(), before.images.len(), "{:?}", after.images);
+    for (a, b) in before.images.iter().zip(&after.images) {
+        assert_eq!((a.width_px, a.height_px), (b.width_px, b.height_px));
+    }
 }

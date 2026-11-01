@@ -7,7 +7,7 @@
 
 use crate::document::OpenOptions;
 use crate::engine;
-use crate::sanitize::{catalog, check_pages, dict_of, has_earlier_versions, load_plain, stream_data};
+use crate::sanitize::{catalog, check_pages, dict_of, has_earlier_versions, stream_data};
 use lopdf::{Dictionary, Object, Stream};
 use pdfium_render::prelude::*;
 use pw_core::output::{write_atomic_bytes, CollisionPolicy, CommittedOutput};
@@ -106,28 +106,18 @@ pub fn set_properties(
     progress: &dyn Fn(u64, u64),
 ) -> PwResult<(CommittedOutput, u32, Vec<String>)> {
     let pdfium = engine()?;
-    {
-        let src = crate::document::load(&pdfium, input, opts)?;
-        if crate::unprotect::is_protected(&src) {
-            return Err(PwError::new(
-                ErrorCategory::UnsupportedOperation,
-                "properties.protected",
-                "The properties of a password-protected file cannot be changed here.",
-            )
-            .with_action("Remove the password first (Remove password…), then change the properties of that copy."));
-        }
-    }
-    let (source, mut doc, raw) = load_plain(&pdfium, input, opts).map_err(|e| {
-        if e.code == "sanitize.protected" {
-            PwError::new(
-                ErrorCategory::UnsupportedOperation,
-                "properties.protected",
-                "This file is password protected.",
-            )
-        } else {
-            e
-        }
-    })?;
+    let (source, mut doc, raw) =
+        crate::sanitize::load_for_change(&pdfium, input, opts, crate::sanitize::Change::Modify).map_err(|e| {
+            if e.code == "sanitize.protected" {
+                PwError::new(
+                    ErrorCategory::UnsupportedOperation,
+                    "properties.protected",
+                    "This file is password protected.",
+                )
+            } else {
+                e
+            }
+        })?;
     let signatures = source.signatures().len();
     let earlier = has_earlier_versions(&raw);
 

@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/pw-core", "crates/pw-pdf", "crates/pw-ocr", "crates/pw-speech", "crates/pw-translate", "crates/pw-net", "crates/pw-update", "crates/pw-cli", "crates/pw-mcp", "app/src-tauri"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/Openera-ltd/pageweave"
@@ -49,7 +49,7 @@ regex = { version = "1.13", default-features = false, features = ["std", "unicod
 # Both already in the dependency graph (pdfium-render / Tauri); pinned to those versions.
 libloading = "=0.9.0"
 parking_lot = "0.12"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "tiff", "gif", "bmp"] }
 clap = { version = "4", features = ["derive"] }
 pw-core = { path = "crates/pw-core" }
 pw-pdf = { path = "crates/pw-pdf" }

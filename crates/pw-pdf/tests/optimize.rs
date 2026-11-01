@@ -156,9 +156,15 @@ fn protected_corrupt_and_existing_outputs_write_nothing() {
         images: None,
         output: out.clone(),
     });
+    // A protected file without restrictions is changed now (D-010 update); without keep_protection
+    // the copy is unprotected and says so. Restricted files: tests/protected_changes.rs.
     req.password = Some("pw-user-test".into());
-    let e = execute(&req, None).expect_err("protected");
-    assert_eq!(e.code, "optimize.protected");
+    match execute(&req, None) {
+        Ok(r) => assert!(r.warnings.iter().any(|w| w.contains("not password protected")), "{:?}", r.warnings),
+        // A file the engine cannot make smaller is still refused that way.
+        Err(e) => assert_eq!(e.code, "optimize.not_smaller"),
+    }
+    let _ = std::fs::remove_file(&out);
     assert!(optimize(&fixture("corrupt-truncated.pdf"), &out).is_err());
     assert!(!out.exists());
     let fat = dir.path().join("fat.pdf");

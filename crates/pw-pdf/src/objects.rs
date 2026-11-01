@@ -73,6 +73,26 @@ fn upright(t: &PdfPageTextObject) -> bool {
     t.matrix().map(|m| m.b().abs() < 1e-3 && m.c().abs() < 1e-3 && m.a() > 0.0 && m.d() > 0.0).unwrap_or(false)
 }
 
+/// Why a text object's placement keeps it from being edited: slanted (sheared) or mirrored text.
+/// Turned text (a rotation, possibly with horizontal scaling) is edited in place, keeping its turn.
+fn placement_lock(t: &PdfPageTextObject) -> Option<&'static str> {
+    let Ok(m) = t.matrix() else { return Some("This text's placement could not be read.") };
+    let (a, b, c, d) = (m.a(), m.b(), m.c(), m.d());
+    let det = a * d - b * c;
+    let (x, y) = ((a * a + b * b).sqrt(), (c * c + d * d).sqrt());
+    if det.abs() < 1e-6 || x < 1e-6 || y < 1e-6 {
+        return Some("This text has no size on the page.");
+    }
+    if det < 0.0 {
+        return Some("Mirrored text cannot be edited yet.");
+    }
+    // The text's horizontal and vertical directions must stay at right angles (no shear).
+    if ((a * c + b * d) / (x * y)).abs() > 0.02 {
+        return Some("Slanted text cannot be edited yet.");
+    }
+    None
+}
+
 /// Font identity for grouping and glyph coverage.
 fn font_key(t: &PdfPageTextObject) -> String {
     t.font().name()
@@ -94,6 +114,8 @@ fn list_page(doc: &PdfDocument, page_index: u32) -> PwResult<EditableObjects> {
     let mut images = Vec::new();
     // Consecutive upright text objects with the same font, size and baseline join one run.
     let mut current: Option<(EditableText, f32, f32)> = None; // (run, right edge, baseline y)
+                                                              // Whether the current run is upright (turned objects never join one).
+    let mut run_upright = false;
     let flush = |cur: &mut Option<(EditableText, f32, f32)>, texts: &mut Vec<EditableText>| {
         if let Some((t, _, _)) = cur.take() {
             texts.push(t);
@@ -112,8 +134,8 @@ fn list_page(doc: &PdfDocument, page_index: u32) -> PwResult<EditableObjects> {
                 let size = t.scaled_font_size().value;
                 let key = font_key(t);
                 let embedded = font.is_embedded().unwrap_or(false);
-                let locked = if !upright(t) {
-                    Some("Turned or slanted text cannot be edited yet.".to_string())
+                let locked = if let Some(why) = placement_lock(t) {
+                    Some(why.to_string())
                 } else if text.contains('\u{fffd}') || (text.trim().is_empty() && !t.text().is_empty()) {
                     Some("This text's font has no character map, so its letters are unknown.".to_string())
                 } else if t.render_mode() == PdfPageTextRenderMode::Invisible {
@@ -123,9 +145,12 @@ fn list_page(doc: &PdfDocument, page_index: u32) -> PwResult<EditableObjects> {
                 };
                 // The baseline is the text matrix's translation (ink bounds vary with descenders).
                 let baseline = t.matrix().map(|m| m.f()).unwrap_or(r.bottom);
+                // Only upright objects join a run (a turned one is a run of its own).
                 let joins = current.as_ref().is_some_and(|(run, right, base)| {
                     run.locked.is_none()
                         && locked.is_none()
+                        && upright(t)
+                        && run_upright
                         && run.font == key
                         && (run.size - size).abs() < 0.05
                         && (base - baseline).abs() < size * 0.05
@@ -149,6 +174,7 @@ fn list_page(doc: &PdfDocument, page_index: u32) -> PwResult<EditableObjects> {
                     *right = r.right;
                 } else {
                     flush(&mut current, &mut texts);
+                    run_upright = upright(t);
                     let color = t.fill_color().map(hex).unwrap_or_else(|_| "#000000".into());
                     current = Some((
                         EditableText {
@@ -205,10 +231,18 @@ fn load_picture(path: &Path) -> PwResult<image::DynamicImage> {
     if bytes.len() > 50 * 1024 * 1024 {
         return Err(PwError::invalid("edit.image_large", "The picture is larger than 50 MB."));
     }
-    let fmt =
-        image::guess_format(&bytes).map_err(|_| PwError::invalid("edit.image_format", "Use a PNG or JPEG picture."))?;
-    if !matches!(fmt, image::ImageFormat::Png | image::ImageFormat::Jpeg) {
-        return Err(PwError::invalid("edit.image_format", "Use a PNG or JPEG picture."));
+    let fmt = image::guess_format(&bytes)
+        .map_err(|_| PwError::invalid("edit.image_format", "Use a picture: PNG, JPEG, WebP, TIFF, GIF or BMP."))?;
+    if !matches!(
+        fmt,
+        image::ImageFormat::Png
+            | image::ImageFormat::Jpeg
+            | image::ImageFormat::WebP
+            | image::ImageFormat::Tiff
+            | image::ImageFormat::Gif
+            | image::ImageFormat::Bmp
+    ) {
+        return Err(PwError::invalid("edit.image_format", "Use a picture: PNG, JPEG, WebP, TIFF, GIF or BMP."));
     }
     let mut reader = image::ImageReader::with_format(std::io::Cursor::new(&bytes), fmt);
     let mut limits = image::Limits::default();
@@ -230,6 +264,8 @@ struct Expectation {
     page: u32,
     texts: Vec<String>,
     images: usize,
+    /// Boxes resized pictures must have (any picture on the page, within 0.5 pt).
+    boxes: Vec<RectPt>,
 }
 
 /// Apply `pages` of edits to a copy of `input`.
@@ -256,6 +292,89 @@ pub fn edit_objects(
     Ok((c, edited.page_count, warnings))
 }
 
+/// The source parsed by lopdf (decrypted with the open password when protected), for reading its
+/// content streams; `None` when it cannot be parsed.
+pub(crate) fn lopdf_source(input: &Path, opts: &OpenOptions) -> Option<lopdf::Document> {
+    let raw = std::fs::read(input).ok()?;
+    match lopdf::Document::load_mem(&raw) {
+        Ok(d) if !d.is_encrypted() => Some(d),
+        _ => opts
+            .password
+            .and_then(|p| lopdf::Document::load_mem_with_options(&raw, lopdf::LoadOptions::with_password(p)).ok()),
+    }
+}
+
+/// For each top-level image a page draws, in drawing order, whether it is an inline image. `None`
+/// when the content cannot be read or an XObject name cannot be resolved (then nothing is changed).
+pub(crate) fn inline_image_slots(doc: &lopdf::Document, page: u32) -> Option<Vec<bool>> {
+    let id = *doc.get_pages().get(&(page + 1))?;
+    let content = lopdf::content::Content::decode(&doc.get_page_content(id)).ok()?;
+    let (resources, ids) = doc.get_page_resources(id).ok()?;
+    let deref = |o: &lopdf::Object| -> Option<lopdf::Dictionary> {
+        match o {
+            lopdf::Object::Reference(r) => doc.get_dictionary(*r).ok().cloned(),
+            lopdf::Object::Dictionary(d) => Some(d.clone()),
+            _ => None,
+        }
+    };
+    let mut xobjects = lopdf::Dictionary::new();
+    for d in resources.cloned().into_iter().chain(ids.into_iter().filter_map(|i| doc.get_dictionary(i).ok().cloned())) {
+        if let Some(x) = d.get(b"XObject").ok().and_then(deref) {
+            for (k, v) in x.iter() {
+                if !xobjects.has(k) {
+                    xobjects.set(k.clone(), v.clone());
+                }
+            }
+        }
+    }
+    let mut slots = Vec::new();
+    for op in &content.operations {
+        match op.operator.as_str() {
+            "BI" => slots.push(true),
+            "Do" => {
+                let name = op.operands.first()?.as_name().ok()?;
+                let stream = match xobjects.get(name).ok()? {
+                    lopdf::Object::Reference(r) => doc.get_object(*r).ok()?.as_stream().ok()?.clone(),
+                    _ => return None,
+                };
+                if stream.dict.get(b"Subtype").and_then(|s| s.as_name()).ok() == Some(b"Image".as_slice()) {
+                    slots.push(false);
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(slots)
+}
+
+/// Replace the page's inline images (`slots`, in drawing order of its image objects) with equal
+/// image objects at the same index and placement, so object numbers stay the same. Skipped when
+/// the page's image objects do not line up with `slots`.
+pub(crate) fn materialize_inline_images<'a>(
+    doc: &PdfDocument<'a>,
+    page: &mut PdfPage<'a>,
+    slots: &[bool],
+) -> PwResult<()> {
+    let err = |e: PdfiumError| map_pdfium_error(&e, "inline image");
+    let images: Vec<PdfPageObjectIndex> =
+        page.objects().iter().enumerate().filter(|(_, o)| o.as_image_object().is_some()).map(|(i, _)| i).collect();
+    if images.len() != slots.len() {
+        return Ok(());
+    }
+    for (&index, _) in images.iter().zip(slots).filter(|(_, inline)| **inline) {
+        let (bitmap, matrix) = {
+            let o = page.objects().get(index).map_err(err)?;
+            let img = o.as_image_object().ok_or_else(|| PwError::internal("edit.image", "Not an image."))?;
+            (img.get_raw_image().map_err(err)?, img.matrix().map_err(err)?)
+        };
+        let mut copy = PdfPageImageObject::new(doc, &bitmap).map_err(err)?;
+        copy.apply_matrix(matrix).map_err(err)?;
+        page.objects_mut().insert_object_at_index(index, PdfPageObject::Image(copy)).map_err(err)?;
+        page.objects_mut().remove_object_at_index(index + 1).map_err(err)?;
+    }
+    Ok(())
+}
+
 /// A document with object edits applied, saved to bytes and already verified.
 pub(crate) struct EditedBytes {
     pub bytes: Vec<u8>,
@@ -280,6 +399,17 @@ pub(crate) fn apply_object_edits(input: &Path, opts: &OpenOptions, pages: &[Page
     let signatures = doc.signatures().len();
     let mut substituted = 0usize;
     let mut expectations = Vec::new();
+    // Inline images (BI…EI) are dropped when PDFium rewrites a page's content: they become
+    // ordinary image objects first, at the same index and placement.
+    let parsed = lopdf_source(input, opts);
+    for pe in pages {
+        if let Some(slots) = parsed.as_ref().and_then(|d| inline_image_slots(d, pe.page)) {
+            if slots.contains(&true) {
+                let mut page = doc.pages().get(pe.page as PdfPageIndex).map_err(err)?;
+                materialize_inline_images(&doc, &mut page, &slots)?;
+            }
+        }
+    }
     for pe in pages {
         let listing = &listings[&pe.page];
         let text_of = |objs: &[u32]| listing.texts.iter().find(|t| t.objects == objs);
@@ -300,14 +430,31 @@ pub(crate) fn apply_object_edits(input: &Path, opts: &OpenOptions, pages: &[Page
             let page = doc.pages().get(pe.page as PdfPageIndex).map_err(err)?;
             rotation_of(&page)
         };
-        // Moves first: a picture that is also replaced or turned takes its (moved) placement from
-        // the original object, which those edits then remove.
+        // Resizes, then moves, then the rest: a picture that is also replaced or turned takes its
+        // (resized, moved) placement from the original object, which those edits then remove. A
+        // resize box is given before the moves, so moves recorded after it still apply.
         let mut ordered: Vec<(usize, &PageEdit)> = pe.edits.iter().enumerate().collect();
-        ordered.sort_by_key(|(_, e)| !matches!(e, PageEdit::MoveObjects { .. }));
+        ordered.sort_by_key(|(_, e)| match e {
+            PageEdit::ResizeImage { .. } => 0,
+            PageEdit::MoveObjects { .. } => 1,
+            _ => 2,
+        });
+        // Each object's total move in unrotated page space (where a resized picture ends up).
+        let mut moved_by: HashMap<u32, (f32, f32)> = HashMap::new();
+        for e in &pe.edits {
+            if let PageEdit::MoveObjects { objects, dx, dy } = e {
+                let (tx, ty) = unrotate(rot, *dx, *dy);
+                for &o in objects {
+                    let m = moved_by.entry(o).or_default();
+                    *m = (m.0 + tx, m.1 + ty);
+                }
+            }
+        }
         let mut remove: BTreeSet<u32> = BTreeSet::new();
         let mut expect_texts = Vec::new();
         let mut images_removed = 0usize;
         let mut images_added = 0usize;
+        let mut boxes = Vec::new();
         for (k, e) in ordered {
             match e {
                 PageEdit::Text { objects, text, size, color: c, dx, dy } => {
@@ -395,7 +542,7 @@ pub(crate) fn apply_object_edits(input: &Path, opts: &OpenOptions, pages: &[Page
                             // In-place changes must be written into the content stream through this
                             // same page handle: a page loaded again starts from the saved content.
                             drop(o);
-                            page.regenerate_content().map_err(err)?;
+                            crate::edit::regenerate_keeping_colours(&mut page).map_err(err)?;
                         }
                         Some(font) => {
                             substituted += 1;
@@ -450,7 +597,7 @@ pub(crate) fn apply_object_edits(input: &Path, opts: &OpenOptions, pages: &[Page
                         let mut obj = page.objects().get(o as PdfPageObjectIndex).map_err(err)?;
                         obj.translate(PdfPoints::new(tx), PdfPoints::new(ty)).map_err(err)?;
                     }
-                    page.regenerate_content().map_err(err)?;
+                    crate::edit::regenerate_keeping_colours(&mut page).map_err(err)?;
                 }
                 PageEdit::ReplaceImage { object, .. } | PageEdit::RotateImage { object, .. } => {
                     if !image_ids.contains(object) {
@@ -492,6 +639,30 @@ pub(crate) fn apply_object_edits(input: &Path, opts: &OpenOptions, pages: &[Page
                     images_added += 1;
                     images_removed += 1;
                 }
+                PageEdit::ResizeImage { object, rect: to } => {
+                    if !image_ids.contains(object) {
+                        return Err(PwError::invalid("edit.stale", "The picture was not found."));
+                    }
+                    let mut page = doc.pages().get(pe.page as PdfPageIndex).map_err(err)?;
+                    {
+                        let mut obj = page.objects().get(*object as PdfPageObjectIndex).map_err(err)?;
+                        let from =
+                            rect_of(&obj).ok_or_else(|| PwError::internal("edit.image", "The picture has no box."))?;
+                        // Map the current box onto the new one (keeps any turn of the picture inside it).
+                        let sx = (to.right - to.left) / (from.right - from.left).max(0.01);
+                        let sy = (to.top - to.bottom) / (from.top - from.bottom).max(0.01);
+                        obj.transform(sx, 0.0, 0.0, sy, to.left - from.left * sx, to.bottom - from.bottom * sy)
+                            .map_err(err)?;
+                    }
+                    crate::edit::regenerate_keeping_colours(&mut page).map_err(err)?;
+                    let (mx, my) = moved_by.get(object).copied().unwrap_or_default();
+                    boxes.push(RectPt {
+                        left: to.left + mx,
+                        bottom: to.bottom + my,
+                        right: to.right + mx,
+                        top: to.top + my,
+                    });
+                }
                 PageEdit::AddText { x, y, text, size, color: c } => {
                     let t = text.trim_end_matches(['\r', '\n']);
                     if t.trim().is_empty() || t.chars().any(|ch| (ch as u32) > 255 || ch.is_control()) {
@@ -517,11 +688,12 @@ pub(crate) fn apply_object_edits(input: &Path, opts: &OpenOptions, pages: &[Page
         for &o in remove.iter().rev() {
             page.objects_mut().remove_object_at_index(o as PdfPageObjectIndex).map_err(err)?;
         }
-        page.regenerate_content().map_err(err)?;
+        crate::edit::regenerate_keeping_colours(&mut page).map_err(err)?;
         expectations.push(Expectation {
             page: pe.page,
             texts: expect_texts,
             images: listing.images.len() + images_added - images_removed,
+            boxes,
         });
     }
     let bytes = save_bytes(&doc)?;
@@ -550,6 +722,16 @@ pub(crate) fn apply_object_edits(input: &Path, opts: &OpenOptions, pages: &[Page
             for t in &ex.texts {
                 if !all.contains(&squash(t)) {
                     return Err(fail(format!("\"{t}\" is missing on page {}", ex.page + 1)));
+                }
+            }
+            for b in &ex.boxes {
+                let near = |r: &RectPt| {
+                    [(r.left, b.left), (r.bottom, b.bottom), (r.right, b.right), (r.top, b.top)]
+                        .iter()
+                        .all(|(x, y)| (x - y).abs() < 0.5)
+                };
+                if !listing.images.iter().any(|i| near(&i.rect)) {
+                    return Err(fail(format!("a resized picture on page {} is not where intended", ex.page + 1)));
                 }
             }
             if listing.images.len() != ex.images {

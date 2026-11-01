@@ -244,9 +244,12 @@ fn protected_corrupt_and_conflicting_requests_write_nothing() {
         options: SanitizeOptions::default(),
         output: out.clone(),
     });
+    // A protected file without restrictions is changed now (D-010 update); without keep_protection
+    // the copy is unprotected and says so. Restricted files: tests/protected_changes.rs.
     req.password = Some("pw-user-test".into());
-    let err = execute(&req, None).expect_err("protected");
-    assert_eq!(err.code, "sanitize.protected");
+    let r = execute(&req, None).expect("protected file without restrictions");
+    assert!(r.warnings.iter().any(|w| w.contains("not password protected")), "{:?}", r.warnings);
+    std::fs::remove_file(&out).expect("remove");
     let err = sanitize(&fixture("corrupt-truncated.pdf"), &out, SanitizeOptions::default()).expect_err("corrupt");
     assert_eq!(err.category, ErrorCategory::Corrupt);
     assert!(!out.exists());
@@ -257,4 +260,18 @@ fn protected_corrupt_and_conflicting_requests_write_nothing() {
     assert_eq!(std::fs::read(&out).expect("read"), b"existing");
     let entries: Vec<_> = std::fs::read_dir(dir.path()).expect("dir").collect();
     assert_eq!(entries.len(), 1, "no partial files left");
+}
+
+#[test]
+fn usage_rights_permissions_are_not_taken_for_attachments() {
+    // Government forms carry /Perms /UR3 whose parameters have an /EF permission list. It is not
+    // an embedded file: inspection must not count it, and cleaning must not fail on it.
+    let dir = tempfile::tempdir().expect("tmp");
+    let src = fixture("form-xfa-hybrid.pdf");
+    let found =
+        execute(&OperationRequest::new(Operation::SanitizeInspect { input: src.clone() }), None).expect("inspect");
+    assert_eq!(found.data["attachments"], 0, "{}", found.data);
+    let out = dir.path().join("clean.pdf");
+    sanitize(&src, &out, SanitizeOptions::default()).expect("cleaned and verified");
+    assert!(out.exists());
 }

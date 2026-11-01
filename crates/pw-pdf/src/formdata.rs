@@ -32,6 +32,14 @@ pub struct MatchedValue {
 }
 
 /// An entry of the data file that names a field of this form but cannot be used.
+/// An empty value for a radio group or choice field: clear it when the document has a choice.
+fn clear_if_chosen(f: &FormField) -> Option<FormValue> {
+    match current_value(f) {
+        FormValue::Text(c) if c.is_empty() => None,
+        _ => Some(FormValue::Text(String::new())),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SkippedEntry {
     pub name: String,
@@ -115,12 +123,8 @@ fn convert(f: &FormField, value: &DataValue) -> Result<Option<FormValue>, String
             if on_states(f).any(|s| s == t) {
                 Ok(Some(FormValue::Text(t.clone())))
             } else if t.is_empty() || t.eq_ignore_ascii_case("off") {
-                // Nothing chosen in the file. PageWeave can't clear a choice, so this only matters
-                // when the document has one.
-                match current_value(f) {
-                    FormValue::Text(c) if c.is_empty() => Ok(None),
-                    _ => Err("The file chooses nothing here; a choice can’t be cleared.".into()),
-                }
+                // Nothing chosen in the file: clear the document's choice, if it has one.
+                Ok(clear_if_chosen(f))
             } else {
                 Err(format!("“{t}” is not one of its options."))
             }
@@ -128,6 +132,7 @@ fn convert(f: &FormField, value: &DataValue) -> Result<Option<FormValue>, String
         (FieldKind::Radio, DataValue::Bool(_)) => {
             Err("The file gives true/false, but this field takes one of its options.".into())
         }
+        (FieldKind::Combo | FieldKind::List, DataValue::Text(t)) if t.is_empty() => Ok(clear_if_chosen(f)),
         (FieldKind::Combo, DataValue::Text(t)) if f.editable || f.options.iter().any(|o| o == t) => {
             Ok(Some(FormValue::Text(t.clone())))
         }
@@ -190,11 +195,11 @@ pub fn read_data_file(path: &Path) -> PwResult<Vec<u8>> {
 }
 
 fn refuse_xfa(info: &FormInfo) -> PwResult<()> {
-    if info.has_xfa {
+    if info.xfa_only {
         return Err(PwError::new(
             ErrorCategory::UnsupportedOperation,
             "form.xfa",
-            "This form uses XFA, which PageWeave cannot fill or export.",
+            "This is a dynamic XFA form, which PageWeave cannot fill or export.",
         ));
     }
     Ok(())
@@ -436,11 +441,16 @@ mod tests {
     }
 
     #[test]
-    fn clearing_a_radio_choice_is_refused_only_when_one_is_set() {
-        let m = match_entries(&fields(), FormDataFormat::Xfdf, &[e("plan", t("Off")), e("tier", t(""))]);
-        assert!(m.matched.is_empty());
-        assert_eq!(m.skipped.len(), 1);
-        assert_eq!(m.skipped[0].name, "plan");
+    fn empty_values_clear_a_chosen_radio_or_choice_and_change_nothing_otherwise() {
+        let m = match_entries(
+            &fields(),
+            FormDataFormat::Xfdf,
+            &[e("plan", t("Off")), e("tier", t("")), e("country", t("")), e("colors", t(""))],
+        );
+        assert!(m.skipped.is_empty(), "{:?}", m.skipped);
+        let got: Vec<(&str, &FormValue)> = m.matched.iter().map(|v| (v.name.as_str(), &v.value)).collect();
+        // "tier" and "colors" have nothing chosen: nothing to clear.
+        assert_eq!(got, [("plan", &FormValue::Text(String::new())), ("country", &FormValue::Text(String::new()))]);
     }
 
     #[test]
@@ -450,7 +460,7 @@ mod tests {
         let m = match_entries(&fs, FormDataFormat::Json, &[e("country", t("Mars"))]);
         assert_eq!(m.matched[0].value, FormValue::Text("Mars".into()));
 
-        let info = FormInfo { fields: fs, has_xfa: false, truncated: false };
+        let info = FormInfo { fields: fs, has_xfa: false, xfa_only: false, truncated: false };
         let pending = [FieldValue { name: "subscribe".into(), value: FormValue::Checked(true) }];
         let out = export_entries(&info, &pending).expect("entries");
         let names: Vec<&str> = out.iter().map(|e| e.name.as_str()).collect();

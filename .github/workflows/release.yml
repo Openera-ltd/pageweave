@@ -92,27 +92,26 @@ jobs:
         with:
           path: office-msi
           key: office-${{ hashFiles('resources/office.lock.json') }}
-      - name: Unpack the pinned LibreOffice (checksum verified) for the full installer
+      - name: Stage the pinned LibreOffice package (checksum verified) for the full installer
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $lock = Get-Content resources/office.lock.json | ConvertFrom-Json
           $w = $lock.windows_x64
           New-Item -ItemType Directory -Force office-msi | Out-Null
-          $msi = Join-Path (Resolve-Path office-msi) "LibreOffice_$($lock.version).msi"
+          $name = "LibreOffice_$($lock.version).msi"
+          $msi = Join-Path (Resolve-Path office-msi) $name
           if (-not (Test-Path $msi) -or (Get-FileHash $msi -Algorithm SHA256).Hash.ToLower() -ne $w.sha256) {
             for ($i = 1; $i -le 4; $i++) { try { Invoke-WebRequest $w.url -OutFile $msi -UseBasicParsing; break } catch { if ($i -eq 4) { throw }; Start-Sleep -Seconds (2 * $i) } }
           }
           if ((Get-FileHash $msi -Algorithm SHA256).Hash.ToLower() -ne $w.sha256) { throw "LibreOffice package checksum mismatch" }
-          $dest = Join-Path (Get-Location) "third_party\office"
+          # The installer carries the package itself (an unpacked copy would exceed the 2 GB an NSIS
+          # installer can hold); its post-install hook unpacks it with the bundled CLI (hooks.nsh).
+          $dest = Join-Path (Get-Location) "third_party\office-package"
           Remove-Item -Recurse -Force $dest -ErrorAction SilentlyContinue
-          $p = Start-Process msiexec.exe -ArgumentList "/a", "`"$msi`"", "/qn", "TARGETDIR=`"$dest`"" -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "msiexec /a exit $($p.ExitCode)" }
-          Get-ChildItem $dest -Filter *.msi | Remove-Item -Force
-          $soffice = Get-ChildItem $dest -Recurse -Filter soffice.exe | Select-Object -First 1
-          if (-not $soffice) { throw "no soffice.exe in the unpacked LibreOffice" }
-          & $soffice.FullName --version
-          "{0:N0} MB unpacked" -f ((Get-ChildItem $dest -Recurse | Measure-Object Length -Sum).Sum / 1MB)
+          New-Item -ItemType Directory -Force $dest | Out-Null
+          Copy-Item $msi (Join-Path $dest $name)
+          "{0:N0} MB package staged" -f ((Get-Item (Join-Path $dest $name)).Length / 1MB)
       - name: UI install, tests and build
         working-directory: app
         run: |
@@ -125,10 +124,12 @@ jobs:
           npx tauri build --bundles nsis
           mkdir -p ../dist
           mv "../target/release/bundle/nsis/PageWeave_${VERSION}_x64-setup.exe" "../dist/PageWeave_${VERSION}_x64-update-setup.exe"
-      - name: Build the full installer (with every translation language)
+      - name: Build the full installer (every translation language, LibreOffice, the CLI, WebView2 offline)
         working-directory: app
         run: |
           set -euo pipefail
+          # The full installer carries the release CLI (tauri.full.conf.json): build it first.
+          cargo build --release -p pw-cli
           npx tauri build --bundles nsis --config src-tauri/tauri.full.conf.json
           mv "../target/release/bundle/nsis/PageWeave_${VERSION}_x64-setup.exe" "../dist/PageWeave_${VERSION}_x64-setup.exe"
           ls -la ../dist
@@ -179,9 +180,10 @@ jobs:
             }
           }
           Write-Host "all $($pairs.Count) language directions are in the user folder and match their checksums"
-          if (Test-Path (Join-Path $dir "office")) { throw "LibreOffice was left in the install folder" }
+          if (Test-Path (Join-Path $dir "office-package")) { throw "the LibreOffice package was left in the install folder" }
+          if (Get-ChildItem "$env:LOCALAPPDATA\io.github.kuyamcliff.pageweave" -Filter "LibreOffice_*.msi") { throw "the LibreOffice package was not unpacked (still in the user folder)" }
           $office = "$env:LOCALAPPDATA\io.github.kuyamcliff.pageweave\office"
-          if (-not (Get-ChildItem $office -Recurse -Filter soffice.exe | Select-Object -First 1)) { throw "LibreOffice is not in the user folder" }
+          if (-not (Get-ChildItem $office -Recurse -Filter soffice.exe -ErrorAction SilentlyContinue | Select-Object -First 1)) { throw "LibreOffice was not unpacked into the user folder by the installer" }
           # The release CLI finds PageWeave's own LibreOffice there and converts an Office file.
           Set-Content -Path (Join-Path $env:RUNNER_TEMP "office smoke.csv") -Value "Item,Amount`nPWOFFICE,42"
           ./target/release/pageweave.exe office

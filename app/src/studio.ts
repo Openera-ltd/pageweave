@@ -45,7 +45,13 @@ function mapObject(d: Design, id: string, f: (o: DesignObject) => DesignObject):
 }
 
 export function update(d: Design, id: string, patch: Partial<DesignObject>): Design {
-  return mapObject(d, id, (o) => ({ ...o, ...patch }));
+  return mapObject(d, id, (o) => fitRadius({ ...o, ...patch }));
+}
+
+/** A corner radius never exceeds half the shorter side (the engine refuses more). */
+function fitRadius(o: DesignObject): DesignObject {
+  const max = Math.min(o.w, o.h) / 2;
+  return o.radius && o.radius > max ? { ...o, radius: Math.floor(max * 10) / 10 } : o;
 }
 
 export function moveBy(d: Design, id: string, dx: number, dy: number): Design {
@@ -61,7 +67,7 @@ export function resize(d: Design, id: string, box: { x: number; y: number; w: nu
     if (o.locked) return o;
     const k = h / (o.h || 1);
     const text = o.kind === "text" ? { font_size: round((o.font_size ?? o.h) * k), baseline: round((o.baseline ?? o.h * 0.8) * k) } : {};
-    return { ...o, ...text, x: round(box.x), y: round(box.y), w, h };
+    return fitRadius({ ...o, ...text, x: round(box.x), y: round(box.y), w, h });
   });
 }
 
@@ -106,11 +112,252 @@ export function hit(d: Design, x: number, y: number): DesignObject | null {
 const round = (v: number) => Math.round(v * 10) / 10;
 
 export const isDesignPath = (p: string) => /\.pwdesign$/i.test(p);
-export const isStudioSource = (p: string) => /\.(png|jpe?g|pdf|pwdesign)$/i.test(p);
+export const isStudioSource = (p: string) => /\.(png|jpe?g|webp|tiff?|gif|bmp|pdf|pwdesign)$/i.test(p);
 
 /** What "Open in Design Studio" does with a chosen file: open a project, rebuild a picture or a
  * PDF's first page, or nothing for other files. */
 export function studioSourceFor(path: string): { kind: "open"; path: string } | { kind: "rebuild"; input: string; page: number } | null {
   if (isDesignPath(path)) return { kind: "open", path };
   return isStudioSource(path) ? { kind: "rebuild", input: path, page: 0 } : null;
+}
+
+/** A new object in the middle of the canvas, placed in front: "New text" (black, 6 % of the
+ * height) or a rectangle in the accent blue. Returns the design and the new object's id. */
+export function addObject(d: Design, kind: "text" | "shape"): { design: Design; id: string } {
+  let n = d.objects.length + 1;
+  while (d.objects.some((o) => o.id === `${kind === "text" ? "text" : "shape"}-new${n}`)) n++;
+  const id = `${kind === "text" ? "text" : "shape"}-new${n}`;
+  const size = round(Math.max(8, d.height * 0.06));
+  const base = { id, visible: true, locked: false, confidence: 1, bold: false, note: null };
+  const o: DesignObject =
+    kind === "text"
+      ? { ...base, name: "New text", kind: "text", text: "New text", color: "#000000", font_size: size, baseline: round(size * 0.72), w: round(size * 4.2), h: round(size * 0.93), x: 0, y: 0 }
+      : { ...base, name: "Rectangle", kind: "shape", fill: "#2f6fde", w: round(d.width * 0.25), h: round(d.height * 0.12), x: 0, y: 0 };
+  o.x = round((d.width - o.w) / 2);
+  o.y = round((d.height - o.h) / 2);
+  return { design: { ...d, objects: [...d.objects, o] }, id };
+}
+
+export interface Guide {
+  /** "x": a vertical line at `at`; "y": a horizontal line. */
+  axis: "x" | "y";
+  at: number;
+}
+
+/** Snap a moving box to the canvas edges and centre and to the other visible objects' edges and
+ * centres, when within `threshold` design pixels; returns the snapped position and the guides to
+ * draw. Each axis snaps to its nearest match only. */
+export function snap(d: Design, moving: string | string[], box: { x: number; y: number; w: number; h: number }, threshold: number): { x: number; y: number; guides: Guide[] } {
+  const skip = new Set(Array.isArray(moving) ? moving : [moving]);
+  const others = d.objects.filter((o) => !skip.has(o.id) && o.visible);
+  const targets = (axis: "x" | "y") => {
+    const size = axis === "x" ? d.width : d.height;
+    const t = [0, size / 2, size];
+    for (const o of others) {
+      const [p, s] = axis === "x" ? [o.x, o.w] : [o.y, o.h];
+      t.push(p, p + s / 2, p + s);
+    }
+    return t;
+  };
+  const fit = (axis: "x" | "y", pos: number, len: number) => {
+    let best: { delta: number; at: number } | null = null;
+    for (const t of targets(axis)) {
+      for (const edge of [pos, pos + len / 2, pos + len]) {
+        const delta = t - edge;
+        if (Math.abs(delta) <= threshold && (!best || Math.abs(delta) < Math.abs(best.delta))) best = { delta, at: t };
+      }
+    }
+    return best;
+  };
+  const fx = fit("x", box.x, box.w);
+  const fy = fit("y", box.y, box.h);
+  const guides: Guide[] = [];
+  if (fx) guides.push({ axis: "x", at: fx.at });
+  if (fy) guides.push({ axis: "y", at: fy.at });
+  return { x: round(box.x + (fx?.delta ?? 0)), y: round(box.y + (fy?.delta ?? 0)), guides };
+}
+
+/* ---------- Several objects ---------- */
+
+export interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** The objects a click on `id` selects: its whole group when it has one. */
+export function withGroup(d: Design, id: string): string[] {
+  const g = d.objects.find((o) => o.id === id)?.group;
+  return g ? d.objects.filter((o) => o.group === g).map((o) => o.id) : [id];
+}
+
+/** The box around several objects (null when none). */
+export function bounds(d: Design, ids: string[]): Box | null {
+  const os = d.objects.filter((o) => ids.includes(o.id));
+  if (!os.length) return null;
+  const x = Math.min(...os.map((o) => o.x));
+  const y = Math.min(...os.map((o) => o.y));
+  return { x, y, w: Math.max(...os.map((o) => o.x + o.w)) - x, h: Math.max(...os.map((o) => o.y + o.h)) - y };
+}
+
+/** Move several objects together (locked ones stay). */
+export function moveMany(d: Design, ids: string[], dx: number, dy: number): Design {
+  if (!dx && !dy) return d;
+  let changed = false;
+  const objects = d.objects.map((o) => {
+    if (!ids.includes(o.id) || o.locked) return o;
+    changed = true;
+    return { ...o, x: round(o.x + dx), y: round(o.y + dy) };
+  });
+  return changed ? { ...d, objects } : d;
+}
+
+export function removeMany(d: Design, ids: string[]): Design {
+  const objects = d.objects.filter((o) => !ids.includes(o.id));
+  return objects.length === d.objects.length ? d : { ...d, objects };
+}
+
+export type Align = "left" | "center" | "right" | "top" | "middle" | "bottom";
+
+/** Line several objects up on the selection's box (one object: on the canvas). Locked ones stay. */
+export function align(d: Design, ids: string[], how: Align): Design {
+  const box = ids.length > 1 ? bounds(d, ids) : { x: 0, y: 0, w: d.width, h: d.height };
+  if (!box) return d;
+  let changed = false;
+  const objects = d.objects.map((o) => {
+    if (!ids.includes(o.id) || o.locked) return o;
+    const x = how === "left" ? box.x : how === "center" ? box.x + (box.w - o.w) / 2 : how === "right" ? box.x + box.w - o.w : o.x;
+    const y = how === "top" ? box.y : how === "middle" ? box.y + (box.h - o.h) / 2 : how === "bottom" ? box.y + box.h - o.h : o.y;
+    if (round(x) === o.x && round(y) === o.y) return o;
+    changed = true;
+    return { ...o, x: round(x), y: round(y) };
+  });
+  return changed ? { ...d, objects } : d;
+}
+
+/** Equal gaps between three or more objects along an axis; the outermost ones stay put. */
+export function distribute(d: Design, ids: string[], axis: "x" | "y"): Design {
+  const os = d.objects.filter((o) => ids.includes(o.id)).sort((a, b) => (axis === "x" ? a.x - b.x : a.y - b.y));
+  if (os.length < 3) return d;
+  const pos = (o: DesignObject) => (axis === "x" ? o.x : o.y);
+  const len = (o: DesignObject) => (axis === "x" ? o.w : o.h);
+  const first = os[0]!;
+  const last = os[os.length - 1]!;
+  const total = pos(last) + len(last) - pos(first);
+  const gap = (total - os.reduce((n, o) => n + len(o), 0)) / (os.length - 1);
+  const place = new Map<string, number>();
+  let at = pos(first);
+  for (const o of os) {
+    place.set(o.id, round(at));
+    at += len(o) + gap;
+  }
+  let changed = false;
+  const objects = d.objects.map((o) => {
+    const p = place.get(o.id);
+    if (p === undefined || o.locked || p === pos(o)) return o;
+    changed = true;
+    return axis === "x" ? { ...o, x: p } : { ...o, y: p };
+  });
+  return changed ? { ...d, objects } : d;
+}
+
+/** Group two or more objects (a new group id); `ungroup` removes their groups. */
+export function group(d: Design, ids: string[]): Design {
+  if (ids.length < 2) return d;
+  let n = 1;
+  while (d.objects.some((o) => o.group === `group-${n}`)) n++;
+  return { ...d, objects: d.objects.map((o) => (ids.includes(o.id) ? { ...o, group: `group-${n}` } : o)) };
+}
+
+export function ungroup(d: Design, ids: string[]): Design {
+  if (!d.objects.some((o) => ids.includes(o.id) && o.group)) return d;
+  return { ...d, objects: d.objects.map((o) => (ids.includes(o.id) && o.group ? { ...o, group: null } : o)) };
+}
+
+/** Turn an object to `degrees` clockwise, kept within −180…180. Locked objects stay. */
+export function rotate(d: Design, id: string, degrees: number): Design {
+  const r = round(((((degrees + 180) % 360) + 360) % 360) - 180);
+  return mapObject(d, id, (o) => (o.locked || (o.rotation ?? 0) === r ? o : { ...o, rotation: r }));
+}
+
+export type Corner = "nw" | "ne" | "sw" | "se";
+
+/** The box after dragging one corner by (dx, dy) on the canvas, for an object turned `rotation`
+ *  degrees around its centre: the opposite corner stays where it is on the canvas, and the size is
+ *  measured along the object's own (turned) sides. At least 1 × 1. */
+export function dragCorner(b: Box, rotation: number, corner: Corner, dx: number, dy: number): Box {
+  const t = (rotation * Math.PI) / 180;
+  const [cos, sin] = [Math.cos(t), Math.sin(t)];
+  const turn = (x: number, y: number) => ({ x: x * cos - y * sin, y: x * sin + y * cos });
+  const sx = corner === "ne" || corner === "se" ? 1 : -1;
+  const sy = corner === "sw" || corner === "se" ? 1 : -1;
+  const c = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+  // Opposite corner and dragged corner on the canvas.
+  const o = turn((-sx * b.w) / 2, (-sy * b.h) / 2);
+  const fixed = { x: c.x + o.x, y: c.y + o.y };
+  const d = turn((sx * b.w) / 2, (sy * b.h) / 2);
+  const to = { x: c.x + d.x + dx, y: c.y + d.y + dy };
+  // The new diagonal in the object's own frame.
+  const v = { x: (to.x - fixed.x) * cos + (to.y - fixed.y) * sin, y: -(to.x - fixed.x) * sin + (to.y - fixed.y) * cos };
+  const w = Math.max(1, v.x * sx);
+  const h = Math.max(1, v.y * sy);
+  const half = turn((sx * w) / 2, (sy * h) / 2);
+  const centre = { x: fixed.x + half.x, y: fixed.y + half.y };
+  return { x: centre.x - w / 2, y: centre.y - h / 2, w, h };
+}
+
+/** How a paragraph (text with "\n") is drawn — the same layout as the engine's SVG and PDF exports:
+ *  one line per baseline `lineHeight` apart, glyphs scaled by `stretch` from the box's left edge,
+ *  each line anchored at the left, centre or right of the box. */
+export function paragraphLayout(o: DesignObject) {
+  const size = o.font_size ?? o.h;
+  const k = o.stretch ?? 1;
+  const lineHeight = o.line_height ?? size * 1.2;
+  const align = o.align ?? "left";
+  const anchor = align === "left" ? "start" : align === "center" ? "middle" : "end";
+  const ax = align === "left" ? o.x : align === "center" ? o.x + o.w / 2 / k : o.x + o.w / k;
+  const top = o.y + (o.baseline ?? size * 0.72);
+  return {
+    lines: (o.text ?? "").split("\n").map((text, i) => ({ text, x: ax, y: top + i * lineHeight })),
+    anchor: anchor as "start" | "middle" | "end",
+    scale: `matrix(${k} 0 0 1 ${Math.round(o.x * (1 - k) * 1000) / 1000} 0)`,
+    lineHeight,
+  };
+}
+
+/** New wording for a text object; a paragraph's box grows or shrinks to hold its lines. */
+export function textPatch(o: DesignObject, text: string): Partial<DesignObject> {
+  const n = text.split("\n").length;
+  if (n < 2) return { text };
+  const size = o.font_size ?? o.h;
+  const { lineHeight } = paragraphLayout(o);
+  return { text, h: round((o.baseline ?? size * 0.72) + (n - 1) * lineHeight + size * 0.25) };
+}
+
+/** A shape's drawn path: inset by half its outline so the box stays the outer edge (as exported). */
+export function shapeGeometry(o: DesignObject) {
+  const sw = o.stroke && o.stroke_width ? Math.min(o.stroke_width, Math.min(o.w, o.h) / 2) : 0;
+  return { x: o.x + sw / 2, y: o.y + sw / 2, w: Math.max(0, o.w - sw), h: Math.max(0, o.h - sw), r: Math.max(0, (o.radius ?? 0) - sw / 2), sw };
+}
+
+/** Trims (design pixels from each side) of a picture being cropped. */
+export interface Trim {
+  l: number;
+  t: number;
+  r: number;
+  b: number;
+}
+
+/** The part of `o` a crop keeps (at least 1 × 1), and the trims as fractions of its size. */
+export function cropBox(o: DesignObject, c: Trim) {
+  const l = Math.max(0, Math.min(c.l, o.w - 1));
+  const r = Math.max(0, Math.min(c.r, o.w - 1 - l));
+  const t = Math.max(0, Math.min(c.t, o.h - 1));
+  const b = Math.max(0, Math.min(c.b, o.h - 1 - t));
+  return {
+    box: { x: round(o.x + l), y: round(o.y + t), w: round(o.w - l - r), h: round(o.h - t - b) },
+    fractions: [l / o.w, t / o.h, r / o.w, b / o.h] as [number, number, number, number],
+    empty: !l && !t && !r && !b,
+  };
 }

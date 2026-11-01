@@ -57,3 +57,20 @@ The one-pair tc-big models score up to 2.6 BLEU higher on a few directions, but 
 about 2.7 GB and still translate the other pairs through English; the three chosen models need about
 900 MB and translate all 30 directions between English, German, French, Spanish, Italian and
 Portuguese directly. Portuguese and the remaining direct pairs: see the next table when measured.
+
+## Beam search (D-030, 2026-10-30)
+
+Same scoring, first 200 sentences of FLORES-200 devtest, the pinned models (D-027), PageWeave's own
+runtime (`examples/eval`, `PAGEWEAVE_EVAL_BEAM=1` for greedy), release build, same container, one run at
+a time.
+
+| Direction | Greedy BLEU / chrF | Beam 4 BLEU / chrF | Lines/s greedy → beam |
+|---|---|---|---|
+| en → de | 36.5 / 64.0 | 37.2 / 64.3 | 2.29 → 1.32 |
+| de → en | 39.2 / 65.5 | 39.0 / 65.5 | 2.63 → 1.48 |
+| en → fr | 47.7 / 70.1 | 48.3 / 70.4 | 2.19 → 1.15 |
+| en → es | 27.0 / 55.7 | 27.9 / 56.1 | 2.47 → 1.38 |
+
+Beam search also fixes the meaning error that made `english_to_german` fail ("The house is small." →
+"Das Haus ist sehr schön." greedy, "Das Haus ist klein." with beam 4) and French "send us" for "send me".
+About 1.7× the time per sentence.

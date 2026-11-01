@@ -171,6 +171,12 @@ pub(crate) fn dict_of<'a>(doc: &'a Document, o: &'a Object) -> Option<&'a Dictio
     }
 }
 
+/// A file specification with embedded files: its /EF is a dictionary of streams. (Usage-rights
+/// parameters, /Perms /UR3, also have an /EF key — an array of permissions, not files.)
+fn holds_files(d: &Dictionary) -> bool {
+    matches!(d.get(b"EF"), Ok(Object::Dictionary(_) | Object::Reference(_)))
+}
+
 fn dict_ref(o: &Object) -> Option<&Dictionary> {
     match o {
         Object::Dictionary(d) => Some(d),
@@ -720,7 +726,7 @@ fn survey(doc: &Document, raw: &[u8]) -> SanitizeFindings {
             Some(Act::Web) => f.web_links += 1,
             _ => {}
         }
-        if d.has(b"EF") {
+        if holds_files(d) {
             f.attachments += 1;
             let n = d.get(b"UF").or_else(|_| d.get(b"F")).map(text).unwrap_or_default();
             if names.len() < MAX_NAMES {
@@ -863,7 +869,7 @@ fn doomed(doc: &Document, opts: &SanitizeOptions) -> HashSet<ObjectId> {
         let gone = action_class(d).is_some_and(|a| action_removed(a, opts))
             || annot_subtype(d).is_some_and(|st| annot_removed(st, opts))
             || (opts.metadata && ty == Some(b"Metadata"))
-            || (opts.attachments && (ty == Some(b"EmbeddedFile") || d.has(b"EF")))
+            || (opts.attachments && (ty == Some(b"EmbeddedFile") || holds_files(d)))
             || (opts.form_fields && d.has(b"FT"));
         if gone {
             dead.insert(*id);
@@ -968,7 +974,11 @@ fn check_file(bytes: &[u8], opts: &SanitizeOptions) -> PwResult<()> {
         } else if act.is_some_and(|a| action_removed(a, opts)) {
             Some("an action remains")
         } else if opts.attachments
-            && (has(b"EF") || has(b"EmbeddedFiles") || has(b"AF") || has(b"Collection") || ty == Some(b"EmbeddedFile"))
+            && (holds_files(d)
+                || has(b"EmbeddedFiles")
+                || has(b"AF")
+                || has(b"Collection")
+                || ty == Some(b"EmbeddedFile"))
         {
             Some("an attachment remains")
         } else if st.is_some_and(|s| annot_removed(s, opts)) {
@@ -1075,10 +1085,77 @@ pub(crate) fn load_plain<'p>(
     Ok((src, doc, raw))
 }
 
+/// What an operation changes in a file, for the permission it needs on a protected file.
+#[derive(Clone, Copy)]
+pub(crate) enum Change {
+    /// Content, properties, bookmarks, labels, size.
+    Modify,
+    /// Comments and markup.
+    Annotate,
+}
+
+/// [`load_plain`] for an operation that changes the file. A protected file is accepted when its
+/// permissions allow `change` (PDFium reports full rights when it was opened with its permissions
+/// password) and is decrypted with the open password; the new file is protected again by the
+/// caller of `execute` (keep_protection, D-042) with the source's permissions (D-010).
+pub(crate) fn load_for_change<'p>(
+    pdfium: &'p Pdfium,
+    input: &Path,
+    opts: &OpenOptions,
+    change: Change,
+) -> PwResult<(PdfDocument<'p>, Document, Vec<u8>)> {
+    let src = load(pdfium, input, opts)?;
+    if matches!(src.permissions().security_handler_revision(), Ok(PdfSecurityHandlerRevision::Unprotected)) {
+        drop(src);
+        return load_plain(pdfium, input, opts);
+    }
+    drop(src);
+    let bits = crate::forms::permission_bits(input, opts.password)?;
+    let allowed =
+        bits & match change {
+            Change::Modify => 0x8,
+            Change::Annotate => 0x20,
+        } != 0;
+    if !allowed {
+        return Err(PwError::new(
+            ErrorCategory::Permission,
+            "pdf.owner_restricted",
+            "The owner of this file does not allow this change.",
+        )
+        .with_action("Open the file with its permissions password, or ask its owner for an unrestricted copy."));
+    }
+    load_readable(pdfium, input, opts)
+}
+
+/// [`load_plain`] for reading only: a password-protected file is decrypted with the password it
+/// was opened with (or none, when only its permissions are protected). Nothing read this way is
+/// written back, so the file's permissions are not at stake.
+pub(crate) fn load_readable<'p>(
+    pdfium: &'p Pdfium,
+    input: &Path,
+    opts: &OpenOptions,
+) -> PwResult<(PdfDocument<'p>, Document, Vec<u8>)> {
+    let src = load(pdfium, input, opts)?;
+    if matches!(src.permissions().security_handler_revision(), Ok(PdfSecurityHandlerRevision::Unprotected)) {
+        drop(src);
+        return load_plain(pdfium, input, opts);
+    }
+    let raw = std::fs::read(input).map_err(|e| PwError::from_io(&e, "file"))?;
+    let doc = match Document::load_mem(&raw) {
+        Ok(d) if !d.is_encrypted() => d,
+        _ => opts
+            .password
+            .and_then(|p| Document::load_mem_with_options(&raw, lopdf::LoadOptions::with_password(p)).ok())
+            .filter(|d| !d.is_encrypted())
+            .ok_or_else(protected)?,
+    };
+    Ok((src, doc, raw))
+}
+
 /// What hidden information the file holds (read-only).
 pub fn sanitize_inspect(input: &Path, opts: &OpenOptions) -> PwResult<SanitizeFindings> {
     let pdfium = engine()?;
-    let (_src, doc, raw) = load_plain(&pdfium, input, opts)?;
+    let (_src, doc, raw) = load_readable(&pdfium, input, opts)?;
     Ok(survey(&doc, &raw))
 }
 
@@ -1095,7 +1172,7 @@ pub fn sanitize(
     progress: &dyn Fn(u64, u64),
 ) -> PwResult<(CommittedOutput, u32, SanitizeFindings, Vec<String>)> {
     let pdfium = engine()?;
-    let (source, mut doc, raw) = load_plain(&pdfium, input, opts)?;
+    let (source, mut doc, raw) = load_for_change(&pdfium, input, opts, Change::Modify)?;
     let found = survey(&doc, &raw);
     let pdfa = options.metadata
         && doc.objects.values().any(|o| match o {

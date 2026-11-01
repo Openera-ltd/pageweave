@@ -11,6 +11,12 @@ export const ANNOTATION_COLORS: Record<AnnotationKind, string> = {
   note: "#ffd400",
 };
 
+/** The colour new markup of `kind` gets: the user's choice when it is a valid `#rrggbb`, otherwise the built-in one. */
+export function markupColor(chosen: Partial<Record<AnnotationKind, string>> | undefined, kind: AnnotationKind): string {
+  const c = chosen?.[kind];
+  return c && /^#[0-9a-f]{6}$/i.test(c) ? c.toLowerCase() : ANNOTATION_COLORS[kind];
+}
+
 /**
  * Pending items share one undo history. `redact` is UI-only: an area marked for redaction, applied
  * with the engine's `redact` operation and never written as an annotation.

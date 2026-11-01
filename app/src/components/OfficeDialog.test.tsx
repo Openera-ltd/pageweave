@@ -4,7 +4,7 @@ import { ApiContext, type Api } from "../api";
 import type { JobSnapshot, OperationRequest } from "../types";
 import { OfficeDialog, isOfficePath } from "./OfficeDialog";
 
-function setup(initial: string | null, engine: string | null, jobs: Record<string, JobSnapshot> = {}, canInstall = true) {
+function setup(initial: string | null, engine: string | null | undefined, jobs: Record<string, JobSnapshot> = {}, canInstall = true) {
   const startOperation = vi.fn(async (_r: OperationRequest) => "job-1");
   const pickOfficeFile = vi.fn(async () => "/docs/Budget 2026.xlsx");
   const officePackage = vi.fn(async () => ({ version: "26.2.6", bytes: 373_252_096, can_install: canInstall }));
@@ -25,6 +25,25 @@ describe("Open an Office file", () => {
   it("recognises Office files by name", () => {
     for (const p of ["/a/Report.DOCX", "/a/b.odt", "/a/c.pptx", "/a/d.csv", "/a/e.htm", "/a/m.docm", "/a/s.xlsb", "/a/t.potx", "/a/v.vsdx", "/a/p.pub"]) expect(isOfficePath(p)).toBe(true);
     for (const p of ["/a/b.pdf", "/a/b.exe", "/a/docx"]) expect(isOfficePath(p)).toBe(false);
+  });
+
+  it("waits for the app's LibreOffice check when opened first (a file given at launch)", async () => {
+    const { startOperation, view, api } = setup("/docs/a.docx", undefined);
+    expect(screen.getByTestId("office-checking")).toBeTruthy();
+    expect(screen.queryByTestId("office-missing")).toBeNull();
+    expect(screen.getByTestId("office-start").getAttribute("title")).toBe("Looking for LibreOffice…");
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("office-start"));
+    });
+    expect(startOperation).not.toHaveBeenCalled();
+    // The check finishes after the dialog opened: the dialog follows it.
+    view.rerender(
+      <ApiContext.Provider value={api}>
+        <OfficeDialog initialFile="/docs/a.docx" engine="LibreOffice 24.2" jobs={{}} onClose={() => undefined} onFinished={() => undefined} />
+      </ApiContext.Provider>,
+    );
+    expect(screen.queryByTestId("office-checking")).toBeNull();
+    expect(screen.getByTestId("office-start").getAttribute("title")).toBeNull();
   });
 
   it("says LibreOffice is needed when it is not installed, and does not start", async () => {
